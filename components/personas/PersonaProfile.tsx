@@ -1,0 +1,301 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { createClient } from "@/lib/supabase/client";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
+import type { Persona } from "@/lib/types/database";
+
+interface Props {
+  id: string;
+}
+
+interface AsignacionActiva {
+  id: string;
+  pct_dedicacion: number;
+  fecha_inicio: string;
+  fecha_fin: string | null;
+  cargo_al_momento: string;
+  engagement_id: string;
+  engagement_nombre: string;
+}
+
+interface TagItem {
+  id: string;
+  nombre: string;
+  nivel?: string | null;
+}
+
+const NIVEL_LABEL: Record<string, string> = {
+  basico: "básico",
+  intermedio: "intermedio",
+  avanzado: "avanzado",
+};
+
+function colorOcupacion(pct: number) {
+  if (pct === 0)   return { bg: "#f0f0f0", text: "#888" };
+  if (pct <= 50)   return { bg: "#dcf5e7", text: "#1e7e45" };
+  if (pct <= 80)   return { bg: "#fff4d4", text: "#8a6200" };
+  if (pct <= 100)  return { bg: "#ffe4c4", text: "#c45000" };
+  return { bg: "#ffd4d4", text: "#c02020" };
+}
+
+export function PersonaProfile({ id }: Props) {
+  const [persona, setPersona] = useState<Persona | null>(null);
+  const [industrias, setIndustrias] = useState<TagItem[]>([]);
+  const [capacidades, setCapacidades] = useState<TagItem[]>([]);
+  const [tematicas, setTematicas] = useState<TagItem[]>([]);
+  const [asignaciones, setAsignaciones] = useState<AsignacionActiva[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function load() {
+      const supabase = createClient();
+
+      const [pRes, indRes, capRes, temRes, asigRes] = await Promise.all([
+        supabase.from("persona").select("*").eq("id", id).single(),
+
+        supabase
+          .from("persona_industria")
+          .select("industria_id, cat_industria(id, nombre)")
+          .eq("persona_id", id),
+
+        supabase
+          .from("persona_capacidad")
+          .select("capacidad_id, nivel, cat_capacidad(id, nombre)")
+          .eq("persona_id", id),
+
+        supabase
+          .from("persona_tematica")
+          .select("tematica_id, cat_tematica(id, nombre)")
+          .eq("persona_id", id),
+
+        supabase
+          .from("asignacion")
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          .select("id, pct_dedicacion, fecha_inicio, fecha_fin, cargo_al_momento, engagement:engagement_id(id, nombre)" as any)
+          .eq("persona_id", id)
+          .eq("estado", "activa")
+          .order("fecha_inicio"),
+      ]);
+
+      if (pRes.data) setPersona(pRes.data as Persona);
+
+      setIndustrias(
+        (indRes.data ?? []).map((r) => ({
+          id: r.industria_id,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          nombre: (r.cat_industria as any)?.nombre ?? r.industria_id,
+        }))
+      );
+
+      setCapacidades(
+        (capRes.data ?? []).map((r) => ({
+          id: r.capacidad_id,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          nombre: (r.cat_capacidad as any)?.nombre ?? r.capacidad_id,
+          nivel: r.nivel,
+        }))
+      );
+
+      setTematicas(
+        (temRes.data ?? []).map((r) => ({
+          id: r.tematica_id,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          nombre: (r.cat_tematica as any)?.nombre ?? r.tematica_id,
+        }))
+      );
+
+      setAsignaciones(
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (asigRes.data ?? []).map((r: any) => ({
+          id: r.id,
+          pct_dedicacion: Number(r.pct_dedicacion),
+          fecha_inicio: r.fecha_inicio,
+          fecha_fin: r.fecha_fin,
+          cargo_al_momento: r.cargo_al_momento,
+          engagement_id: r.engagement?.id ?? "",
+          engagement_nombre: r.engagement?.nombre ?? "—",
+        }))
+      );
+
+      setLoading(false);
+    }
+    load();
+  }, [id]);
+
+  if (loading) return <p className="text-sm text-[#888] p-6">Cargando...</p>;
+  if (!persona) return <p className="text-sm text-red-500 p-6">Persona no encontrada.</p>;
+
+  const initials = `${persona.nombre[0]}${persona.apellido[0]}`.toUpperCase();
+  const pctTotal = asignaciones.reduce((sum, a) => sum + a.pct_dedicacion, 0);
+  const { bg: bgOcp, text: textOcp } = colorOcupacion(pctTotal);
+  const tienePreferencias = industrias.length > 0 || capacidades.length > 0 || tematicas.length > 0;
+
+  return (
+    <div className="max-w-2xl space-y-5">
+      {/* ── Header ─────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-[#e8e8e8] p-6 flex items-center gap-5">
+        <div className="w-16 h-16 rounded-full bg-[#4a90e2] flex items-center justify-center text-white text-2xl font-bold flex-shrink-0">
+          {initials}
+        </div>
+        <div className="flex-1 min-w-0">
+          <div className="flex items-center gap-2 flex-wrap">
+            <h2 className="text-xl font-bold">
+              {persona.nombre} {persona.apellido}
+            </h2>
+            {!persona.activo && (
+              <span className="text-xs px-2 py-0.5 rounded-full bg-[#f0f0f0] text-[#888]">
+                Inactivo
+              </span>
+            )}
+          </div>
+          <p className="text-[#888] mt-0.5">{persona.cargo_actual ?? "Sin cargo"}</p>
+          <div className="flex gap-2 mt-1.5 flex-wrap">
+            {persona.rol_sistema && (
+              <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#eaf4ff] text-[#1a5276] font-medium">
+                {persona.rol_sistema}
+              </span>
+            )}
+            <span
+              className="text-xs px-2.5 py-0.5 rounded-full font-medium"
+              style={{ background: bgOcp, color: textOcp }}
+            >
+              {pctTotal}% ocupado actualmente
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* ── Info ───────────────────────────────────────────── */}
+      <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
+        <h3 className="font-semibold mb-4">Información</h3>
+        <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
+          <div>
+            <dt className="text-[#888]">Email</dt>
+            <dd className="font-medium mt-0.5">{persona.email}</dd>
+          </div>
+          {persona.fecha_ingreso && (
+            <div>
+              <dt className="text-[#888]">Fecha de ingreso</dt>
+              <dd className="font-medium mt-0.5">
+                {format(new Date(persona.fecha_ingreso + "T00:00:00"), "d 'de' MMMM yyyy", { locale: es })}
+              </dd>
+            </div>
+          )}
+        </dl>
+      </div>
+
+      {/* ── Asignaciones activas ───────────────────────────── */}
+      <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
+        <h3 className="font-semibold mb-4">Asignaciones activas</h3>
+        {asignaciones.length === 0 ? (
+          <p className="text-sm text-[#888]">Sin asignaciones activas.</p>
+        ) : (
+          <div className="space-y-2">
+            {asignaciones.map((a) => {
+              const { bg, text } = colorOcupacion(a.pct_dedicacion);
+              return (
+                <div
+                  key={a.id}
+                  className="flex items-center justify-between gap-4 p-3 rounded-lg bg-[#f9f9f9] border border-[#f0f0f0]"
+                >
+                  <div className="min-w-0 flex-1">
+                    <p className="font-medium text-sm truncate">{a.engagement_nombre}</p>
+                    <p className="text-xs text-[#888] mt-0.5">
+                      {format(new Date(a.fecha_inicio + "T00:00:00"), "d MMM yy", { locale: es })}
+                      {" → "}
+                      {a.fecha_fin
+                        ? format(new Date(a.fecha_fin + "T00:00:00"), "d MMM yy", { locale: es })
+                        : "indefinido"}
+                    </p>
+                  </div>
+                  <span
+                    className="flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full"
+                    style={{ background: bg, color: text }}
+                  >
+                    {a.pct_dedicacion}%
+                  </span>
+                </div>
+              );
+            })}
+            {asignaciones.length > 1 && (
+              <p className="text-xs text-[#aaa] text-right pt-1">
+                Total: {pctTotal}% de capacidad comprometida
+              </p>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* ── Preferencias y experiencia ─────────────────────── */}
+      {tienePreferencias && (
+        <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
+          <h3 className="font-semibold mb-4">Preferencias y experiencia</h3>
+          <div className="space-y-5">
+
+            {industrias.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-[#888] uppercase tracking-widest mb-2">
+                  Industrias
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {industrias.map((t) => (
+                    <span
+                      key={t.id}
+                      className="text-xs px-2.5 py-1 rounded-full bg-[#eaf4ff] text-[#1a5276] font-medium"
+                    >
+                      {t.nombre}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {capacidades.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-[#888] uppercase tracking-widest mb-2">
+                  Capacidades
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {capacidades.map((t) => (
+                    <span
+                      key={t.id}
+                      className="text-xs px-2.5 py-1 rounded-full bg-[#f0f9f4] text-[#1e7e45] font-medium"
+                    >
+                      {t.nombre}
+                      {t.nivel && (
+                        <span className="ml-1 opacity-60">
+                          · {NIVEL_LABEL[t.nivel] ?? t.nivel}
+                        </span>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {tematicas.length > 0 && (
+              <div>
+                <p className="text-xs font-semibold text-[#888] uppercase tracking-widest mb-2">
+                  Temáticas
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  {tematicas.map((t) => (
+                    <span
+                      key={t.id}
+                      className="text-xs px-2.5 py-1 rounded-full bg-[#fdf4ff] text-[#6b21a8] font-medium"
+                    >
+                      {t.nombre}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
