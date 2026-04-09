@@ -13,18 +13,21 @@ interface PlanResumen {
   nombre: string;
 }
 
+type Vista = "persona" | "proyecto";
+
 export default function TableroPage() {
   const [semanaInicio, setSemanaInicio] = useState<Date>(() =>
     startOfISOWeek(new Date())
   );
   // null = vista real; string = ID del plan
   const [planId, setPlanId] = useState<string | null>(null);
+  const [vista, setVista] = useState<Vista>("persona");
   const [planes, setPlanes] = useState<PlanResumen[]>([]);
   const [planesLoading, setPlanesLoading] = useState(true);
   const [dropdownOpen, setDropdownOpen] = useState(false);
 
   const semanaLabel = (() => {
-    const fin = addWeeks(semanaInicio, 6);
+    const fin = addWeeks(semanaInicio, 1);
     return `${format(semanaInicio, "d MMM", { locale: es })} – ${format(fin, "d MMM yyyy", { locale: es })}`;
   })();
 
@@ -47,8 +50,34 @@ export default function TableroPage() {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Topbar del tablero */}
-      <header className="h-14 bg-white border-b border-[#e8e8e8] flex items-center px-6 gap-4 flex-shrink-0">
+      <header className="h-14 bg-white border-b border-[#e8e8e8] flex items-center px-6 gap-3 flex-shrink-0">
         <h1 className="text-[16px] font-bold flex-1">Tablero de Capacidad</h1>
+
+        {/* Toggle persona / proyecto */}
+        <div className="flex bg-[#f0f0f0] rounded-lg p-[3px] gap-[2px]">
+          <button
+            onClick={() => setVista("persona")}
+            className={cn(
+              "px-3.5 py-[5px] rounded-md text-xs font-semibold transition-all",
+              vista === "persona"
+                ? "bg-white text-[#1a1a1a] shadow-sm"
+                : "text-[#888] hover:text-[#555]"
+            )}
+          >
+            Por persona
+          </button>
+          <button
+            onClick={() => setVista("proyecto")}
+            className={cn(
+              "px-3.5 py-[5px] rounded-md text-xs font-semibold transition-all",
+              vista === "proyecto"
+                ? "bg-white text-[#1a1a1a] shadow-sm"
+                : "text-[#888] hover:text-[#555]"
+            )}
+          >
+            Por proyecto
+          </button>
+        </div>
 
         {/* Navegación de semana */}
         <div className="flex items-center gap-2 text-[13px] text-[#555]">
@@ -59,7 +88,7 @@ export default function TableroPage() {
           >
             <ChevronLeft className="w-3.5 h-3.5" />
           </button>
-          <span className="font-semibold text-[#1a1a1a] min-w-[220px] text-center">
+          <span className="font-semibold text-[#1a1a1a] min-w-[200px] text-center text-xs">
             {semanaLabel}
           </span>
           <button
@@ -149,7 +178,11 @@ export default function TableroPage() {
 
       {/* Contenido */}
       <div className="flex-1 overflow-auto scrollbar-thin">
-        <TablonOcupacion semanaInicio={semanaInicio} planId={planId} />
+        <TablonOcupacion
+          semanaInicio={semanaInicio}
+          planId={planId}
+          vista={vista}
+        />
       </div>
     </div>
   );
