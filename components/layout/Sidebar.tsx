@@ -9,6 +9,8 @@ import {
   ClipboardList,
   Settings,
   LogOut,
+  Kanban,
+  CalendarOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RolSistema } from "@/lib/types/database";
@@ -24,14 +26,16 @@ const navItems = [
   {
     section: "Principal",
     items: [
-      { href: "/tablero", label: "Tablero", icon: LayoutDashboard },
+      { href: "/tablero",   label: "Tablero",   icon: LayoutDashboard },
       { href: "/engagements", label: "Engagements", icon: Briefcase },
-      { href: "/personas", label: "Personas", icon: Users },
+      { href: "/personas",  label: "Personas",  icon: Users },
+      { href: "/ausencias", label: "Ausencias", icon: CalendarOff },
     ],
   },
   {
     section: "Gestión",
     items: [
+      { href: "/planificacion",  label: "Planificación",  icon: Kanban },
       { href: "/propuestas",     label: "Propuestas",     icon: ClipboardList },
       { href: "/configuracion",  label: "Configuración",  icon: Settings },
     ],

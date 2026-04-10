@@ -30,6 +30,8 @@ export type TipoAusencia =
   | "licencia_medica"
   | "capacitacion"
   | "permiso"
+  | "dia_libre"
+  | "dia_administrativo"
   | "otro";
 
 // ─────────────────────────────────────────────────────────────
@@ -256,13 +258,13 @@ export interface AsignacionHistorial {
 export interface Ausencia {
   id: string;
   persona_id: string;
-  auth_user_id: string | null;
   tipo: TipoAusencia;
   fecha_inicio: string;
   fecha_fin: string;
   dias_habiles: number | null;
   descripcion: string | null;
-  aprobada: boolean;
+  /** "manual" | "importacion_buk" — por defecto "manual" */
+  fuente: "manual" | "importacion_buk";
   created_at: string;
 }
 
@@ -383,7 +385,7 @@ export type Database = {
       };
       ausencia: {
         Row: Ausencia;
-        Insert: Omit<Ausencia, "id" | "created_at">;
+        Insert: Omit<Ausencia, "id" | "created_at" | "fuente"> & { fuente?: "manual" | "importacion_buk" };
         Update: Partial<Omit<Ausencia, "id" | "created_at">>;
       };
     };
