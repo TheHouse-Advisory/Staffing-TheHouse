@@ -28,3 +28,13 @@ export function formatPct(pct: number): string {
 export function nombreCompleto(nombre: string, apellido: string): string {
   return `${nombre} ${apellido}`;
 }
+
+/**
+ * Parsea una fecha ISO "YYYY-MM-DD" como fecha LOCAL (no UTC).
+ * Sin esto, new Date("2024-01-15") se interpreta como UTC medianoche,
+ * que en zonas UTC-3/4 se convierte al día anterior.
+ */
+export function fLocal(dateStr: string | null | undefined): Date {
+  if (!dateStr) return new Date();
+  return new Date(dateStr + "T00:00:00");
+}

@@ -82,7 +82,7 @@ export async function fetchCoberturaEngagement(
     .from("cobertura_engagement")
     .select("*")
     .eq("engagement_id", engagementId)
-    .order("fase_numero");
+    .order("fase_nombre");
 
   if (error) return { data: [], error: error.message };
   return { data: (data as CoberturaEngagement[]) ?? [], error: null };

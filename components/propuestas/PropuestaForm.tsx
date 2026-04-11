@@ -23,7 +23,6 @@ interface PersonaData {
 
 interface CoberturaReq {
   requerimiento_id: string;
-  fase_numero: number;
   fase_nombre: string | null;
   cargo_requerido: string | null;
   pct_requerido: number;
@@ -110,11 +109,8 @@ function ReqCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 flex-wrap">
             <span className="text-xs font-bold text-[#555]">
-              Fase {req.fase_numero}
+              {req.fase_nombre ?? "Requerimiento"}
             </span>
-            {req.fase_nombre && (
-              <span className="text-xs text-[#888]">— {req.fase_nombre}</span>
-            )}
           </div>
           <div className="flex items-center gap-2 mt-1 flex-wrap">
             {req.cargo_requerido ? (
@@ -244,9 +240,9 @@ export function PropuestaForm({ open, onClose, onSuccess, propuesta, engagementI
     const supabase = createAnyClient();
     supabase
       .from("cobertura_engagement")
-      .select("requerimiento_id, fase_numero, fase_nombre, cargo_requerido, pct_requerido, req_fecha_inicio, req_fecha_fin, pct_cubierto, pct_descubierto")
+      .select("requerimiento_id, fase_nombre, cargo_requerido, pct_requerido, req_fecha_inicio, req_fecha_fin, pct_cubierto, pct_descubierto")
       .eq("engagement_id", form.engagement_id)
-      .order("fase_numero")
+      .order("fase_nombre")
       .then(({ data }: any) => {
         setReqs((data ?? []) as CoberturaReq[]);
         setReqsLoading(false);
@@ -438,8 +434,7 @@ export function PropuestaForm({ open, onClose, onSuccess, propuesta, engagementI
             </div>
             {reqSeleccionado && (
               <div className="px-4 py-2.5 bg-[#eaf4ff] border-t border-[#c0d4f0] text-xs text-[#1a5276]">
-                Proponiendo para: <strong>Fase {reqSeleccionado.fase_numero}
-                {reqSeleccionado.fase_nombre ? ` — ${reqSeleccionado.fase_nombre}` : ""}</strong>
+                Proponiendo para: <strong>{reqSeleccionado.fase_nombre ?? "Requerimiento"}</strong>
                 {" · "}
                 <button
                   type="button"

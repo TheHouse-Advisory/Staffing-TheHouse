@@ -175,10 +175,10 @@ export function PropuestasList({ rolActual }: Props) {
     const supabase = createAnyClient();
     const { data } = await supabase
       .from("cobertura_engagement")
-      .select("engagement_id,engagement_nombre,cliente,requerimiento_id,fase_numero,fase_nombre,cargo_requerido,pct_requerido,pct_descubierto,req_fecha_inicio,req_fecha_fin")
+      .select("engagement_id,engagement_nombre,cliente,requerimiento_id,fase_nombre,cargo_requerido,pct_requerido,pct_descubierto,req_fecha_inicio,req_fecha_fin")
       .gt("pct_descubierto", 0)
       .order("engagement_nombre")
-      .order("fase_numero");
+      .order("fase_nombre");
 
     if (!data || data.length === 0) {
       setGapsEngagements([]);
@@ -198,7 +198,6 @@ export function PropuestasList({ rolActual }: Props) {
       }
       engMap.get(row.engagement_id)!.gaps.push({
         requerimiento_id: row.requerimiento_id,
-        fase_numero: row.fase_numero,
         fase_nombre: row.fase_nombre,
         cargo_requerido: row.cargo_requerido,
         pct_requerido: row.pct_requerido,
@@ -412,7 +411,7 @@ export function PropuestasList({ rolActual }: Props) {
                         {eng.gaps.map((gap) => (
                           <div key={gap.requerimiento_id} className="flex items-center gap-2 flex-wrap text-xs">
                             <span className="px-1.5 py-0.5 rounded bg-red-50 text-red-600 font-medium">
-                              Fase {gap.fase_numero}{gap.fase_nombre ? ` — ${gap.fase_nombre}` : ""}
+                              {gap.fase_nombre ?? "Requerimiento"}
                             </span>
                             {gap.cargo_requerido && (
                               <span className="px-1.5 py-0.5 rounded bg-[#eaf4ff] text-[#1a5276]">
@@ -654,7 +653,6 @@ interface GapEngagementUI extends GapEngagement {
   cliente: string;
   gaps: {
     requerimiento_id: string;
-    fase_numero: number;
     fase_nombre: string | null;
     cargo_requerido: string | null;
     pct_requerido: number;

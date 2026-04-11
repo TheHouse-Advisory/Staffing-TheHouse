@@ -11,7 +11,6 @@ import type { Engagement, RequerimientoEngagement } from "@/lib/types/database";
 
 interface ReqRow {
   id?: string;
-  fase_numero: number;
   fase_nombre: string;
   cargo_requerido: string;
   descripcion: string;
@@ -32,7 +31,7 @@ const EMPTY_ENG = {
   descripcion: "", fecha_inicio: "", fecha_fin_estimada: "", industria_id: "",
 };
 
-const EMPTY_REQ: Omit<ReqRow, "fase_numero"> = {
+const EMPTY_REQ: ReqRow = {
   fase_nombre: "", cargo_requerido: "", descripcion: "",
   pct_dedicacion: "100", fecha_inicio: "", fecha_fin: "",
 };
@@ -71,10 +70,9 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
           .from("requerimiento_engagement")
           .select("*")
           .eq("engagement_id", engagement.id)
-          .order("fase_numero");
+          .order("fase_nombre");
         setReqs((reqData ?? []).map((r: RequerimientoEngagement) => ({
           id: r.id,
-          fase_numero: r.fase_numero,
           fase_nombre: r.fase_nombre ?? "",
           cargo_requerido: r.cargo_requerido ?? "",
           descripcion: r.descripcion ?? "",
@@ -94,13 +92,12 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
   const addReq = () =>
     setReqs((r) => [...r, {
       ...EMPTY_REQ,
-      fase_numero: r.length + 1,
       fecha_inicio: form.fecha_inicio,
       fecha_fin: form.fecha_fin_estimada,
     }]);
 
   const removeReq = (idx: number) =>
-    setReqs((r) => r.filter((_, i) => i !== idx).map((rq, i) => ({ ...rq, fase_numero: i + 1 })));
+    setReqs((r) => r.filter((_, i) => i !== idx));
 
   const setReqField = (idx: number, field: keyof ReqRow) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
@@ -174,7 +171,6 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     for (const [i, r] of reqs.entries()) {
       const reqPayload = {
         engagement_id: engId,
-        fase_numero: i + 1,
         fase_nombre: r.fase_nombre.trim() || null,
         cargo_requerido: r.cargo_requerido || null,
         descripcion: r.descripcion.trim() || null,

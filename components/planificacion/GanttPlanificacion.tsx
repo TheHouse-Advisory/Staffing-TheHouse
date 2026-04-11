@@ -25,6 +25,7 @@ import {
   type EngagementConReqs,
   type ReqConEstado,
   type AsignacionActiva,
+  type AsignacionDetalle,
   type PersonaFit,
   type FitNivel,
 } from "@/lib/queries/planificacion";
@@ -354,6 +355,126 @@ function FilaRequerimiento({
 }
 
 // ─────────────────────────────────────────────────────────────
+//  Mini Gantt de capacidad por persona
+// ─────────────────────────────────────────────────────────────
+
+const GANTT_COLORS = [
+  "#94a3b8", "#64748b", "#7c9ebe", "#8b9dc7", "#a0aec0",
+  "#6b7fa8", "#9badc7", "#7b8fab",
+];
+
+function barColor(idx: number): string {
+  return GANTT_COLORS[idx % GANTT_COLORS.length];
+}
+
+function MiniGantt({
+  req,
+  asignaciones,
+}: {
+  req: ReqConEstado;
+  asignaciones: AsignacionDetalle[];
+}) {
+  const reqStart = new Date(req.fecha_inicio + "T00:00:00").getTime();
+  const reqEnd   = new Date(req.fecha_fin   + "T00:00:00").getTime();
+  const totalMs  = reqEnd - reqStart;
+
+  if (totalMs <= 0) return null;
+
+  function posAndWidth(inicio: string, fin: string | null) {
+    const s = new Date(inicio + "T00:00:00").getTime();
+    const e = fin ? new Date(fin + "T00:00:00").getTime() : reqEnd;
+    const clampS = Math.max(s, reqStart);
+    const clampE = Math.min(e, reqEnd);
+    if (clampS >= clampE) return null;
+    const left  = ((clampS - reqStart) / totalMs) * 100;
+    const width = ((clampE - clampS)   / totalMs) * 100;
+    return { left: Math.max(0, left), width: Math.max(1, width) };
+  }
+
+  // Filtrar asignaciones que realmente se solapan con el req
+  const asigSolap = asignaciones.filter((a) => {
+    const s = new Date(a.fecha_inicio + "T00:00:00").getTime();
+    const e = a.fecha_fin ? new Date(a.fecha_fin + "T00:00:00").getTime() : reqEnd + 1;
+    return s < reqEnd && e > reqStart;
+  });
+
+  const rows: Array<{
+    label: string;
+    pct: number;
+    inicio: string;
+    fin: string | null;
+    color: string;
+    isProposed: boolean;
+  }> = [
+    // Asignaciones existentes
+    ...asigSolap.map((a, i) => ({
+      label: a.engagement_nombre,
+      pct: a.pct_dedicacion,
+      inicio: a.fecha_inicio,
+      fin: a.fecha_fin,
+      color: barColor(i),
+      isProposed: false,
+    })),
+    // La propuesta actual
+    {
+      label: "Esta propuesta",
+      pct: req.pct_dedicacion,
+      inicio: req.fecha_inicio,
+      fin: req.fecha_fin,
+      color: "#3b82f6",
+      isProposed: true,
+    },
+  ];
+
+  return (
+    <div className="mt-2 space-y-1">
+      {/* Eje de tiempo */}
+      <div className="flex items-center justify-between text-[9px] text-[#aaa] px-0.5 mb-0.5">
+        <span>{formatFecha(req.fecha_inicio)}</span>
+        <span>{formatFecha(req.fecha_fin)}</span>
+      </div>
+
+      {rows.map((row, i) => {
+        const pos = posAndWidth(row.inicio, row.fin);
+        if (!pos) return null;
+
+        return (
+          <div key={i} className="flex items-center gap-1.5">
+            {/* Label izquierda */}
+            <div
+              className="w-[72px] text-[9px] text-right flex-shrink-0 truncate leading-tight"
+              style={{ color: row.isProposed ? "#3b82f6" : "#888" }}
+              title={row.label}
+            >
+              {row.label}
+            </div>
+
+            {/* Barra posicionada en el timeline */}
+            <div className="relative flex-1 h-4 bg-[#f0f0f0] rounded-sm overflow-hidden">
+              <div
+                className="absolute top-0 h-full rounded-sm flex items-center overflow-hidden"
+                style={{
+                  left:    `${pos.left}%`,
+                  width:   `${pos.width}%`,
+                  background: row.color,
+                  opacity: row.isProposed ? 1 : 0.75,
+                  border:  row.isProposed ? "1px solid rgba(59,130,246,0.5)" : "none",
+                }}
+                title={`${row.label} · ${row.pct}%`}
+              >
+                <span className="text-[8px] text-white font-semibold px-1 truncate leading-none select-none">
+                  {row.pct}%
+                </span>
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 //  Panel de fit (derecha)
 // ─────────────────────────────────────────────────────────────
 
@@ -485,26 +606,13 @@ function FitPanel({
                     </div>
                   )}
 
-                  {/* Barra de capacidad */}
-                  <div className="mt-2">
-                    <div className="flex items-center justify-between mb-0.5">
-                      <span className="text-[9px] text-[#aaa]">Capacidad desde hoy</span>
-                      <span className="text-[9px] font-medium text-[#666]">
-                        {p.pct_ocupado_en_rango}% ocupado
-                      </span>
-                    </div>
-                    <div className="h-1.5 rounded-full bg-[#f0f0f0] overflow-hidden">
-                      <div
-                        className="h-full rounded-full"
-                        style={{
-                          width: `${Math.min(100, p.pct_si_asigna)}%`,
-                          background: p.pct_si_asigna > 100 ? "#ef4444"
-                            : p.pct_si_asigna > 80 ? "#f59e0b"
-                            : "#27ae60",
-                        }}
-                      />
-                    </div>
-                  </div>
+                  {/* Mini Gantt de capacidad */}
+                  {req && (
+                    <MiniGantt
+                      req={req}
+                      asignaciones={p.asignaciones}
+                    />
+                  )}
                 </div>
               );
             })}
@@ -767,13 +875,25 @@ export function GanttPlanificacion() {
 
   // ── Filtrado y stats ───────────────────────────────────────
 
-  const engFiltrados = filtro.trim()
+  // Función para saber si un engagement tiene algún req sin cubrir (contando tentativas)
+  const tienePendiente = (eng: EngagementConReqs) =>
+    eng.requerimientos.some(
+      (r) => !r.cubierto_desde_hoy && !tentativas.some((t) => t.requerimiento_id === r.id)
+    );
+
+  const engFiltrados = (filtro.trim()
     ? engagements.filter((e) =>
         e.nombre.toLowerCase().includes(filtro.toLowerCase()) ||
         e.cliente.toLowerCase().includes(filtro.toLowerCase()) ||
         e.requerimientos.some((r) => r.cargo_requerido?.toLowerCase().includes(filtro.toLowerCase()))
       )
-    : engagements;
+    : engagements
+  ).sort((a, b) => {
+    const aPend = tienePendiente(a) ? 0 : 1;
+    const bPend = tienePendiente(b) ? 0 : 1;
+    if (aPend !== bPend) return aPend - bPend;
+    return a.nombre.localeCompare(b.nombre, "es");
+  });
 
   const allReqs   = engagements.flatMap((e) => e.requerimientos);
   const totalReqs = allReqs.length;
