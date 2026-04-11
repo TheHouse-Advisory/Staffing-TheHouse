@@ -5,8 +5,9 @@ import { Topbar } from "@/components/layout/Topbar";
 import { CatalogoTab } from "@/components/configuracion/CatalogoTab";
 
 type Tab = "industrias" | "capacidades" | "tematicas";
+type TablaName = "cat_industria" | "cat_capacidad" | "cat_tematica";
 
-const TABS: { key: Tab; label: string; tabla: string; titulo: string }[] = [
+const TABS: { key: Tab; label: string; tabla: TablaName; titulo: string }[] = [
   { key: "industrias",  label: "Industrias",  tabla: "cat_industria", titulo: "Industrias" },
   { key: "capacidades", label: "Capacidades", tabla: "cat_capacidad",  titulo: "Capacidades" },
   { key: "tematicas",   label: "Temáticas",   tabla: "cat_tematica",  titulo: "Temáticas" },

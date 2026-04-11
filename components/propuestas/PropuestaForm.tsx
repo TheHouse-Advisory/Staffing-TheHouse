@@ -4,7 +4,7 @@ import { useState, useEffect } from "react";
 import { CheckCircle, AlertTriangle, ChevronRight } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { createClient } from "@/lib/supabase/client";
+import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
 import { FieldWrapper, Input, Select, Textarea } from "@/components/ui/FormField";
@@ -202,7 +202,7 @@ export function PropuestaForm({ open, onClose, onSuccess, propuesta, engagementI
     }
 
     async function load() {
-      const supabase = createClient();
+      const supabase = createAnyClient();
       const { data: { user } } = await supabase.auth.getUser();
 
       const [pRes, eRes, meRes] = await Promise.all([
@@ -214,7 +214,7 @@ export function PropuestaForm({ open, onClose, onSuccess, propuesta, engagementI
       ]);
 
       setPersonasData((pRes.data ?? []) as PersonaData[]);
-      setEngagements((eRes.data ?? []).map((e) => ({ value: e.id, label: e.nombre })));
+      setEngagements((eRes.data ?? []).map((e: any) => ({ value: e.id, label: e.nombre })));
       if (meRes.data) setMiPersonaId(meRes.data.id);
 
       if (propuesta) {
@@ -241,13 +241,13 @@ export function PropuestaForm({ open, onClose, onSuccess, propuesta, engagementI
     if (!form.engagement_id) return;
 
     setReqsLoading(true);
-    const supabase = createClient();
+    const supabase = createAnyClient();
     supabase
       .from("cobertura_engagement")
       .select("requerimiento_id, fase_numero, fase_nombre, cargo_requerido, pct_requerido, req_fecha_inicio, req_fecha_fin, pct_cubierto, pct_descubierto")
       .eq("engagement_id", form.engagement_id)
       .order("fase_numero")
-      .then(({ data }) => {
+      .then(({ data }: any) => {
         setReqs((data ?? []) as CoberturaReq[]);
         setReqsLoading(false);
       });
@@ -312,7 +312,7 @@ export function PropuestaForm({ open, onClose, onSuccess, propuesta, engagementI
     if (!validate()) return;
     setLoading(true);
     setServerError(null);
-    const supabase = createClient();
+    const supabase = createAnyClient();
 
     // cargo_al_momento: snapshot del cargo actual de la persona
     const persona = personasData.find((p) => p.id === form.persona_id);

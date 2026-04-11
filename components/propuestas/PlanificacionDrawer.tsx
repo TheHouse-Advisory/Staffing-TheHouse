@@ -15,7 +15,7 @@ import { useState, useEffect } from "react";
 import { AlertTriangle, CheckCircle, UserX } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { createClient } from "@/lib/supabase/client";
+import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
 import { FieldWrapper, Select, Input } from "@/components/ui/FormField";
@@ -143,14 +143,14 @@ export function PlanificacionDrawer({
   // Cargar lista de engagements al abrir
   useEffect(() => {
     if (!open) return;
-    const supabase = createClient();
+    const supabase = createAnyClient();
     supabase
       .from("engagement")
       .select("id, nombre")
       .in("estado", ["propuesta", "activo"])
       .order("nombre")
-      .then(({ data }) =>
-        setEngagements((data ?? []).map((e) => ({ value: e.id, label: e.nombre })))
+      .then(({ data }: any) =>
+        setEngagements((data ?? []).map((e: any) => ({ value: e.id, label: e.nombre })))
       );
   }, [open]);
 
@@ -164,7 +164,7 @@ export function PlanificacionDrawer({
 
     setDataLoading(true);
     async function loadData() {
-      const supabase = createClient();
+      const supabase = createAnyClient();
 
       // 1. Requerimientos sin cubrir al 100%
       const { data: gapsData } = await supabase
@@ -272,7 +272,7 @@ export function PlanificacionDrawer({
     }
     setSubmitLoading(true);
     setError(null);
-    const supabase = createClient();
+    const supabase = createAnyClient();
 
     // 0. Verificar que no exista otro borrador con el mismo nombre
     const { data: existente } = await supabase

@@ -2,16 +2,15 @@
 
 import { useState, useEffect } from "react";
 import { Plus, Trash2 } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
 import { FieldWrapper, Input, Select, Textarea } from "@/components/ui/FormField";
+import { CARGOS_OPTIONS } from "@/lib/constants";
 import type { Engagement, RequerimientoEngagement } from "@/lib/types/database";
 
-
-// Requerimiento en el formulario (sin id si es nuevo)
 interface ReqRow {
-  id?: string;        // existe si ya fue guardado
+  id?: string;
   fase_numero: number;
   fase_nombre: string;
   cargo_requerido: string;
@@ -29,13 +28,13 @@ interface EngagementFormProps {
 }
 
 const EMPTY_ENG = {
-  nombre: "", cliente: "", tipo: "proyecto", estado: "propuesta",
+  nombre: "", cliente: "", tipo: "proyecto", estado: "activo",
   descripcion: "", fecha_inicio: "", fecha_fin_estimada: "", industria_id: "",
 };
 
 const EMPTY_REQ: Omit<ReqRow, "fase_numero"> = {
   fase_nombre: "", cargo_requerido: "", descripcion: "",
-  pct_dedicacion: "", fecha_inicio: "", fecha_fin: "",
+  pct_dedicacion: "100", fecha_inicio: "", fecha_fin: "",
 };
 
 export function EngagementForm({ open, onClose, onSuccess, engagement }: EngagementFormProps) {
@@ -44,19 +43,18 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const [cargos, setCargos] = useState<{ value: string; label: string }[]>([]);
   const [industrias, setIndustrias] = useState<{ value: string; label: string }[]>([]);
 
   useEffect(() => {
-    if (!open) { setForm({ ...EMPTY_ENG }); setReqs([]); setErrors({}); setServerError(null); return; }
+    if (!open) {
+      setForm({ ...EMPTY_ENG }); setReqs([]); setErrors({}); setServerError(null);
+      return;
+    }
     async function load() {
-      const supabase = createClient();
-      const [c, i] = await Promise.all([
-        supabase.from("config_cargo").select("nombre").order("nombre"),
-        supabase.from("cat_industria").select("id,nombre").eq("activo", true).order("nombre"),
-      ]);
-      setCargos((c.data ?? []).map((r) => ({ value: r.nombre, label: r.nombre })));
-      setIndustrias((i.data ?? []).map((r) => ({ value: r.id, label: r.nombre })));
+      const supabase = createAnyClient();
+      const { data: iData } = await supabase
+        .from("cat_industria").select("id,nombre").eq("activo", true).order("nombre");
+      setIndustrias((iData ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
 
       if (engagement) {
         setForm({
@@ -69,7 +67,6 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
           fecha_fin_estimada: engagement.fecha_fin_estimada ?? "",
           industria_id: engagement.industria_id ?? "",
         });
-        // Cargar requerimientos existentes
         const { data: reqData } = await supabase
           .from("requerimiento_engagement")
           .select("*")
@@ -90,11 +87,17 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     load();
   }, [open, engagement]);
 
-  const setField = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) =>
-    setForm((f) => ({ ...f, [field]: e.target.value }));
+  const setField = (field: string) => (
+    e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
+  ) => setForm((f) => ({ ...f, [field]: e.target.value }));
 
   const addReq = () =>
-    setReqs((r) => [...r, { ...EMPTY_REQ, fase_numero: r.length + 1 }]);
+    setReqs((r) => [...r, {
+      ...EMPTY_REQ,
+      fase_numero: r.length + 1,
+      fecha_inicio: form.fecha_inicio,
+      fecha_fin: form.fecha_fin_estimada,
+    }]);
 
   const removeReq = (idx: number) =>
     setReqs((r) => r.filter((_, i) => i !== idx).map((rq, i) => ({ ...rq, fase_numero: i + 1 })));
@@ -107,10 +110,27 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     const e: Record<string, string> = {};
     if (!form.nombre.trim()) e.nombre = "Requerido";
     if (!form.cliente.trim()) e.cliente = "Requerido";
+    if (form.fecha_fin_estimada && form.fecha_inicio && form.fecha_fin_estimada < form.fecha_inicio) {
+      e.fecha_fin_estimada = "No puede ser anterior a la fecha de inicio";
+    }
     reqs.forEach((r, i) => {
-      if (!r.pct_dedicacion || isNaN(Number(r.pct_dedicacion))) e[`req_${i}_pct`] = "% inválido";
-      if (!r.fecha_inicio) e[`req_${i}_inicio`] = "Requerida";
-      if (!r.fecha_fin) e[`req_${i}_fin`] = "Requerida";
+      if (!r.pct_dedicacion || isNaN(Number(r.pct_dedicacion))) {
+        e[`req_${i}_pct`] = "% inválido";
+      }
+      if (!r.fecha_inicio) {
+        e[`req_${i}_inicio`] = "Requerida";
+      } else if (form.fecha_inicio && r.fecha_inicio < form.fecha_inicio) {
+        e[`req_${i}_inicio`] = `No puede ser antes del ${form.fecha_inicio}`;
+      } else if (form.fecha_fin_estimada && r.fecha_inicio > form.fecha_fin_estimada) {
+        e[`req_${i}_inicio`] = `No puede ser después del ${form.fecha_fin_estimada}`;
+      }
+      if (!r.fecha_fin) {
+        e[`req_${i}_fin`] = "Requerida";
+      } else if (r.fecha_inicio && r.fecha_fin < r.fecha_inicio) {
+        e[`req_${i}_fin`] = "No puede ser anterior a la fecha de inicio";
+      } else if (form.fecha_fin_estimada && r.fecha_fin > form.fecha_fin_estimada) {
+        e[`req_${i}_fin`] = `No puede ser después del ${form.fecha_fin_estimada}`;
+      }
     });
     setErrors(e);
     return Object.keys(e).length === 0;
@@ -119,13 +139,13 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
   const handleSubmit = async () => {
     if (!validate()) return;
     setLoading(true); setServerError(null);
-    const supabase = createClient();
+    const supabase = createAnyClient();
 
     const payload = {
       nombre: form.nombre.trim(),
       cliente: form.cliente.trim(),
       tipo: form.tipo as "propuesta" | "proyecto",
-      estado: form.estado as Engagement["estado"],
+      estado: form.estado as "activo" | "terminado",
       descripcion: form.descripcion.trim() || null,
       fecha_inicio: form.fecha_inicio || null,
       fecha_fin_estimada: form.fecha_fin_estimada || null,
@@ -151,7 +171,6 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
       engId = data.id;
     }
 
-    // Upsert requerimientos
     for (const [i, r] of reqs.entries()) {
       const reqPayload = {
         engagement_id: engId,
@@ -175,6 +194,10 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     onClose();
   };
 
+  // Límites de fecha para requerimientos
+  const minReqDate = form.fecha_inicio || undefined;
+  const maxReqDate = form.fecha_fin_estimada || undefined;
+
   return (
     <Drawer
       open={open}
@@ -192,7 +215,9 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     >
       <div className="space-y-5">
         {serverError && (
-          <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">{serverError}</div>
+          <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+            {serverError}
+          </div>
         )}
 
         <div className="grid grid-cols-2 gap-4">
@@ -207,23 +232,25 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
           </FieldWrapper>
           <FieldWrapper label="Tipo">
             <Select value={form.tipo} onChange={setField("tipo")}
-              options={[{ value: "propuesta", label: "Propuesta comercial" }, { value: "proyecto", label: "Proyecto" }]} />
+              options={[
+                { value: "propuesta", label: "Propuesta comercial" },
+                { value: "proyecto", label: "Proyecto" },
+              ]} />
           </FieldWrapper>
           <FieldWrapper label="Estado">
             <Select value={form.estado} onChange={setField("estado")}
               options={[
-                { value: "propuesta", label: "Propuesta" },
                 { value: "activo", label: "Activo" },
-                { value: "pausado", label: "Pausado" },
                 { value: "terminado", label: "Terminado" },
-                { value: "rechazado", label: "Rechazado" },
               ]} />
           </FieldWrapper>
           <FieldWrapper label="Fecha inicio">
-            <Input type="date" value={form.fecha_inicio} onChange={setField("fecha_inicio")} />
+            <Input type="date" value={form.fecha_inicio} onChange={setField("fecha_inicio")}
+              max={form.fecha_fin_estimada || undefined} />
           </FieldWrapper>
-          <FieldWrapper label="Fecha fin estimada">
-            <Input type="date" value={form.fecha_fin_estimada} onChange={setField("fecha_fin_estimada")} />
+          <FieldWrapper label="Fecha fin estimada" error={errors.fecha_fin_estimada}>
+            <Input type="date" value={form.fecha_fin_estimada} onChange={setField("fecha_fin_estimada")}
+              min={form.fecha_inicio || undefined} error={!!errors.fecha_fin_estimada} />
           </FieldWrapper>
         </div>
 
@@ -234,7 +261,15 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
         {/* Requerimientos */}
         <div className="border-t border-[#f0f0f0] pt-5">
           <div className="flex items-center justify-between mb-3">
-            <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">Requerimientos</p>
+            <div>
+              <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">Requerimientos</p>
+              {(minReqDate || maxReqDate) && (
+                <p className="text-[10px] text-[#aaa] mt-0.5">
+                  Las fechas deben estar dentro del rango del engagement
+                  {minReqDate && ` (desde ${minReqDate}`}{maxReqDate && ` → ${maxReqDate}`}{(minReqDate || maxReqDate) && ")"}
+                </p>
+              )}
+            </div>
             <Button variant="ghost" size="sm" onClick={addReq}>
               <Plus className="w-3.5 h-3.5" /> Agregar
             </Button>
@@ -258,20 +293,24 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
                     <Input value={r.fase_nombre} onChange={setReqField(i, "fase_nombre")} placeholder="Diagnóstico" />
                   </FieldWrapper>
                   <FieldWrapper label="Cargo requerido">
-                    <Select value={r.cargo_requerido} onChange={setReqField(i, "cargo_requerido")} options={cargos} placeholder="Cualquier cargo" />
+                    <Select value={r.cargo_requerido} onChange={setReqField(i, "cargo_requerido")}
+                      options={CARGOS_OPTIONS} placeholder="Cualquier cargo" />
                   </FieldWrapper>
                   <FieldWrapper label="% Dedicación" required error={errors[`req_${i}_pct`]}>
                     <Input type="number" min="1" max="100" value={r.pct_dedicacion}
-                      onChange={setReqField(i, "pct_dedicacion")} placeholder="100" error={!!errors[`req_${i}_pct`]} />
+                      onChange={setReqField(i, "pct_dedicacion")} placeholder="100"
+                      error={!!errors[`req_${i}_pct`]} />
                   </FieldWrapper>
-                  <FieldWrapper label="Descripción">
-                    <Input value={r.descripcion} onChange={setReqField(i, "descripcion")} placeholder="Rol en el proyecto" />
+                  <FieldWrapper label="Descripción del rol">
+                    <Input value={r.descripcion} onChange={setReqField(i, "descripcion")} placeholder="Líder de proyecto" />
                   </FieldWrapper>
                   <FieldWrapper label="Fecha inicio" required error={errors[`req_${i}_inicio`]}>
-                    <Input type="date" value={r.fecha_inicio} onChange={setReqField(i, "fecha_inicio")} error={!!errors[`req_${i}_inicio`]} />
+                    <Input type="date" value={r.fecha_inicio} onChange={setReqField(i, "fecha_inicio")}
+                      min={minReqDate} max={maxReqDate} error={!!errors[`req_${i}_inicio`]} />
                   </FieldWrapper>
                   <FieldWrapper label="Fecha fin" required error={errors[`req_${i}_fin`]}>
-                    <Input type="date" value={r.fecha_fin} onChange={setReqField(i, "fecha_fin")} error={!!errors[`req_${i}_fin`]} />
+                    <Input type="date" value={r.fecha_fin} onChange={setReqField(i, "fecha_fin")}
+                      min={r.fecha_inicio || minReqDate} max={maxReqDate} error={!!errors[`req_${i}_fin`]} />
                   </FieldWrapper>
                 </div>
               </div>

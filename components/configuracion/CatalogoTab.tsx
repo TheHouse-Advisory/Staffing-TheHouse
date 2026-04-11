@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Plus, Pencil, Check, X, Trash2 } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { createAnyClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { Input } from "@/components/ui/FormField";
 
@@ -23,7 +23,7 @@ export function CatalogoTab({ tabla, titulo }: Props) {
   const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
-    const supabase = createClient();
+    const supabase = createAnyClient();
     const { data } = await supabase
       .from(tabla)
       .select("id, nombre, activo")
@@ -45,7 +45,7 @@ export function CatalogoTab({ tabla, titulo }: Props) {
   const saveEdit = async (id: string) => {
     if (!editValue.trim()) return;
     setSaving(true);
-    const supabase = createClient();
+    const supabase = createAnyClient();
     await supabase.from(tabla).update({ nombre: editValue.trim() }).eq("id", id);
     setEditingId(null);
     setSaving(false);
@@ -53,7 +53,7 @@ export function CatalogoTab({ tabla, titulo }: Props) {
   };
 
   const toggleActivo = async (item: CatalogoItem) => {
-    const supabase = createClient();
+    const supabase = createAnyClient();
     await supabase.from(tabla).update({ activo: !item.activo }).eq("id", item.id);
     load();
   };
@@ -61,7 +61,7 @@ export function CatalogoTab({ tabla, titulo }: Props) {
   const addItem = async () => {
     if (!newValue.trim()) return;
     setSaving(true);
-    const supabase = createClient();
+    const supabase = createAnyClient();
     await supabase.from(tabla).insert({ nombre: newValue.trim() });
     setNewValue("");
     setAdding(false);

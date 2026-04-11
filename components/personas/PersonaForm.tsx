@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { createClient } from "@/lib/supabase/client";
+import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
 import { FieldWrapper, Input, Select } from "@/components/ui/FormField";
@@ -41,7 +41,7 @@ const EMPTY: FormState = {
 
 export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormProps) {
   const [form, setForm] = useState<FormState>(EMPTY);
-  const [errors, setErrors] = useState<Partial<FormState>>({});
+  const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
 
@@ -55,17 +55,17 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
   useEffect(() => {
     if (!open) return;
     async function loadCatalogs() {
-      const supabase = createClient();
+      const supabase = createAnyClient();
       const [c, i, cap, t] = await Promise.all([
         supabase.from("config_cargo").select("nombre").order("nombre"),
         supabase.from("cat_industria").select("id,nombre").eq("activo", true).order("nombre"),
         supabase.from("cat_capacidad").select("id,nombre").eq("activo", true).order("nombre"),
         supabase.from("cat_tematica").select("id,nombre").eq("activo", true).order("nombre"),
       ]);
-      setCargos((c.data ?? []).map((r) => ({ value: r.nombre, label: r.nombre })));
-      setIndustrias((i.data ?? []).map((r) => ({ value: r.id, label: r.nombre })));
-      setCapacidades((cap.data ?? []).map((r) => ({ value: r.id, label: r.nombre })));
-      setTematicas((t.data ?? []).map((r) => ({ value: r.id, label: r.nombre })));
+      setCargos((c.data ?? []).map((r: any) => ({ value: r.nombre, label: r.nombre })));
+      setIndustrias((i.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
+      setCapacidades((cap.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
+      setTematicas((t.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
     }
     loadCatalogs();
   }, [open]);
@@ -76,7 +76,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
     if (!persona) return;
 
     async function loadRelaciones() {
-      const supabase = createClient();
+      const supabase = createAnyClient();
       const [pi, pc, pt] = await Promise.all([
         supabase.from("persona_industria").select("industria_id").eq("persona_id", persona!.id),
         supabase.from("persona_capacidad").select("capacidad_id").eq("persona_id", persona!.id),
@@ -89,9 +89,9 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
         cargo_actual: persona!.cargo_actual ?? "",
         rol_sistema: persona!.rol_sistema ?? "",
         fecha_ingreso: persona!.fecha_ingreso ?? "",
-        industrias: (pi.data ?? []).map((r) => r.industria_id),
-        capacidades: (pc.data ?? []).map((r) => r.capacidad_id),
-        tematicas: (pt.data ?? []).map((r) => r.tematica_id),
+        industrias: (pi.data ?? []).map((r: any) => r.industria_id),
+        capacidades: (pc.data ?? []).map((r: any) => r.capacidad_id),
+        tematicas: (pt.data ?? []).map((r: any) => r.tematica_id),
       });
     }
     loadRelaciones();
@@ -101,7 +101,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
     setForm((f) => ({ ...f, [field]: value }));
 
   const validate = (): boolean => {
-    const e: Partial<Record<keyof FormState, string>> = {};
+    const e: Partial<Record<keyof FormState, string>> = {}; // eslint-disable-line
     if (!form.nombre.trim()) e.nombre = "Requerido";
     if (!form.apellido.trim()) e.apellido = "Requerido";
     if (!form.email.trim()) e.email = "Requerido";
@@ -115,7 +115,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
     if (!validate()) return;
     setLoading(true);
     setServerError(null);
-    const supabase = createClient();
+    const supabase = createAnyClient();
 
     const payload = {
       nombre: form.nombre.trim(),

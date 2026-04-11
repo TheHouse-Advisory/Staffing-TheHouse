@@ -8,13 +8,13 @@ import type { TipoAusencia } from "@/lib/types/database";
 // Orden de seniority para Y-axis (de mayor a menor)
 export const SENIORITY_ORDER = [
   "Socio",
-  "Director",
-  "Gerente",
+  "Director de Proyectos",
+  "Gerente de Proyectos",
+  "Asociado",
   "Consultor Senior",
-  "Consultor",
-  "Analista Senior",
-  "Analista",
-  "Practicante",
+  "Consultor de Proyectos",
+  "Consultor Analista",
+  "Consultor Trainee",
 ];
 
 // Colores por tipo de ausencia
@@ -117,7 +117,7 @@ function seniorityIdx(cargo: string | null): number {
 // ─────────────────────────────────────────────────────────────
 
 export async function fetchAusenciasMes(
-  supabase: TypedSupabaseClient,
+  supabase: any,
   year: number,
   month: number  // 1-based
 ): Promise<AusenciasDelMes> {
@@ -204,7 +204,7 @@ export async function fetchAusenciasMes(
 // ─────────────────────────────────────────────────────────────
 
 export async function crearAusencia(
-  supabase: TypedSupabaseClient,
+  supabase: any,
   data: {
     persona_id: string;
     tipo: TipoAusencia;
@@ -225,7 +225,7 @@ export async function crearAusencia(
 }
 
 export async function eliminarAusencia(
-  supabase: TypedSupabaseClient,
+  supabase: any,
   ausenciaId: string
 ): Promise<{ error: string | null }> {
   const { error } = await supabase

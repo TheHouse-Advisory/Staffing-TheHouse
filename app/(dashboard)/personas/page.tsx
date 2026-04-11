@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { Topbar } from "@/components/layout/Topbar";
 import { PersonasList } from "@/components/personas/PersonasList";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, createAnyClient } from "@/lib/supabase/client";
 import type { RolSistema } from "@/lib/types/database";
 
 export default function PersonasPage() {
@@ -12,9 +12,10 @@ export default function PersonasPage() {
   useEffect(() => {
     async function loadRol() {
       const supabase = createClient();
+      const sb = createAnyClient();
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
-      const { data } = await supabase
+      const { data } = await sb
         .from("persona")
         .select("rol_sistema")
         .eq("auth_user_id", user.id)

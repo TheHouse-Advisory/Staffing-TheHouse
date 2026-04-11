@@ -1,7 +1,7 @@
 /**
  * Helpers de autenticación para Server Components / Server Actions.
  */
-import { createClient } from "@/lib/supabase/server";
+import { createClient, createAnyClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import type { Persona, RolSistema } from "@/lib/types/database";
 
@@ -15,9 +15,15 @@ export interface AuthUser {
 /**
  * Obtiene el usuario autenticado con su persona y rol.
  * Redirige a /login si no hay sesión activa.
+ *
+ * Flujo de vinculación automática (primer login):
+ *   1. Buscar persona por auth_user_id  → encontrada: ok
+ *   2. Si no, buscar por email           → encontrada: guardar auth_user_id y continuar
+ *   3. Si no, el email no está registrado → signOut + redirect /login?error=no_persona
  */
 export async function requireAuth(): Promise<AuthUser> {
   const supabase = await createClient();
+  const db = await createAnyClient(); // para queries DB sin errores de tipo
 
   const {
     data: { user },
@@ -28,18 +34,46 @@ export async function requireAuth(): Promise<AuthUser> {
     redirect("/login");
   }
 
-  const { data: personaData, error: personaError } = await supabase
+  // ── Intento 1: buscar por auth_user_id (sesiones previas ya vinculadas) ──
+  let { data: personaData } = await db
     .from("persona")
     .select("*")
     .eq("auth_user_id", user.id)
     .single();
 
-  if (personaError || !personaData) {
+  // ── Intento 2: primer login → vincular por email ──────────────────────────
+  if (!personaData && user.email) {
+    const { data: byEmail } = await db
+      .from("persona")
+      .select("*")
+      .eq("email", user.email.toLowerCase())
+      .is("auth_user_id", null)   // solo personas aún no vinculadas
+      .single();
+
+    if (byEmail) {
+      // Guardar el auth_user_id para futuros logins
+      await db
+        .from("persona")
+        .update({ auth_user_id: user.id })
+        .eq("id", byEmail.id);
+
+      personaData = { ...byEmail, auth_user_id: user.id };
+    }
+  }
+
+  // ── Sin persona registrada → rechazar ─────────────────────────────────────
+  if (!personaData) {
     await supabase.auth.signOut();
     redirect("/login?error=no_persona");
   }
 
   const persona = personaData as Persona;
+
+  // ── Sin rol de sistema → persona existe pero no tiene acceso a la plataforma
+  if (!persona.rol_sistema) {
+    await supabase.auth.signOut();
+    redirect("/login?error=sin_acceso");
+  }
 
   return {
     authId: user.id,

@@ -4,6 +4,9 @@
  *
  * TIP: Una vez conectado a Supabase puedes regenerar con:
  *   npx supabase gen types typescript --project-id TU_PROJECT_ID > lib/types/database.ts
+ *
+ * NOTA: @supabase/supabase-js ≥ 2.49 requiere que cada tabla/vista
+ *       incluya `Relationships: []` para satisfacer `GenericTable`.
  */
 
 // ─────────────────────────────────────────────────────────────
@@ -12,12 +15,7 @@
 
 export type RolSistema = "proposer" | "admin";
 
-export type EstadoEngagement =
-  | "propuesta"
-  | "activo"
-  | "pausado"
-  | "terminado"
-  | "rechazado";
+export type EstadoEngagement = "activo" | "terminado";
 
 export type TipoEngagement = "propuesta" | "proyecto";
 
@@ -198,7 +196,7 @@ export interface PropuestaPlan {
 export interface AsignacionPropuesta {
   id: string;
   plan_id: string | null;            // FK a propuesta_plan
-  propuesto_por: string;             // NOT NULL en schema
+  propuesto_por: string | null;      // nullable (sistema sin auth)
   persona_id: string;
   engagement_id: string;
   requerimiento_id: string | null;
@@ -308,6 +306,11 @@ export interface CoberturaEngagement {
 
 // ─────────────────────────────────────────────────────────────
 //  DATABASE — tipo raíz para el cliente Supabase tipado
+//
+//  IMPORTANTE: @supabase/supabase-js ≥ 2.49 requiere que cada
+//  tabla/vista incluya `Relationships: []` para cumplir con
+//  GenericTable / GenericView. Sin este campo el cliente infiere
+//  todo como `never`.
 // ─────────────────────────────────────────────────────────────
 
 export type Database = {
@@ -317,89 +320,112 @@ export type Database = {
         Row: ConfigCargo;
         Insert: Omit<ConfigCargo, "id" | "created_at" | "updated_at">;
         Update: Partial<Omit<ConfigCargo, "id" | "created_at" | "updated_at">>;
+        Relationships: [];
       };
       cat_industria: {
         Row: CatIndustria;
         Insert: Omit<CatIndustria, "id" | "created_at">;
         Update: Partial<Omit<CatIndustria, "id" | "created_at">>;
+        Relationships: [];
       };
       cat_capacidad: {
         Row: CatCapacidad;
         Insert: Omit<CatCapacidad, "id" | "created_at">;
         Update: Partial<Omit<CatCapacidad, "id" | "created_at">>;
+        Relationships: [];
       };
       cat_tematica: {
         Row: CatTematica;
         Insert: Omit<CatTematica, "id" | "created_at">;
         Update: Partial<Omit<CatTematica, "id" | "created_at">>;
+        Relationships: [];
       };
       persona: {
         Row: Persona;
         Insert: Omit<Persona, "id" | "created_at" | "updated_at">;
         Update: Partial<Omit<Persona, "id" | "created_at" | "updated_at">>;
+        Relationships: [];
       };
       persona_cargo_historial: {
         Row: PersonaCargoHistorial;
         Insert: Omit<PersonaCargoHistorial, "id" | "created_at">;
         Update: Partial<Omit<PersonaCargoHistorial, "id" | "created_at">>;
+        Relationships: [];
       };
       persona_industria: {
         Row: PersonaIndustria;
         Insert: Omit<PersonaIndustria, "created_at">;
         Update: Partial<Omit<PersonaIndustria, "created_at">>;
+        Relationships: [];
       };
       persona_capacidad: {
         Row: PersonaCapacidad;
         Insert: Omit<PersonaCapacidad, "created_at">;
         Update: Partial<Omit<PersonaCapacidad, "created_at">>;
+        Relationships: [];
       };
       persona_tematica: {
         Row: PersonaTematica;
         Insert: Omit<PersonaTematica, "created_at">;
         Update: Partial<Omit<PersonaTematica, "created_at">>;
+        Relationships: [];
       };
       engagement: {
         Row: Engagement;
         Insert: Omit<Engagement, "id" | "created_at" | "updated_at">;
         Update: Partial<Omit<Engagement, "id" | "created_at" | "updated_at">>;
+        Relationships: [];
       };
       requerimiento_engagement: {
         Row: RequerimientoEngagement;
         Insert: Omit<RequerimientoEngagement, "id" | "created_at">;
         Update: Partial<Omit<RequerimientoEngagement, "id" | "created_at">>;
+        Relationships: [];
+      };
+      propuesta_plan: {
+        Row: PropuestaPlan;
+        Insert: Omit<PropuestaPlan, "id" | "created_at" | "updated_at">;
+        Update: Partial<Omit<PropuestaPlan, "id" | "created_at" | "updated_at">>;
+        Relationships: [];
       };
       asignacion_propuesta: {
         Row: AsignacionPropuesta;
         Insert: Omit<AsignacionPropuesta, "id" | "created_at" | "updated_at">;
         Update: Partial<Omit<AsignacionPropuesta, "id" | "created_at" | "updated_at">>;
+        Relationships: [];
       };
       asignacion: {
         Row: Asignacion;
         Insert: Omit<Asignacion, "id" | "created_at" | "updated_at">;
         Update: Partial<Omit<Asignacion, "id" | "created_at" | "updated_at">>;
+        Relationships: [];
       };
       asignacion_historial: {
         Row: AsignacionHistorial;
         Insert: Omit<AsignacionHistorial, "id" | "created_at">;
         Update: never;  // solo INSERT permitido (auditoría inmutable)
+        Relationships: [];
       };
       ausencia: {
         Row: Ausencia;
         Insert: Omit<Ausencia, "id" | "created_at" | "fuente"> & { fuente?: "manual" | "importacion_buk" };
         Update: Partial<Omit<Ausencia, "id" | "created_at">>;
+        Relationships: [];
       };
     };
     Views: {
       ocupacion_semana: {
         Row: OcupacionSemana;
+        Relationships: [];
       };
       cobertura_engagement: {
         Row: CoberturaEngagement;
+        Relationships: [];
       };
     };
     Functions: {
       get_rol_usuario: {
-        Args: Record<PropertyKey, never>;
+        Args: Record<string, never>;
         Returns: RolSistema | null;
       };
       /**

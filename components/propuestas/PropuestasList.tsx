@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, createAnyClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { FieldWrapper, Textarea } from "@/components/ui/FormField";
@@ -93,12 +93,13 @@ export function PropuestasList({ rolActual }: Props) {
   const load = useCallback(async () => {
     setLoading(true);
     const supabase = createClient();
+    const sb = createAnyClient();
     const { data: { user } } = await supabase.auth.getUser();
 
     const [meRes, planesRes] = await Promise.all([
-      user ? supabase.from("persona").select("id").eq("auth_user_id", user.id).single()
+      user ? sb.from("persona").select("id").eq("auth_user_id", user.id).single()
            : Promise.resolve({ data: null }),
-      supabase
+      sb
         .from("propuesta_plan")
         .select("*")
         .order("created_at", { ascending: false }),
@@ -116,7 +117,7 @@ export function PropuestasList({ rolActual }: Props) {
     const planIds = planesData.map((p) => p.id);
 
     // Cargar asignaciones de todos los planes
-    const { data: asigData } = await supabase
+    const { data: asigData } = await sb
       .from("asignacion_propuesta")
       .select("*")
       .in("plan_id", planIds)
@@ -133,17 +134,17 @@ export function PropuestasList({ rolActual }: Props) {
 
     const [pRes, eRes] = await Promise.all([
       personaIds.length > 0
-        ? supabase.from("persona").select("id,nombre,apellido").in("id", personaIds)
+        ? sb.from("persona").select("id,nombre,apellido").in("id", personaIds)
         : Promise.resolve({ data: [] }),
       engIds.length > 0
-        ? supabase.from("engagement").select("id,nombre").in("id", engIds)
+        ? sb.from("engagement").select("id,nombre").in("id", engIds)
         : Promise.resolve({ data: [] }),
     ]);
 
-    const personaMap = new Map((pRes.data ?? []).map((p) => [p.id, `${p.nombre} ${p.apellido}`]));
-    const engMap = new Map((eRes.data ?? []).map((e) => [e.id, e.nombre]));
+    const personaMap = new Map((pRes.data ?? []).map((p: any) => [p.id, `${p.nombre} ${p.apellido}`]));
+    const engMap = new Map((eRes.data ?? []).map((e: any) => [e.id, e.nombre]));
 
-    const planesEnriquecidos: PlanEnriquecido[] = planesData.map((plan) => {
+    const planesEnriquecidos: PlanEnriquecido[] = planesData.map((plan: any) => {
       const asigsPlan = asignaciones
         .filter((a) => a.plan_id === plan.id)
         .map((a) => ({
@@ -171,7 +172,7 @@ export function PropuestasList({ rolActual }: Props) {
   // ── Cargar gaps de cobertura ───────────────────────────────
   const loadGaps = useCallback(async () => {
     setGapsLoading(true);
-    const supabase = createClient();
+    const supabase = createAnyClient();
     const { data } = await supabase
       .from("cobertura_engagement")
       .select("engagement_id,engagement_nombre,cliente,requerimiento_id,fase_numero,fase_nombre,cargo_requerido,pct_requerido,pct_descubierto,req_fecha_inicio,req_fecha_fin")
@@ -236,7 +237,7 @@ export function PropuestasList({ rolActual }: Props) {
 
     if (accion === "aprobada") {
       setCapacidadLoading(true);
-      const supabase = createClient();
+      const supabase = createAnyClient();
 
       // Verificar capacidad para cada asignación del plan
       const checks: CapacidadCheck[] = await Promise.all(
@@ -275,7 +276,7 @@ export function PropuestasList({ rolActual }: Props) {
 
     setRevisionLoading(true);
     setRevisionError(null);
-    const supabase = createClient();
+    const supabase = createAnyClient();
 
     const camposRevision = {
       revisado_por: miPersonaId || null,
@@ -284,6 +285,14 @@ export function PropuestasList({ rolActual }: Props) {
     };
 
     if (accion === "aprobada") {
+      // BUG #3 FIX: Validar que todas las propuestas tienen cargo antes de aprobar
+      const sinCargo = plan.asignaciones.filter((a) => !a.cargo_al_momento?.trim());
+      if (sinCargo.length > 0) {
+        setRevisionError("Algunas propuestas no tienen cargo registrado y no pueden aprobarse.");
+        setRevisionLoading(false);
+        return;
+      }
+
       // 1. Marcar el plan como aprobado
       const { error: planErr } = await supabase
         .from("propuesta_plan")
@@ -298,12 +307,12 @@ export function PropuestasList({ rolActual }: Props) {
         .eq("plan_id", plan.id);
       if (asigUpdErr) { setRevisionError(asigUpdErr.message); setRevisionLoading(false); return; }
 
-      // 3. Crear todas las asignaciones reales
+      // 3. Crear todas las asignaciones reales y recuperar sus IDs
       const asignacionesACrear = plan.asignaciones.map((asig) => ({
         persona_id: asig.persona_id,
         engagement_id: asig.engagement_id,
         requerimiento_id: asig.requerimiento_id,
-        cargo_al_momento: asig.cargo_al_momento ?? "",
+        cargo_al_momento: asig.cargo_al_momento!,   // validado arriba
         pct_dedicacion: asig.pct_dedicacion,
         fecha_inicio: asig.fecha_inicio,
         fecha_fin: asig.fecha_fin,
@@ -313,8 +322,27 @@ export function PropuestasList({ rolActual }: Props) {
         fecha_aprobacion: new Date().toISOString(),
       }));
 
-      const { error: asigInsErr } = await supabase.from("asignacion").insert(asignacionesACrear);
-      if (asigInsErr) { setRevisionError(asigInsErr.message); setRevisionLoading(false); return; }
+      const { data: asigCreadas, error: asigInsErr } = await supabase
+        .from("asignacion")
+        .insert(asignacionesACrear)
+        .select("id, propuesta_origen_id");
+      if (asigInsErr || !asigCreadas) {
+        setRevisionError(asigInsErr?.message ?? "Error al crear asignaciones");
+        setRevisionLoading(false);
+        return;
+      }
+
+      // BUG #1 FIX: Vincular cada asignacion_propuesta con su asignacion real creada
+      await Promise.all(
+        asigCreadas
+          .filter((a: { id: string; propuesta_origen_id: string | null }) => a.propuesta_origen_id)
+          .map((a: { id: string; propuesta_origen_id: string | null }) =>
+            supabase
+              .from("asignacion_propuesta")
+              .update({ asignacion_resultante_id: a.id })
+              .eq("id", a.propuesta_origen_id!)
+          )
+      );
 
     } else {
       // Rechazar plan y todas sus asignaciones
@@ -324,10 +352,12 @@ export function PropuestasList({ rolActual }: Props) {
         .eq("id", plan.id);
       if (planErr) { setRevisionError(planErr.message); setRevisionLoading(false); return; }
 
-      await supabase
+      // BUG #2 FIX: verificar error en el rechazo de asignacion_propuesta
+      const { error: asigRejErr } = await supabase
         .from("asignacion_propuesta")
         .update({ estado: "rechazada", ...camposRevision })
         .eq("plan_id", plan.id);
+      if (asigRejErr) { setRevisionError(asigRejErr.message); setRevisionLoading(false); return; }
     }
 
     setRevisionLoading(false);

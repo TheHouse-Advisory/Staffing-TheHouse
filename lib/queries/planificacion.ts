@@ -79,7 +79,7 @@ export interface PersonaFit {
 //  (fecha_fin del requerimiento >= hoy)
 // ─────────────────────────────────────────────────────────────
 
-export async function fetchEngagementsConReqs(supabase: TypedSupabaseClient): Promise<{
+export async function fetchEngagementsConReqs(supabase: any): Promise<{
   engagements: EngagementConReqs[];
   error: string | null;
 }> {
@@ -239,7 +239,7 @@ export async function fetchEngagementsConReqs(supabase: TypedSupabaseClient): Pr
 // ─────────────────────────────────────────────────────────────
 
 export async function fetchPersonasFit(
-  supabase: TypedSupabaseClient,
+  supabase: any,
   req: ReqConEstado,
   tentativas: Array<{ persona_id: string; requerimiento_id: string; pct: number }>
 ): Promise<{ personas: PersonaFit[]; error: string | null }> {
@@ -406,7 +406,7 @@ export async function fetchPersonasFit(
 // ─────────────────────────────────────────────────────────────
 
 export async function terminarAsignacion(
-  supabase: TypedSupabaseClient,
+  supabase: any,
   asignacionId: string,
   fechaFin?: string  // por defecto = hoy
 ): Promise<{ error: string | null }> {

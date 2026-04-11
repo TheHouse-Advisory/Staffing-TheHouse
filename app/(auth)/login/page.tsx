@@ -16,7 +16,9 @@ export default function LoginPage() {
   const errorMsg = searchParams.get("error");
   const errorMessages: Record<string, string> = {
     no_persona:
-      "Tu cuenta no está vinculada a ninguna persona del equipo. Contacta a un administrador.",
+      "Tu correo no está registrado en el sistema. Contacta a un administrador.",
+    sin_acceso:
+      "Tu usuario no tiene acceso a la plataforma. Contacta a un administrador para que te asigne un rol.",
     auth_callback: "Error al completar el inicio de sesión. Intenta de nuevo.",
   };
 

@@ -37,6 +37,12 @@ export async function createClient() {
   );
 }
 
+/** Cliente sin tipos estrictos — para queries donde el typed client infiere `never`. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function createAnyClient(): Promise<any> {
+  return createClient();
+}
+
 /** Cliente con Service Role para operaciones admin. NUNCA exponer al cliente. */
 export async function createAdminClient() {
   const cookieStore = await cookies();
