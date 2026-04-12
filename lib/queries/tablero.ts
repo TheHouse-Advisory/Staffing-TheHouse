@@ -74,13 +74,13 @@ export async function fetchOcupacionDiariaPersona(
   supabase: TypedSupabaseClient,
   semanaInicio: Date,
   planId: string | null
-): Promise<{ filas: FilaDia[]; dias: Date[]; error: string | null }> {
+): Promise<{ filas: FilaDia[]; dias: Date[]; diasCriticosPersona: Set<string>; error: string | null }> {
   const dias = Array.from({ length: 7 }, (_, i) => addDays(semanaInicio, i));
   const inicioStr = format(dias[0], "yyyy-MM-dd");
   const finStr    = format(dias[6], "yyyy-MM-dd");
 
   type PersonaRaw = { id: string; nombre: string; apellido: string; cargo_actual: string | null };
-  type AsigRaw = { persona_id: string; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string | null };
+  type AsigRaw = { persona_id: string; engagement_id: string | null; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string | null };
 
   // 1. Todas las personas activas
   const { data: personasRaw, error: personasErr } = await supabase
@@ -89,18 +89,18 @@ export async function fetchOcupacionDiariaPersona(
     .eq("activo", true)
     .order("apellido");
 
-  if (personasErr) return { filas: [], dias, error: personasErr.message };
+  if (personasErr) return { filas: [], dias, diasCriticosPersona: new Set(), error: personasErr.message };
   const personasData = (personasRaw ?? []) as unknown as PersonaRaw[];
 
-  // 2. Asignaciones reales que solapan con la semana
+  // 2. Asignaciones reales que solapan con la semana (incluye engagement_id para días críticos)
   const { data: asigRaw, error: asigErr } = await supabase
     .from("asignacion")
-    .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin")
+    .select("persona_id, engagement_id, pct_dedicacion, fecha_inicio, fecha_fin")
     .eq("estado", "activa")
     .lte("fecha_inicio", finStr)
     .or(`fecha_fin.gte.${inicioStr},fecha_fin.is.null`);
 
-  if (asigErr) return { filas: [], dias, error: asigErr.message };
+  if (asigErr) return { filas: [], dias, diasCriticosPersona: new Set(), error: asigErr.message };
   const asigData = (asigRaw ?? []) as unknown as AsigRaw[];
 
   // 3. Asignaciones del plan (si aplica)
@@ -197,8 +197,36 @@ export async function fetchOcupacionDiariaPersona(
     }
   }
 
-  // 5. Filtrar personas sin ninguna asignación en el rango (para reducir ruido)
-  //    Mantener siempre; si se quiere filtrar, descomentar el filter.
+  // 5. Días críticos de la semana: engagement_id|fecha
+  const { data: dcRaw } = await (supabase as any)
+    .from("dia_critico")
+    .select("engagement_id, fecha")
+    .gte("fecha", inicioStr)
+    .lte("fecha", finStr);
+
+  const criticosEng = new Set<string>(
+    ((dcRaw ?? []) as { engagement_id: string; fecha: string }[])
+      .map((r) => `${r.engagement_id}|${r.fecha}`)
+  );
+
+  // Set de "persona_id|yyyy-MM-dd" para celdas críticas
+  const diasCriticosPersona = new Set<string>();
+  for (const dia of dias) {
+    const diaStr = format(dia, "yyyy-MM-dd");
+    for (const p of personasData) {
+      const tieneAsigCritica = asigData.some(
+        (a) =>
+          a.persona_id === p.id &&
+          a.engagement_id &&
+          a.fecha_inicio <= diaStr &&
+          (a.fecha_fin === null || a.fecha_fin >= diaStr) &&
+          criticosEng.has(`${a.engagement_id}|${diaStr}`)
+      );
+      if (tieneAsigCritica) diasCriticosPersona.add(`${p.id}|${diaStr}`);
+    }
+  }
+
+  // 6. Ordenar
   const filas = Array.from(porPersona.values()).sort((a, b) => {
     const oa = ORDEN_CARGO[a.cargo_actual] ?? 99;
     const ob = ORDEN_CARGO[b.cargo_actual] ?? 99;
@@ -206,7 +234,7 @@ export async function fetchOcupacionDiariaPersona(
     return a.persona_nombre.localeCompare(b.persona_nombre, "es");
   });
 
-  return { filas, dias, error: null };
+  return { filas, dias, diasCriticosPersona, error: null };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -233,7 +261,7 @@ export async function fetchCoberturaProyecto(
   supabase: TypedSupabaseClient,
   semanaInicio: Date,
   planId: string | null
-): Promise<{ filas: FilaProyecto[]; dias: Date[]; error: string | null }> {
+): Promise<{ filas: FilaProyecto[]; dias: Date[]; diasCriticosEng: Set<string>; error: string | null }> {
   const dias = Array.from({ length: 7 }, (_, i) => addDays(semanaInicio, i));
   const inicioStr = format(dias[0], "yyyy-MM-dd");
   const finStr    = format(dias[6], "yyyy-MM-dd");
@@ -248,8 +276,8 @@ export async function fetchCoberturaProyecto(
     .lte("fecha_inicio", finStr)
     .gte("fecha_fin", inicioStr);
 
-  if (reqErr) return { filas: [], dias, error: reqErr.message };
-  if (!reqRaw || reqRaw.length === 0) return { filas: [], dias, error: null };
+  if (reqErr) return { filas: [], dias, diasCriticosEng: new Set(), error: reqErr.message };
+  if (!reqRaw || reqRaw.length === 0) return { filas: [], dias, diasCriticosEng: new Set(), error: null };
 
   const reqs = reqRaw as unknown as ReqRaw[];
   const engIds = [...new Set(reqs.map((r) => r.engagement_id))];
@@ -265,7 +293,7 @@ export async function fetchCoberturaProyecto(
     .lte("fecha_inicio", finStr)
     .or(`fecha_fin.gte.${inicioStr},fecha_fin.is.null`);
 
-  if (asigErr) return { filas: [], dias, error: asigErr.message };
+  if (asigErr) return { filas: [], dias, diasCriticosEng: new Set(), error: asigErr.message };
   const asigData = (asigRawEng ?? []) as unknown as AsigEng[];
 
   // 3. Asignaciones del plan (si aplica)
@@ -384,7 +412,20 @@ export async function fetchCoberturaProyecto(
     a.engagement_nombre.localeCompare(b.engagement_nombre, "es")
   );
 
-  return { filas, dias, error: null };
+  // Días críticos del período para engagements presentes en el tablero
+  const { data: dcRawEng } = await (supabase as any)
+    .from("dia_critico")
+    .select("engagement_id, fecha")
+    .in("engagement_id", engIds)
+    .gte("fecha", inicioStr)
+    .lte("fecha", finStr);
+
+  const diasCriticosEng = new Set<string>(
+    ((dcRawEng ?? []) as { engagement_id: string; fecha: string }[])
+      .map((r) => `${r.engagement_id}|${r.fecha}`)
+  );
+
+  return { filas, dias, diasCriticosEng, error: null };
 }
 
 // ─────────────────────────────────────────────────────────────

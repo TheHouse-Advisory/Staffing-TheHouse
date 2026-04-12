@@ -45,6 +45,7 @@ function Celda({
   text,
   label,
   alerta,
+  critico,
   isOpen,
   onClick,
 }: {
@@ -52,6 +53,8 @@ function Celda({
   text: string;
   label: string;
   alerta?: boolean;
+  /** Día marcado como crítico para este engagement/persona — borde naranja grueso */
+  critico?: boolean;
   isOpen?: boolean;
   onClick: (e: React.MouseEvent<HTMLButtonElement>) => void;
 }) {
@@ -59,14 +62,23 @@ function Celda({
     <button
       type="button"
       onClick={onClick}
-      title="Click para ver desglose"
+      title={critico ? "Día crítico — Click para ver desglose" : "Click para ver desglose"}
       className={`w-full h-10 rounded-md flex items-center justify-center text-xs font-semibold transition-all hover:opacity-80 cursor-pointer relative ${isOpen ? "ring-2 ring-[#4a90e2] ring-offset-1" : "hover:ring-2 hover:ring-[#4a90e2] hover:ring-offset-1"}`}
-      style={{ background: bg, color: text }}
+      style={{
+        background: bg,
+        color: text,
+        boxShadow: critico ? "inset 0 0 0 2.5px #f97316" : undefined,
+      }}
     >
       {label}
       {alerta && (
         <span className="absolute -top-1 -right-1">
           <AlertTriangle className="w-3 h-3 text-red-500" />
+        </span>
+      )}
+      {critico && !alerta && (
+        <span className="absolute -top-1 -right-1">
+          <span className="block w-2.5 h-2.5 rounded-full bg-orange-500 border border-white" />
         </span>
       )}
     </button>
@@ -579,6 +591,10 @@ export function TablonOcupacion({ semanaInicio, planId, vista }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [popover, setPopover] = useState<PopoverState | null>(null);
+  // "persona_id|yyyy-MM-dd" → persona asignada a un engagement con ese día marcado como crítico
+  const [diasCriticosPersona, setDiasCriticosPersona] = useState<Set<string>>(new Set());
+  // "engagement_id|yyyy-MM-dd" → engagement con ese día marcado como crítico
+  const [diasCriticosEng, setDiasCriticosEng] = useState<Set<string>>(new Set());
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -591,8 +607,8 @@ export function TablonOcupacion({ semanaInicio, planId, vista }: Props) {
       if (result.error) {
         setError(result.error);
       } else {
-        // Filtrar solo días hábiles (lun–vie)
         setFilasPersona(result.filas);
+        setDiasCriticosPersona(result.diasCriticosPersona);
         setDias(result.dias.filter((d) => !isWeekend(d)));
       }
     } else {
@@ -601,6 +617,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista }: Props) {
         setError(result.error);
       } else {
         setFilasProyecto(result.filas);
+        setDiasCriticosEng(result.diasCriticosEng);
         setDias(result.dias.filter((d) => !isWeekend(d)));
       }
     }
@@ -672,6 +689,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista }: Props) {
                       const tieneAlerta = planId != null && datos.proyectado > 100;
                       const { bg, text } = colorOcupacion(pct);
                       const isOpen = popover?.tipo === "persona" && (popover as PopoverPersonaState).personaId === fila.persona_id && (popover as PopoverPersonaState).diaStr === diaStr;
+                      const esCritico = diasCriticosPersona.has(`${fila.persona_id}|${diaStr}`);
                       return (
                         <td key={diaStr} className="px-1.5 py-2">
                           <div className={`relative ${isOpen ? "z-30" : ""}`}>
@@ -680,6 +698,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista }: Props) {
                               text={pct === 0 ? "#ccc" : text}
                               label={pct === 0 ? "—" : formatPct(pct)}
                               alerta={tieneAlerta}
+                              critico={esCritico}
                               isOpen={isOpen}
                               onClick={(e) => handlePersonaClick(e, fila, dia, pct)}
                             />
@@ -755,6 +774,8 @@ export function TablonOcupacion({ semanaInicio, planId, vista }: Props) {
                     const datos = fila.dias[diaStr] ?? { requerido: 0, asignado: 0, asignadoPlan: 0, cobertura: -1 };
                     const { bg, text } = colorCobertura(datos.cobertura);
                     const isOpen = popover?.tipo === "proyecto" && (popover as PopoverProyectoState).engagementId === fila.engagement_id && (popover as PopoverProyectoState).diaStr === diaStr;
+                    // Solo marcar como crítico si el engagement tiene reqs ese día (cobertura >= 0)
+                    const esCriticoEng = datos.cobertura >= 0 && diasCriticosEng.has(`${fila.engagement_id}|${diaStr}`);
                     return (
                       <td key={diaStr} className="px-1.5 py-2">
                         <div className={`relative ${isOpen ? "z-30" : ""}`}>
@@ -762,6 +783,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista }: Props) {
                             bg={bg}
                             text={text}
                             label={datos.cobertura < 0 ? "—" : `${Math.round(datos.cobertura)}%`}
+                            critico={esCriticoEng}
                             isOpen={isOpen}
                             onClick={(e) => handleProyectoClick(e, fila, dia, datos.cobertura)}
                           />

@@ -57,6 +57,8 @@ export interface ReqConEstado {
   asignaciones: AsignacionActiva[];
   /** Hay al menos una asignación cubriendo desde hoy hasta fecha_fin */
   cubierto_desde_hoy: boolean;
+  /** Fechas marcadas como críticas dentro del período del requerimiento */
+  dias_criticos: string[];
 }
 
 export interface EngagementConReqs {
@@ -139,7 +141,7 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
   if (reqErr) return { engagements: [], error: reqErr.message };
 
   // Todas las asignaciones activas (puede haber varias por req)
-  const { data: asigRaw, error: asigErr } = await supabase
+  const { data: asigRaw, error: asigErr } = await (supabase as any)
     .from("asignacion")
     .select(`
       id,
@@ -153,6 +155,20 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
     .eq("estado", "activa");
 
   if (asigErr) return { engagements: [], error: asigErr.message };
+
+  // Días críticos de todos los engagements con reqs vigentes
+  const engIdsReqs = [...new Set((reqRaw ?? []).map((r: any) => r.engagement_id as string))];
+  const { data: dcRaw } = engIdsReqs.length > 0
+    ? await (supabase as any).from("dia_critico").select("engagement_id, fecha").in("engagement_id", engIdsReqs)
+    : { data: [] };
+
+  // Map engagement_id → sorted array of critical fecha strings
+  const criticosPorEng = new Map<string, string[]>();
+  for (const dc of ((dcRaw ?? []) as { engagement_id: string; fecha: string }[])) {
+    const arr = criticosPorEng.get(dc.engagement_id) ?? [];
+    arr.push(dc.fecha);
+    criticosPorEng.set(dc.engagement_id, arr);
+  }
 
   // ── Normalizar ──────────────────────────────────────────────
   interface ReqRow {
@@ -232,6 +248,11 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
       return inicio && termina;
     });
 
+    // Días críticos que caen dentro del período de este requerimiento
+    const diasCriticosReq = (criticosPorEng.get(r.engagement_id) ?? [])
+      .filter((f) => f >= r.fecha_inicio && f <= r.fecha_fin)
+      .sort();
+
     engMap.get(r.engagement_id)!.requerimientos.push({
       id: r.id,
       engagement_id: r.engagement_id,
@@ -245,6 +266,7 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
       fase_nombre: r.fase_nombre,
       asignaciones,
       cubierto_desde_hoy,
+      dias_criticos: diasCriticosReq,
     });
   }
 
@@ -315,7 +337,38 @@ export async function fetchPersonasFit(
 
   if (aErr) return { personas: [], error: aErr.message };
 
-  // 3. Ausencias en el período (soft alert)
+  // 3. Regla HARD: personas ya asignadas a OTRO requerimiento del mismo engagement
+  //    con fechas que se solapan con [req.fecha_inicio, req.fecha_fin].
+  //    asignacion no tiene engagement_id directo → primero obtenemos todos los
+  //    requerimiento_id del mismo engagement, luego buscamos asignaciones activas.
+  const { data: reqsMismoEng } = await supabase
+    .from("requerimiento_engagement")
+    .select("id")
+    .eq("engagement_id", req.engagement_id);
+
+  const otrosReqIds = ((reqsMismoEng ?? []) as { id: string }[])
+    .map((r) => r.id)
+    .filter((id) => id !== req.id);  // excluimos el req actual
+
+  const personasExcluidasMismoEng = new Set<string>();
+
+  if (otrosReqIds.length > 0) {
+    const { data: sameEngRaw } = await supabase
+      .from("asignacion")
+      .select("id, persona_id, requerimiento_id")
+      .eq("estado", "activa")
+      .in("requerimiento_id", otrosReqIds)
+      .lte("fecha_inicio", req.fecha_fin)
+      .or(`fecha_fin.gte.${req.fecha_inicio},fecha_fin.is.null`);
+
+    for (const a of (sameEngRaw ?? []) as { id: string; persona_id: string; requerimiento_id: string | null }[]) {
+      // Si la asignación está siendo liberada en este plan, ya no bloquea
+      if (asignacionIdsATerminar.includes(a.id)) continue;
+      personasExcluidasMismoEng.add(a.persona_id);
+    }
+  }
+
+  // 4. Ausencias en el período (soft alert)
   const { data: ausRaw } = await supabase
     .from("ausencia")
     .select("persona_id, tipo, fecha_inicio, fecha_fin")
@@ -396,7 +449,9 @@ export async function fetchPersonasFit(
   const yaConfirmados = new Set(req.asignaciones.map((a) => a.persona_id));
 
   // Calcular fit
-  const resultado: PersonaFit[] = personas.map((p) => {
+  const resultado: PersonaFit[] = personas
+    .filter((p) => !personasExcluidasMismoEng.has(p.id))
+    .map((p) => {
     const pctOcupado  = pctPorPersona.get(p.id) ?? 0;
     const pctSiAsigna = pctOcupado + req.pct_dedicacion;
     const alertas: FitAlerta[] = [];

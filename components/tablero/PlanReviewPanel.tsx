@@ -413,7 +413,7 @@ export function PlanReviewPanel({ planId, miPersonaId, onSuccess, onClose }: Pro
           {hayConflictos && (
             <span className="flex items-center gap-1 text-[11px] font-semibold px-2.5 py-1 rounded-full bg-red-100 text-red-700">
               <AlertTriangle className="w-3 h-3" />
-              {capacidadChecks.filter((c) => c.excede).length} conflicto{capacidadChecks.filter((c) => c.excede).length !== 1 ? "s" : ""}
+              {capacidadChecks.filter((c) => c.excede).length} sobreasignaci{capacidadChecks.filter((c) => c.excede).length !== 1 ? "ones" : "ón"}
             </span>
           )}
           {ausenciaRiesgos.length > 0 && (
@@ -446,17 +446,21 @@ export function PlanReviewPanel({ planId, miPersonaId, onSuccess, onClose }: Pro
             <Button
               size="sm"
               onClick={() => setConfirmando("aprobar")}
-              disabled={hayConflictos}
-              title={hayConflictos ? "Hay conflictos de capacidad. Ajusta el plan antes de aprobar." : undefined}
             >
               Aprobar plan
             </Button>
           </div>
         ) : confirmando === "aprobar" ? (
           <div className="flex items-center gap-2 flex-shrink-0">
-            <span className="text-xs text-[#555]">
-              ¿Confirmar? Se crearán {asigNuevas.length} asignación{asigNuevas.length !== 1 ? "es" : ""}
-              {asigLiberar.length > 0 ? ` y se liberarán ${asigLiberar.length}` : ""}.
+            <span className={`text-xs ${hayConflictos ? "text-red-600 font-medium" : "text-[#555]"}`}>
+              {hayConflictos
+                ? "⚠ Hay sobreasignaciones. ¿Aprobar de todas formas?"
+                : [
+                    `¿Confirmar? Se crearán ${asigNuevas.length} asignación${asigNuevas.length !== 1 ? "es" : ""}`,
+                    asigLiberar.length > 0 ? ` y se liberarán ${asigLiberar.length}` : "",
+                    ".",
+                  ].join("")
+              }
             </span>
             <button
               type="button"
@@ -620,9 +624,9 @@ export function PlanReviewPanel({ planId, miPersonaId, onSuccess, onClose }: Pro
                 <div key={c.asignacion_id} className="flex items-start gap-2 p-2.5 rounded-lg bg-red-50 border border-red-200">
                   <span className="text-sm flex-shrink-0">🔴</span>
                   <div>
-                    <p className="text-xs font-semibold text-red-700">{c.persona_nombre} supera 100%</p>
+                    <p className="text-xs font-semibold text-red-700">{c.persona_nombre} quedaría al {formatPct(c.final_pct)}</p>
                     <p className="text-[10px] text-red-500 mt-0.5">
-                      Quedaría al {formatPct(c.final_pct)}. El plan no puede aprobarse así.
+                      Sobreasignación — el aprobador puede aceptarla o ajustar el plan.
                     </p>
                   </div>
                 </div>
@@ -650,7 +654,7 @@ export function PlanReviewPanel({ planId, miPersonaId, onSuccess, onClose }: Pro
                   <div>
                     <p className="text-xs font-semibold text-green-700">Plan aprobable</p>
                     <p className="text-[10px] text-green-600 mt-0.5">
-                      Sin conflictos de capacidad ni ausencias detectadas.
+                      Sin sobreasignaciones ni ausencias detectadas.
                     </p>
                   </div>
                 </div>

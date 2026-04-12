@@ -208,6 +208,14 @@ function FilaRequerimiento({
           <p className="text-[10px] text-[#aaa] mt-0.5">
             {formatFecha(req.fecha_inicio)} → {formatFecha(req.fecha_fin)}
           </p>
+          {req.dias_criticos.length > 0 && (
+            <div className="flex items-center gap-1 mt-1">
+              <Zap className="w-2.5 h-2.5 text-orange-500 flex-shrink-0" />
+              <span className="text-[10px] font-medium text-orange-600">
+                Contempla {req.dias_criticos.length} día{req.dias_criticos.length !== 1 ? "s" : ""} crítico{req.dias_criticos.length !== 1 ? "s" : ""}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Chevron — solo visible si es clickeable */}
