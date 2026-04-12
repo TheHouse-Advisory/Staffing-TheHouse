@@ -31,7 +31,6 @@ export interface GapEngagement {
 
 interface CoberturaReq {
   requerimiento_id: string;
-  fase_numero: number;
   fase_nombre: string | null;
   cargo_requerido: string | null;
   pct_requerido: number;
@@ -170,12 +169,12 @@ export function PlanificacionDrawer({
       const { data: gapsData } = await supabase
         .from("cobertura_engagement")
         .select(
-          "requerimiento_id, fase_numero, fase_nombre, cargo_requerido, " +
+          "requerimiento_id, fase_nombre, cargo_requerido, " +
           "pct_requerido, req_fecha_inicio, req_fecha_fin, pct_cubierto, pct_descubierto"
         )
         .eq("engagement_id", engagementId)
         .gt("pct_descubierto", 0)
-        .order("fase_numero");
+        .order("fase_nombre");
 
       const loadedGaps = (gapsData ?? []) as CoberturaReq[];
       setGaps(loadedGaps);
@@ -427,8 +426,7 @@ export function PlanificacionDrawer({
                   <div>
                     <div className="flex items-center gap-2 flex-wrap">
                       <span className="text-xs font-bold text-[#333] uppercase tracking-wide">
-                        Fase {gap.fase_numero}
-                        {gap.fase_nombre ? ` — ${gap.fase_nombre}` : ""}
+                        {gap.fase_nombre ?? "Requerimiento"}
                       </span>
                       {gap.cargo_requerido ? (
                         <span className="text-xs px-2 py-0.5 rounded-full bg-[#eaf4ff] text-[#1a5276] font-medium">

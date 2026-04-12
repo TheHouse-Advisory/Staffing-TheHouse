@@ -150,15 +150,14 @@ export interface Engagement {
 }
 
 /**
- * requerimiento_engagement: id, engagement_id, fase_numero, fase_nombre,
+ * requerimiento_engagement: id, engagement_id, fase_nombre,
  *   cargo_requerido (text|null), pct_dedicacion, fecha_inicio, fecha_fin,
  *   descripcion, created_at
- * NOTA: usa 'cargo_requerido' (text), NO 'cargo_id'. Tiene 'fase_numero' obligatorio.
+ * NOTA: usa 'cargo_requerido' (text), NO 'cargo_id'.
  */
 export interface RequerimientoEngagement {
   id: string;
   engagement_id: string;
-  fase_numero: number;
   fase_nombre: string | null;
   cargo_requerido: string | null;   // NULL = cualquier cargo
   pct_dedicacion: number;
@@ -294,7 +293,6 @@ export interface CoberturaEngagement {
   cliente: string;
   engagement_estado: EstadoEngagement;
   requerimiento_id: string;
-  fase_numero: number;
   fase_nombre: string | null;
   cargo_requerido: string | null;
   pct_requerido: number;

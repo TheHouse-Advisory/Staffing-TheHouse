@@ -5,6 +5,7 @@ import Link from "next/link";
 import { Plus, AlertTriangle, CheckCircle, Circle, ChevronRight } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { fLocal } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { fetchEngagementsConCobertura } from "@/lib/queries/engagements";
 import { Button } from "@/components/ui/Button";
@@ -75,9 +76,9 @@ export function EngagementsList({ rolActual }: Props) {
                 {/* Fechas */}
                 {e.fecha_inicio && (
                   <p className="text-xs text-[#aaa] flex-shrink-0 hidden sm:block">
-                    {format(new Date(e.fecha_inicio), "d MMM", { locale: es })}
+                    {format(fLocal(e.fecha_inicio), "d MMM", { locale: es })}
                     {e.fecha_fin_estimada && (
-                      <> → {format(new Date(e.fecha_fin_estimada), "d MMM yy", { locale: es })}</>
+                      <> → {format(fLocal(e.fecha_fin_estimada), "d MMM yy", { locale: es })}</>
                     )}
                   </p>
                 )}

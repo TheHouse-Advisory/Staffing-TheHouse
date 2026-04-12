@@ -8,6 +8,24 @@ export function today(): string {
   return new Date().toISOString().split("T")[0];
 }
 
+/** Orden de seniority de más a menos senior */
+const SENIORITY_ORDER = [
+  "Socio",
+  "Director de Proyecto",
+  "Gerente de Proyecto",
+  "Asociado",
+  "Consultor Senior",
+  "Consultor de Proyectos",
+  "Consultor Analista",
+  "Consultor Trainee",
+];
+
+function seniorityIndex(cargo: string | null | undefined): number {
+  if (!cargo) return 999;
+  const idx = SENIORITY_ORDER.indexOf(cargo);
+  return idx === -1 ? 998 : idx;
+}
+
 // ─────────────────────────────────────────────────────────────
 //  Types
 // ─────────────────────────────────────────────────────────────
@@ -34,7 +52,6 @@ export interface ReqConEstado {
   pct_dedicacion: number;
   fecha_inicio: string;
   fecha_fin: string;
-  fase_numero: number | null;
   fase_nombre: string | null;
   /** Todas las asignaciones confirmadas (puede haber varias no solapadas) */
   asignaciones: AsignacionActiva[];
@@ -60,6 +77,15 @@ export interface FitAlerta {
   nivel: "warning" | "error";
 }
 
+/** Asignación activa con datos suficientes para el mini-Gantt */
+export interface AsignacionDetalle {
+  requerimiento_id: string | null;
+  engagement_nombre: string;
+  pct_dedicacion: number;
+  fecha_inicio: string;
+  fecha_fin: string | null;
+}
+
 export interface PersonaFit {
   persona_id: string;
   nombre: string;
@@ -72,6 +98,8 @@ export interface PersonaFit {
   alertas: FitAlerta[];
   score: number;   // 0–100 (mayor = mejor fit)
   nivel: FitNivel;
+  /** Asignaciones activas que solapan con el período del req (para mini-Gantt) */
+  asignaciones: AsignacionDetalle[];
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -95,7 +123,6 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
       pct_dedicacion,
       fecha_inicio,
       fecha_fin,
-      fase_numero,
       fase_nombre,
       engagement:engagement_id (
         nombre,
@@ -106,7 +133,7 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
       )
     `)
     .gte("fecha_fin", hoy)
-    .order("fase_numero");
+    .order("fase_nombre");
 
   if (reqErr) return { engagements: [], error: reqErr.message };
 
@@ -134,7 +161,6 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
     pct_dedicacion: number;
     fecha_inicio: string;
     fecha_fin: string;
-    fase_numero: number | null;
     fase_nombre: string | null;
     engagement: {
       nombre: string;
@@ -215,10 +241,18 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
       pct_dedicacion: Number(r.pct_dedicacion),
       fecha_inicio: r.fecha_inicio,
       fecha_fin: r.fecha_fin,
-      fase_numero: r.fase_numero,
       fase_nombre: r.fase_nombre,
       asignaciones,
       cubierto_desde_hoy,
+    });
+  }
+
+  // Ordenar requerimientos de cada engagement por nombre (asc) y seniority dentro del mismo nombre
+  for (const eng of engMap.values()) {
+    eng.requerimientos.sort((a, b) => {
+      const faseComp = (a.fase_nombre ?? "").localeCompare(b.fase_nombre ?? "", "es");
+      if (faseComp !== 0) return faseComp;
+      return seniorityIndex(a.cargo_requerido) - seniorityIndex(b.cargo_requerido);
     });
   }
 
@@ -263,9 +297,15 @@ export async function fetchPersonasFit(
   if (pErr) return { personas: [], error: pErr.message };
 
   // 2. Asignaciones que solapan con [desdeEfectivo, hastaEfectivo]
+  //    Incluimos fechas y nombre del engagement para el mini-Gantt
   const { data: asigRaw, error: aErr } = await supabase
     .from("asignacion")
-    .select("persona_id, pct_dedicacion, requerimiento_id")
+    .select(`
+      persona_id, pct_dedicacion, requerimiento_id, fecha_inicio, fecha_fin,
+      requerimiento_engagement!requerimiento_id (
+        engagement!engagement_id (nombre)
+      )
+    `)
     .eq("estado", "activa")
     .lte("fecha_inicio", hastaEfectivo)
     .or(`fecha_fin.gte.${desdeEfectivo},fecha_fin.is.null`);
@@ -280,7 +320,14 @@ export async function fetchPersonasFit(
     .gte("fecha_fin", desdeEfectivo);
 
   interface PersonaRow { id: string; nombre: string; apellido: string; cargo_actual: string }
-  interface AsigRow    { persona_id: string; pct_dedicacion: number; requerimiento_id: string | null }
+  interface AsigRow    {
+    persona_id: string;
+    pct_dedicacion: number;
+    requerimiento_id: string | null;
+    fecha_inicio: string;
+    fecha_fin: string | null;
+    requerimiento_engagement?: { engagement?: { nombre?: string } } | null;
+  }
   interface AusRow     { persona_id: string; tipo: string; fecha_inicio: string; fecha_fin: string }
 
   const personas = (personasRaw ?? []) as unknown as PersonaRow[];
@@ -289,7 +336,20 @@ export async function fetchPersonasFit(
 
   // Pct comprometido por persona en el período (sin contar el req actual)
   const pctPorPersona = new Map<string, number>();
+  // Asignaciones detalle por persona (para mini-Gantt)
+  const asigsPorPersona = new Map<string, AsignacionDetalle[]>();
+
   for (const a of asigs) {
+    if (!asigsPorPersona.has(a.persona_id)) asigsPorPersona.set(a.persona_id, []);
+    const engNombre = a.requerimiento_engagement?.engagement?.nombre ?? "—";
+    asigsPorPersona.get(a.persona_id)!.push({
+      requerimiento_id: a.requerimiento_id,
+      engagement_nombre: engNombre,
+      pct_dedicacion: Number(a.pct_dedicacion),
+      fecha_inicio: a.fecha_inicio,
+      fecha_fin: a.fecha_fin ?? null,
+    });
+
     if (a.requerimiento_id === req.id) continue; // no contar la asignación actual del req
     pctPorPersona.set(a.persona_id, (pctPorPersona.get(a.persona_id) ?? 0) + Number(a.pct_dedicacion));
   }
@@ -390,6 +450,7 @@ export async function fetchPersonasFit(
       alertas,
       score,
       nivel,
+      asignaciones: asigsPorPersona.get(p.id) ?? [],
     };
   });
 
