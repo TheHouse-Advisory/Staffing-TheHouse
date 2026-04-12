@@ -1,10 +1,11 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { startOfISOWeek, addWeeks, subWeeks, format } from "date-fns";
 import { es } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
 import { TablonOcupacion } from "@/components/tablero/TablonOcupacion";
+import { PlanReviewPanel } from "@/components/tablero/PlanReviewPanel";
 import { createClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
@@ -25,27 +26,57 @@ export default function TableroPage() {
   const [planes, setPlanes] = useState<PlanResumen[]>([]);
   const [planesLoading, setPlanesLoading] = useState(true);
   const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [miPersonaId, setMiPersonaId] = useState<string>("");
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const semanaLabel = (() => {
     const fin = addWeeks(semanaInicio, 1);
     return `${format(semanaInicio, "d MMM", { locale: es })} – ${format(fin, "d MMM yyyy", { locale: es })}`;
   })();
 
-  // Cargar planes borrador para el selector
-  useEffect(() => {
+  // Cargar planes borrador y datos del usuario actual
+  const loadPlanes = useCallback(async () => {
     const supabase = createClient();
-    supabase
-      .from("propuesta_plan")
-      .select("id, nombre")
-      .eq("estado", "borrador")
-      .order("created_at", { ascending: false })
-      .then(({ data }) => {
-        setPlanes((data ?? []) as PlanResumen[]);
-        setPlanesLoading(false);
-      });
+    const { data: { user } } = await supabase.auth.getUser();
+
+    const [planesRes, personaRes] = await Promise.all([
+      supabase
+        .from("propuesta_plan")
+        .select("id, nombre")
+        .eq("estado", "borrador")
+        .order("created_at", { ascending: false }),
+      user
+        ? (supabase as any)
+            .from("persona")
+            .select("id, rol_sistema")
+            .eq("auth_user_id", user.id)
+            .single()
+        : Promise.resolve({ data: null }),
+    ]);
+
+    setPlanes((planesRes.data ?? []) as PlanResumen[]);
+    setPlanesLoading(false);
+
+    if (personaRes.data) {
+      const me = personaRes.data as any;
+      setMiPersonaId(me.id);
+      setIsAdmin(me.rol_sistema === "admin");
+    }
   }, []);
 
+  useEffect(() => { loadPlanes(); }, [loadPlanes]);
+
   const planActual = planes.find((p) => p.id === planId);
+
+  // Tras aprobar o descartar: recargar lista de planes
+  // Si el plan ya no existe en borrador → volver a vista real
+  const handlePlanActualizado = useCallback(() => {
+    loadPlanes().then(() => {
+      // Si el planId ya no está en borradores, deseleccionar
+      // (El panel llama a onClose en ambos casos, así que esta lógica
+      //  es un safety net en caso de que el panel no lo hiciera)
+    });
+  }, [loadPlanes]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -137,28 +168,34 @@ export default function TableroPage() {
 
           {/* Dropdown de planes */}
           {dropdownOpen && (
-            <div className="absolute top-full right-0 mt-1.5 min-w-[220px] bg-white border border-[#e8e8e8] rounded-xl shadow-lg z-20 overflow-hidden">
+            <div className="absolute top-full right-0 mt-1.5 min-w-[240px] bg-white border border-[#e8e8e8] rounded-xl shadow-lg z-20 overflow-hidden">
               {planesLoading ? (
                 <p className="text-xs text-[#888] px-4 py-3">Cargando planes...</p>
               ) : planes.length === 0 ? (
                 <p className="text-xs text-[#888] px-4 py-3">
-                  No hay planes en borrador. Crea uno desde Propuestas.
+                  No hay planes en borrador.
                 </p>
               ) : (
                 <div className="py-1.5">
+                  <p className="text-[10px] font-semibold text-[#aaa] uppercase tracking-widest px-4 py-1.5">
+                    Planes pendientes de revisión
+                  </p>
                   {planes.map((plan) => (
                     <button
                       key={plan.id}
                       type="button"
                       onClick={() => { setPlanId(plan.id); setDropdownOpen(false); }}
                       className={cn(
-                        "w-full text-left px-4 py-2.5 text-sm transition-colors",
+                        "w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center justify-between gap-2",
                         planId === plan.id
                           ? "bg-[#eaf4ff] text-[#1a5276] font-semibold"
                           : "text-[#333] hover:bg-[#f5f5f5]"
                       )}
                     >
-                      {plan.nombre}
+                      <span className="truncate">{plan.nombre}</span>
+                      {isAdmin && (
+                        <span className="text-[10px] text-[#aaa] flex-shrink-0">revisar →</span>
+                      )}
                     </button>
                   ))}
                 </div>
@@ -176,7 +213,28 @@ export default function TableroPage() {
         />
       )}
 
-      {/* Contenido */}
+      {/* Panel de revisión del plan — solo admins, solo cuando hay plan seleccionado */}
+      {planId && isAdmin && (
+        <PlanReviewPanel
+          key={planId}
+          planId={planId}
+          miPersonaId={miPersonaId}
+          onSuccess={handlePlanActualizado}
+          onClose={() => setPlanId(null)}
+        />
+      )}
+
+      {/* Aviso informativo para no-admins con plan seleccionado */}
+      {planId && !isAdmin && (
+        <div className="bg-[#eaf4ff] border-b border-[#bfdbfe] px-6 py-2 flex items-center gap-2 flex-shrink-0">
+          <span className="text-xs text-[#1a5276]">
+            📋 Vista proyectada con el plan <strong>{planActual?.nombre}</strong> aplicado.
+            Solo los administradores pueden aprobar o descartar planes.
+          </span>
+        </div>
+      )}
+
+      {/* Heatmap */}
       <div className="flex-1 overflow-auto scrollbar-thin">
         <TablonOcupacion
           semanaInicio={semanaInicio}
