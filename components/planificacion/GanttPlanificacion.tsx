@@ -20,7 +20,6 @@ import { createClient } from "@/lib/supabase/client";
 import {
   fetchEngagementsConReqs,
   fetchPersonasFit,
-  terminarAsignacion,
   today,
   type EngagementConReqs,
   type ReqConEstado,
@@ -45,6 +44,19 @@ interface Tentativa {
   pct: number;
   fecha_inicio: string;     // siempre "hoy"
   fecha_fin: string;        // req.fecha_fin
+}
+
+/** Terminación propuesta — solo existe en estado local hasta que se guarda el plan */
+interface TerminacionTentativa {
+  id: string;               // uuid local
+  asignacion_id: string;    // asignacion real a terminar
+  requerimiento_id: string;
+  engagement_id: string;
+  persona_id: string;
+  persona_nombre: string;
+  persona_apellido: string;
+  pct_liberado: number;
+  fecha_fin: string;        // fecha de término propuesta
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -121,105 +133,44 @@ function Avatar({
 }
 
 // ─────────────────────────────────────────────────────────────
-//  Dialog de confirmación de terminación
-// ─────────────────────────────────────────────────────────────
-
-function DialogTerminar({
-  asignacion,
-  onConfirm,
-  onCancel,
-  loading,
-}: {
-  asignacion: AsignacionActiva;
-  onConfirm: (fechaFin: string) => void;
-  onCancel: () => void;
-  loading: boolean;
-}) {
-  const hoy = today();
-  const [fecha, setFecha] = useState(hoy);
-
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-      <div className="bg-white rounded-2xl border border-[#e8e8e8] shadow-2xl w-full max-w-sm mx-4">
-        <div className="px-5 py-4 border-b border-[#f0f0f0] flex items-center justify-between">
-          <h3 className="text-[14px] font-bold text-[#1a1a1a]">Terminar asignación</h3>
-          <button onClick={onCancel} className="text-[#bbb] hover:text-[#555]">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="px-5 py-4 space-y-3">
-          <p className="text-[13px] text-[#555]">
-            ¿Terminar la asignación de{" "}
-            <strong>{asignacion.persona_nombre} {asignacion.persona_apellido}</strong>?
-          </p>
-          <div>
-            <label className="block text-[11px] font-semibold text-[#888] uppercase tracking-wide mb-1">
-              Fecha de término
-            </label>
-            <input
-              type="date"
-              value={fecha}
-              max={hoy}
-              onChange={(e) => setFecha(e.target.value)}
-              className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] focus:outline-none focus:border-[#1a1a1a]"
-            />
-          </div>
-          <p className="text-[11px] text-[#aaa]">
-            La persona quedará libre a partir del {formatFechaLarga(fecha)}.
-            Se podrá asignar un reemplazo desde esa fecha.
-          </p>
-        </div>
-        <div className="flex gap-2 px-5 py-4 border-t border-[#f0f0f0]">
-          <button
-            onClick={onCancel}
-            className="flex-1 py-2 rounded-lg border border-[#e0e0e0] text-[13px] text-[#555] hover:bg-[#f5f5f5] transition-colors font-medium"
-          >
-            Cancelar
-          </button>
-          <button
-            onClick={() => onConfirm(fecha)}
-            disabled={loading}
-            className="flex-1 py-2 rounded-lg bg-red-500 hover:bg-red-600 text-[13px] font-semibold text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
-          >
-            {loading && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            Terminar asignación
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
 //  Fila de requerimiento
 // ─────────────────────────────────────────────────────────────
 
 function FilaRequerimiento({
   req,
   tentativas,
+  terminaciones,
   isSelected,
   onSelect,
   onRemoveTentativa,
-  onTerminarAsignacion,
+  onProponerLiberar,
+  onDeshacerTerminar,
 }: {
   req: ReqConEstado;
   tentativas: Tentativa[];
+  terminaciones: TerminacionTentativa[];
   isSelected: boolean;
   onSelect: () => void;
   onRemoveTentativa: (tentativaId: string) => void;
-  onTerminarAsignacion: (asig: AsignacionActiva) => void;
+  onProponerLiberar: (asig: AsignacionActiva) => void;
+  onDeshacerTerminar: (terminacionId: string) => void;
 }) {
   const tieneTentativa = tentativas.some((t) => t.requerimiento_id === req.id);
-  // Un req cubierto desde hoy NO es clickeable para buscar propuestas.
-  // Solo se puede interactuar para terminar asignaciones.
-  const cubierto = req.cubierto_desde_hoy;
-  const clickeable = !cubierto;  // solo abre el fit panel si no está cubierto
   const hoy = today();
 
   // Asignaciones activas desde hoy
   const asigActivas = req.asignaciones.filter(
     (a) => a.fecha_fin === null || a.fecha_fin >= hoy
   );
+
+  // Si TODAS las asignaciones activas están propuestas para liberación,
+  // el req se trata como sin cubrir (clickeable para buscar reemplazo)
+  const todasLiberadas =
+    asigActivas.length > 0 &&
+    asigActivas.every((a) => terminaciones.some((t) => t.asignacion_id === a.asignacion_id));
+
+  const cubierto = req.cubierto_desde_hoy && !todasLiberadas;
+  const clickeable = !cubierto;  // abre el fit panel para buscar candidatos
 
   return (
     <div
@@ -276,36 +227,65 @@ function FilaRequerimiento({
       {/* Asignaciones confirmadas activas */}
       {asigActivas.length > 0 && (
         <div className="mt-2 space-y-1.5 ml-5">
-          {asigActivas.map((a) => (
-            <div
-              key={a.asignacion_id}
-              className="flex items-center gap-2"
-              onClick={(e) => e.stopPropagation()}
-            >
-              <Avatar
-                personaId={a.persona_id}
-                nombre={a.persona_nombre}
-                apellido={a.persona_apellido}
-                size="sm"
-              />
-              <div className="flex-1 min-w-0">
-                <p className="text-[11px] font-medium text-[#333] truncate">
-                  {a.persona_nombre} {a.persona_apellido}
-                </p>
-                <p className="text-[9px] text-[#aaa]">
-                  {formatFecha(a.fecha_inicio)} → {formatFecha(a.fecha_fin)} · {a.pct_dedicacion}%
-                </p>
-              </div>
-              <button
-                onClick={() => onTerminarAsignacion(a)}
-                className="flex items-center gap-1 text-[10px] text-[#bbb] hover:text-red-500 px-1.5 py-0.5 rounded hover:bg-red-50 transition-colors flex-shrink-0"
-                title="Terminar esta asignación"
+          {asigActivas.map((a) => {
+            const terminacion = terminaciones.find((t) => t.asignacion_id === a.asignacion_id);
+            const propuestaTerminar = !!terminacion;
+
+            return (
+              <div
+                key={a.asignacion_id}
+                className={cn(
+                  "flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors",
+                  propuestaTerminar ? "bg-red-50" : ""
+                )}
+                onClick={(e) => e.stopPropagation()}
               >
-                <UserMinus className="w-3 h-3" />
-                <span className="hidden group-hover:inline">Terminar</span>
-              </button>
-            </div>
-          ))}
+                <div className={cn("relative flex-shrink-0", propuestaTerminar && "opacity-50")}>
+                  <Avatar
+                    personaId={a.persona_id}
+                    nombre={a.persona_nombre}
+                    apellido={a.persona_apellido}
+                    size="sm"
+                  />
+                </div>
+                <div className={cn("flex-1 min-w-0", propuestaTerminar && "opacity-60")}>
+                  <p className={cn("text-[11px] font-medium truncate", propuestaTerminar ? "line-through text-red-700" : "text-[#333]")}>
+                    {a.persona_nombre} {a.persona_apellido}
+                  </p>
+                  <p className="text-[9px] text-[#aaa]">
+                    {formatFecha(a.fecha_inicio)} → {formatFecha(a.fecha_fin)} · {a.pct_dedicacion}%
+                    {propuestaTerminar && (
+                      <span className="text-amber-600 font-medium ml-1">
+                        · propuesto liberar hoy
+                      </span>
+                    )}
+                  </p>
+                </div>
+
+                {propuestaTerminar ? (
+                  /* Botón deshacer */
+                  <button
+                    onClick={() => onDeshacerTerminar(terminacion!.id)}
+                    className="flex items-center gap-1 text-[10px] text-red-500 hover:text-red-700 px-1.5 py-0.5 rounded hover:bg-red-100 transition-colors flex-shrink-0 font-medium"
+                    title="Deshacer propuesta de liberación"
+                  >
+                    <X className="w-3 h-3" />
+                    Deshacer
+                  </button>
+                ) : (
+                  /* Botón proponer liberación — acción directa, sin diálogo */
+                  <button
+                    onClick={() => onProponerLiberar(a)}
+                    className="flex items-center gap-1 text-[10px] text-[#bbb] hover:text-amber-600 px-1.5 py-0.5 rounded hover:bg-amber-50 transition-colors flex-shrink-0"
+                    title="Proponer liberar esta persona (en plan borrador, desde hoy)"
+                  >
+                    <UserMinus className="w-3 h-3" />
+                    <span className="hidden group-hover:inline">Liberar</span>
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 
@@ -370,9 +350,11 @@ function barColor(idx: number): string {
 function MiniGantt({
   req,
   asignaciones,
+  asignacionIdsALiberar = [],
 }: {
   req: ReqConEstado;
   asignaciones: AsignacionDetalle[];
+  asignacionIdsALiberar?: string[];
 }) {
   const reqStart = new Date(req.fecha_inicio + "T00:00:00").getTime();
   const reqEnd   = new Date(req.fecha_fin   + "T00:00:00").getTime();
@@ -405,6 +387,7 @@ function MiniGantt({
     fin: string | null;
     color: string;
     isProposed: boolean;
+    isLiberada: boolean;
   }> = [
     // Asignaciones existentes
     ...asigSolap.map((a, i) => ({
@@ -414,6 +397,7 @@ function MiniGantt({
       fin: a.fecha_fin,
       color: barColor(i),
       isProposed: false,
+      isLiberada: asignacionIdsALiberar.includes(a.asignacion_id),
     })),
     // La propuesta actual
     {
@@ -423,6 +407,7 @@ function MiniGantt({
       fin: req.fecha_fin,
       color: "#3b82f6",
       isProposed: true,
+      isLiberada: false,
     },
   ];
 
@@ -442,9 +427,16 @@ function MiniGantt({
           <div key={i} className="flex items-center gap-1.5">
             {/* Label izquierda */}
             <div
-              className="w-[72px] text-[9px] text-right flex-shrink-0 truncate leading-tight"
-              style={{ color: row.isProposed ? "#3b82f6" : "#888" }}
-              title={row.label}
+              className={cn(
+                "w-[72px] text-[9px] text-right flex-shrink-0 truncate leading-tight",
+                row.isLiberada && "line-through"
+              )}
+              style={{
+                color: row.isLiberada ? "#ef4444"
+                  : row.isProposed ? "#3b82f6"
+                  : "#888",
+              }}
+              title={row.isLiberada ? `${row.label} (propuesto liberar)` : row.label}
             >
               {row.label}
             </div>
@@ -454,15 +446,28 @@ function MiniGantt({
               <div
                 className="absolute top-0 h-full rounded-sm flex items-center overflow-hidden"
                 style={{
-                  left:    `${pos.left}%`,
-                  width:   `${pos.width}%`,
-                  background: row.color,
-                  opacity: row.isProposed ? 1 : 0.75,
-                  border:  row.isProposed ? "1px solid rgba(59,130,246,0.5)" : "none",
+                  left:       `${pos.left}%`,
+                  width:      `${pos.width}%`,
+                  background: row.isLiberada ? "#fca5a5"
+                    : row.isProposed ? "#3b82f6"
+                    : row.color,
+                  opacity: row.isLiberada ? 0.6 : row.isProposed ? 1 : 0.75,
+                  border: row.isProposed ? "1px solid rgba(59,130,246,0.5)"
+                    : row.isLiberada ? "1px solid rgba(239,68,68,0.4)"
+                    : "none",
                 }}
-                title={`${row.label} · ${row.pct}%`}
+                title={`${row.label} · ${row.pct}%${row.isLiberada ? " (propuesto liberar)" : ""}`}
               >
-                <span className="text-[8px] text-white font-semibold px-1 truncate leading-none select-none">
+                {/* Línea tachada para liberadas */}
+                {row.isLiberada && (
+                  <div className="absolute inset-0 flex items-center pointer-events-none">
+                    <div className="w-full h-px bg-red-500 opacity-70" />
+                  </div>
+                )}
+                <span className={cn(
+                  "text-[8px] font-semibold px-1 truncate leading-none select-none relative z-10",
+                  row.isLiberada ? "text-red-700" : "text-white"
+                )}>
                   {row.pct}%
                 </span>
               </div>
@@ -479,13 +484,14 @@ function MiniGantt({
 // ─────────────────────────────────────────────────────────────
 
 function FitPanel({
-  req, personas, loading, onAsignar, onCerrar,
+  req, personas, loading, onAsignar, onCerrar, asignacionIdsALiberar = [],
 }: {
   req: ReqConEstado | null;
   personas: PersonaFit[];
   loading: boolean;
   onAsignar: (p: PersonaFit) => void;
   onCerrar: () => void;
+  asignacionIdsALiberar?: string[];
 }) {
   const hoy = today();
 
@@ -611,6 +617,7 @@ function FitPanel({
                     <MiniGantt
                       req={req}
                       asignaciones={p.asignaciones}
+                      asignacionIdsALiberar={asignacionIdsALiberar}
                     />
                   )}
                 </div>
@@ -628,14 +635,17 @@ function FitPanel({
 // ─────────────────────────────────────────────────────────────
 
 function EngagementCard({
-  eng, tentativas, reqSeleccionado, onSelectReq, onRemoveTentativa, onTerminarAsignacion,
+  eng, tentativas, terminaciones, reqSeleccionado, onSelectReq,
+  onRemoveTentativa, onProponerLiberar, onDeshacerTerminar,
 }: {
   eng: EngagementConReqs;
   tentativas: Tentativa[];
+  terminaciones: TerminacionTentativa[];
   reqSeleccionado: string | null;
   onSelectReq: (req: ReqConEstado) => void;
   onRemoveTentativa: (id: string) => void;
-  onTerminarAsignacion: (asig: AsignacionActiva) => void;
+  onProponerLiberar: (asig: AsignacionActiva) => void;
+  onDeshacerTerminar: (id: string) => void;
 }) {
   const [collapsed, setCollapsed] = useState(false);
 
@@ -692,10 +702,12 @@ function EngagementCard({
               key={req.id}
               req={req}
               tentativas={tentativas.filter((t) => t.requerimiento_id === req.id)}
+              terminaciones={terminaciones.filter((t) => t.requerimiento_id === req.id)}
               isSelected={reqSeleccionado === req.id}
               onSelect={() => onSelectReq(req)}
               onRemoveTentativa={onRemoveTentativa}
-              onTerminarAsignacion={onTerminarAsignacion}
+              onProponerLiberar={onProponerLiberar}
+              onDeshacerTerminar={onDeshacerTerminar}
             />
           ))}
         </div>
@@ -718,12 +730,11 @@ export function GanttPlanificacion() {
   const [fitPersonas, setFitPersonas]         = useState<PersonaFit[]>([]);
   const [fitLoading, setFitLoading]           = useState(false);
 
-  // Propuestas borrador locales
+  // Propuestas borrador locales (adiciones)
   const [tentativas, setTentativas] = useState<Tentativa[]>([]);
 
-  // Dialog de terminación
-  const [dialogTerminar, setDialogTerminar] = useState<AsignacionActiva | null>(null);
-  const [terminando, setTerminando]         = useState(false);
+  // Liberaciones tentativas locales (no van a BD hasta guardar plan)
+  const [terminacionesTentativas, setTerminacionesTentativas] = useState<TerminacionTentativa[]>([]);
 
   // Guardado de plan
   const [guardando, setGuardando]     = useState(false);
@@ -758,12 +769,14 @@ export function GanttPlanificacion() {
     setFitLoading(true);
     const supabase = createClient();
     const result = await fetchPersonasFit(
-      supabase, req,
-      tentativas.map((t) => ({ persona_id: t.persona_id, requerimiento_id: t.requerimiento_id, pct: t.pct }))
+      supabase,
+      req,
+      tentativas.map((t) => ({ persona_id: t.persona_id, requerimiento_id: t.requerimiento_id, pct: t.pct })),
+      terminacionesTentativas.map((t) => t.asignacion_id)
     );
     setFitPersonas(result.personas);
     setFitLoading(false);
-  }, [reqSeleccionado?.id, tentativas]);
+  }, [reqSeleccionado?.id, tentativas, terminacionesTentativas]);
 
   // ── Proponer persona ───────────────────────────────────────
 
@@ -790,35 +803,57 @@ export function GanttPlanificacion() {
     setGuardadoMsg(null);
   }, [reqSeleccionado]);
 
-  // ── Terminar asignación ────────────────────────────────────
+  // ── Proponer liberar asignación (solo local, siempre desde hoy) ──
 
-  const handleTerminarAsignacion = useCallback(async (fechaFin: string) => {
-    if (!dialogTerminar) return;
-    setTerminando(true);
-    const supabase = createClient();
-    const { error: err } = await terminarAsignacion(supabase, dialogTerminar.asignacion_id, fechaFin);
-    setTerminando(false);
-    setDialogTerminar(null);
-    if (err) {
-      setGuardadoMsg(`Error al terminar: ${err}`);
-    } else {
-      await cargar();
-      // Si el req seleccionado era de este engagement, recargar el fit
-      if (reqSeleccionado) {
-        const supabase2 = createClient();
-        const result = await fetchPersonasFit(
-          supabase2, reqSeleccionado,
-          tentativas.map((t) => ({ persona_id: t.persona_id, requerimiento_id: t.requerimiento_id, pct: t.pct }))
-        );
-        setFitPersonas(result.personas);
+  const handleProponerLiberar = useCallback((asig: AsignacionActiva) => {
+    // Buscar a qué req y engagement pertenece esta asignación
+    let reqId = "", engId = "";
+    for (const eng of engagements) {
+      for (const req of eng.requerimientos) {
+        if (req.asignaciones.some((a) => a.asignacion_id === asig.asignacion_id)) {
+          reqId = req.id;
+          engId = req.engagement_id;
+          break;
+        }
       }
+      if (reqId) break;
     }
-  }, [dialogTerminar, cargar, reqSeleccionado, tentativas]);
+
+    const hoy = today();
+
+    setTerminacionesTentativas((prev) => {
+      // Solo una liberación por asignación
+      const sin = prev.filter((t) => t.asignacion_id !== asig.asignacion_id);
+      return [
+        ...sin,
+        {
+          id: crypto.randomUUID(),
+          asignacion_id: asig.asignacion_id,
+          requerimiento_id: reqId,
+          engagement_id: engId,
+          persona_id: asig.persona_id,
+          persona_nombre: asig.persona_nombre,
+          persona_apellido: asig.persona_apellido,
+          pct_liberado: Number(asig.pct_dedicacion),
+          fecha_fin: hoy,
+        },
+      ];
+    });
+
+    setGuardadoMsg(null);
+  }, [engagements]);
+
+  const handleDeshacerTerminar = useCallback((terminacionId: string) => {
+    setTerminacionesTentativas((prev) => prev.filter((t) => t.id !== terminacionId));
+    setGuardadoMsg(null);
+  }, []);
 
   // ── Guardar plan ───────────────────────────────────────────
 
+  const totalCambios = tentativas.length + terminacionesTentativas.length;
+
   const handleGuardarPlan = useCallback(async () => {
-    if (tentativas.length === 0) return;
+    if (totalCambios === 0) return;
     setGuardando(true);
     setGuardadoMsg(null);
 
@@ -826,9 +861,6 @@ export function GanttPlanificacion() {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const sb = supabase as any;
 
-    // Sistema sin auth: creada_por y propuesto_por siempre null.
-    // La migración fix_propuestas_rls.sql eliminó la FK de creada_por
-    // y hace nullable propuesto_por.
     const planNombre = `Plan ${format(new Date(), "d MMM yyyy HH:mm", { locale: es })}`;
     const { data: planData, error: planErr } = await sb
       .from("propuesta_plan")
@@ -844,6 +876,7 @@ export function GanttPlanificacion() {
 
     const planId = (planData as { id: string }).id;
 
+    // 1. Asignaciones nuevas (tipo=asignar)
     const inserts = tentativas
       .map((t) => {
         const req = engagements.flatMap((e) => e.requerimientos).find((r) => r.id === t.requerimiento_id);
@@ -856,30 +889,55 @@ export function GanttPlanificacion() {
           fecha_inicio: t.fecha_inicio,
           fecha_fin: t.fecha_fin,
           estado: "borrador",
+          tipo: "asignar",
           cargo_al_momento: t.cargo,
         };
       })
       .filter((i) => i.engagement_id);
 
-    const { error: asigErr } = await sb.from("asignacion_propuesta").insert(inserts);
+    // 2. Liberaciones propuestas (tipo=liberar)
+    const liberaciones = terminacionesTentativas.map((t) => ({
+      plan_id: planId,
+      persona_id: t.persona_id,
+      engagement_id: t.engagement_id,
+      requerimiento_id: t.requerimiento_id,
+      pct_dedicacion: t.pct_liberado,
+      fecha_inicio: t.fecha_fin,
+      fecha_fin: t.fecha_fin,
+      estado: "borrador",
+      tipo: "liberar",
+      asignacion_a_terminar_id: t.asignacion_id,
+      cargo_al_momento: null,
+    }));
+
+    const todosLosInserts = [...inserts, ...liberaciones];
+
+    const { error: asigErr } = await sb.from("asignacion_propuesta").insert(todosLosInserts);
 
     if (asigErr) {
       await supabase.from("propuesta_plan").delete().eq("id", planId);
       setGuardadoMsg(`Error: ${asigErr.message}`);
     } else {
-      setGuardadoMsg(`✓ Plan "${planNombre}" guardado con ${tentativas.length} propuesta(s)`);
+      const partes = [];
+      if (tentativas.length > 0) partes.push(`${tentativas.length} asignación(es) nueva(s)`);
+      if (terminacionesTentativas.length > 0) partes.push(`${terminacionesTentativas.length} liberación(es)`);
+      setGuardadoMsg(`✓ Plan "${planNombre}" guardado — ${partes.join(", ")}`);
       setTentativas([]);
+      setTerminacionesTentativas([]);
     }
     setGuardando(false);
-  }, [tentativas, engagements]);
+  }, [tentativas, terminacionesTentativas, engagements, totalCambios]);
 
   // ── Filtrado y stats ───────────────────────────────────────
 
-  // Función para saber si un engagement tiene algún req sin cubrir (contando tentativas)
+  // Función para saber si un engagement tiene algo pendiente/modificado (incluye terminaciones)
   const tienePendiente = (eng: EngagementConReqs) =>
-    eng.requerimientos.some(
-      (r) => !r.cubierto_desde_hoy && !tentativas.some((t) => t.requerimiento_id === r.id)
-    );
+    eng.requerimientos.some((r) => {
+      const hasTentativa = tentativas.some((t) => t.requerimiento_id === r.id);
+      const hasTerminacion = terminacionesTentativas.some((t) => t.requerimiento_id === r.id);
+      // Pendiente si: no cubierto y sin tentativa, o tiene terminación propuesta
+      return (!r.cubierto_desde_hoy && !hasTentativa) || hasTerminacion;
+    });
 
   const engFiltrados = (filtro.trim()
     ? engagements.filter((e) =>
@@ -959,17 +1017,17 @@ export function GanttPlanificacion() {
           {/* Guardar plan */}
           <button
             onClick={handleGuardarPlan}
-            disabled={tentativas.length === 0 || guardando}
+            disabled={totalCambios === 0 || guardando}
             className={cn(
               "flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all",
-              tentativas.length > 0 && !guardando
+              totalCambios > 0 && !guardando
                 ? "bg-[#1a1a1a] text-white hover:bg-[#333] shadow-sm"
                 : "bg-[#f0f0f0] text-[#bbb] cursor-not-allowed"
             )}
           >
             {guardando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
             Guardar plan
-            {tentativas.length > 0 && <span>({tentativas.length})</span>}
+            {totalCambios > 0 && <span>({totalCambios})</span>}
           </button>
         </div>
 
@@ -1005,10 +1063,14 @@ export function GanttPlanificacion() {
                 tentativas={tentativas.filter((t) =>
                   eng.requerimientos.some((r) => r.id === t.requerimiento_id)
                 )}
+                terminaciones={terminacionesTentativas.filter((t) =>
+                  eng.requerimientos.some((r) => r.id === t.requerimiento_id)
+                )}
                 reqSeleccionado={reqSeleccionado?.id ?? null}
                 onSelectReq={handleSelectReq}
                 onRemoveTentativa={(id) => setTentativas((prev) => prev.filter((t) => t.id !== id))}
-                onTerminarAsignacion={(asig) => setDialogTerminar(asig)}
+                onProponerLiberar={handleProponerLiberar}
+                onDeshacerTerminar={handleDeshacerTerminar}
               />
             ))
           )}
@@ -1029,8 +1091,8 @@ export function GanttPlanificacion() {
             <span className="text-[10px] text-[#aaa]">Propuesto (borrador)</span>
           </div>
           <div className="flex items-center gap-1.5">
-            <UserMinus className="w-3.5 h-3.5 text-[#aaa]" />
-            <span className="text-[10px] text-[#aaa]">Terminar asignación</span>
+            <div className="w-4 h-1.5 bg-red-300 rounded-full opacity-70" />
+            <span className="text-[10px] text-[#aaa]">Liberar propuesto (borrador)</span>
           </div>
         </div>
       </div>
@@ -1046,18 +1108,10 @@ export function GanttPlanificacion() {
           loading={fitLoading}
           onAsignar={handleAsignar}
           onCerrar={() => { setReqSeleccionado(null); setFitPersonas([]); }}
+          asignacionIdsALiberar={terminacionesTentativas.map((t) => t.asignacion_id)}
         />
       </div>
 
-      {/* Dialog de terminación */}
-      {dialogTerminar && (
-        <DialogTerminar
-          asignacion={dialogTerminar}
-          onConfirm={handleTerminarAsignacion}
-          onCancel={() => setDialogTerminar(null)}
-          loading={terminando}
-        />
-      )}
     </div>
   );
 }

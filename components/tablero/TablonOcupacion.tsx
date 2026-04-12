@@ -140,7 +140,7 @@ function PopoverContainer({
 interface LineaPersona {
   engagement_nombre: string;
   pct: number;
-  tipo: "real" | "plan";
+  tipo: "real" | "plan" | "liberar";
 }
 
 interface PopoverPersonaState {
@@ -171,31 +171,62 @@ function PersonaPopover({
       const resultado: LineaPersona[] = [];
       const diaStr = state.diaStr;
 
-      type AsigDesglose = { pct_dedicacion: number; engagement: { nombre: string } | null };
+      type AsigDesglose = { id: string; pct_dedicacion: number; engagement: { nombre: string } | null };
 
+      // 1. Asignaciones reales
       const { data: realRaw } = await supabase
         .from("asignacion")
-        .select("pct_dedicacion, engagement:engagement_id(nombre)")
+        .select("id, pct_dedicacion, engagement:engagement_id(nombre)")
         .eq("persona_id", state.personaId)
         .eq("estado", "activa")
         .lte("fecha_inicio", diaStr)
         .or(`fecha_fin.gte.${diaStr},fecha_fin.is.null`);
 
-      for (const a of (realRaw ?? []) as unknown as AsigDesglose[]) {
-        resultado.push({ engagement_nombre: a.engagement?.nombre ?? "—", pct: Number(a.pct_dedicacion), tipo: "real" });
+      const realAsigs = (realRaw ?? []) as unknown as AsigDesglose[];
+
+      // 2. Liberaciones del plan (termina asignaciones reales) que aplican este día
+      const liberacionIds = new Set<string>();
+      if (planId) {
+        type LibRow = { asignacion_a_terminar_id: string | null; fecha_fin: string };
+        const { data: liberarRaw } = await (supabase as any)
+          .from("asignacion_propuesta")
+          .select("asignacion_a_terminar_id, fecha_fin")
+          .eq("persona_id", state.personaId)
+          .eq("plan_id", planId)
+          .eq("estado", "borrador")
+          .eq("tipo", "liberar")
+          .lte("fecha_fin", diaStr); // liberation date <= this day
+
+        for (const lib of (liberarRaw ?? []) as LibRow[]) {
+          if (lib.asignacion_a_terminar_id) {
+            liberacionIds.add(lib.asignacion_a_terminar_id);
+          }
+        }
       }
 
+      // 3. Agregar asignaciones reales — liberadas se muestran tachadas
+      for (const a of realAsigs) {
+        resultado.push({
+          engagement_nombre: a.engagement?.nombre ?? "—",
+          pct: Number(a.pct_dedicacion),
+          tipo: liberacionIds.has(a.id) ? "liberar" : "real",
+        });
+      }
+
+      // 4. Asignaciones nuevas del plan (tipo=asignar)
       if (planId) {
-        const { data: planRaw } = await supabase
+        type AsigDesglosePlan = { pct_dedicacion: number; engagement: { nombre: string } | null };
+        const { data: planRaw } = await (supabase as any)
           .from("asignacion_propuesta")
           .select("pct_dedicacion, engagement:engagement_id(nombre)")
           .eq("persona_id", state.personaId)
           .eq("plan_id", planId)
           .eq("estado", "borrador")
+          .neq("tipo", "liberar")
           .lte("fecha_inicio", diaStr)
           .gte("fecha_fin", diaStr);
 
-        for (const a of (planRaw ?? []) as unknown as AsigDesglose[]) {
+        for (const a of (planRaw ?? []) as unknown as AsigDesglosePlan[]) {
           resultado.push({ engagement_nombre: a.engagement?.nombre ?? "—", pct: Number(a.pct_dedicacion), tipo: "plan" });
         }
       }
@@ -206,7 +237,8 @@ function PersonaPopover({
     load();
   }, [state.personaId, state.diaStr, planId]);
 
-  const total = lineas.reduce((s, l) => s + l.pct, 0);
+  // Liberadas se descuentan del total
+  const total = lineas.reduce((s, l) => s + (l.tipo === "liberar" ? -l.pct : l.pct), 0);
 
   return (
     <PopoverContainer rect={state.rect} onClose={onClose} title={state.personaNombre} subtitle={state.diaLabel}>
@@ -217,14 +249,21 @@ function PersonaPopover({
       ) : (
         <div className="space-y-2">
           {lineas.map((l, i) => {
+            const isLiberar = l.tipo === "liberar";
             const { bg, text } = colorOcupacion(l.pct);
             return (
-              <div key={i} className="flex items-center gap-2">
+              <div key={i} className={`flex items-center gap-2 ${isLiberar ? "opacity-60" : ""}`}>
                 <div className="flex-1 min-w-0">
-                  <p className="text-xs font-medium text-[#1a1a1a] truncate">{l.engagement_nombre}</p>
+                  <p className={`text-xs font-medium truncate ${isLiberar ? "line-through text-red-600" : "text-[#1a1a1a]"}`}>
+                    {l.engagement_nombre}
+                  </p>
                   {l.tipo === "plan" && <p className="text-[10px] text-[#4a90e2]">propuesto</p>}
+                  {isLiberar && <p className="text-[10px] text-red-400">liberado</p>}
                 </div>
-                <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0" style={{ background: bg, color: text }}>
+                <span
+                  className={`text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${isLiberar ? "line-through" : ""}`}
+                  style={isLiberar ? { background: "#fee2e2", color: "#b91c1c" } : { background: bg, color: text }}
+                >
                   {formatPct(l.pct)}
                 </span>
               </div>
@@ -232,12 +271,12 @@ function PersonaPopover({
           })}
           {lineas.length > 1 && (
             <div className="border-t border-[#f0f0f0] pt-2 flex items-center justify-between">
-              <span className="text-xs text-[#888]">Total</span>
+              <span className="text-xs text-[#888]">Total efectivo</span>
               <span
                 className="text-xs font-bold px-2 py-0.5 rounded-full"
-                style={(() => { const { bg, text } = colorOcupacion(total); return { background: bg, color: text }; })()}
+                style={(() => { const { bg, text } = colorOcupacion(Math.max(0, total)); return { background: bg, color: text }; })()}
               >
-                {formatPct(total)}
+                {formatPct(Math.max(0, total))}
               </span>
             </div>
           )}

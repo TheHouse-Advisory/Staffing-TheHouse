@@ -79,6 +79,7 @@ export interface FitAlerta {
 
 /** Asignación activa con datos suficientes para el mini-Gantt */
 export interface AsignacionDetalle {
+  asignacion_id: string;       // id real de asignacion — para identificar liberaciones
   requerimiento_id: string | null;
   engagement_nombre: string;
   pct_dedicacion: number;
@@ -275,7 +276,9 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
 export async function fetchPersonasFit(
   supabase: any,
   req: ReqConEstado,
-  tentativas: Array<{ persona_id: string; requerimiento_id: string; pct: number }>
+  tentativas: Array<{ persona_id: string; requerimiento_id: string; pct: number }>,
+  /** IDs de asignaciones que se propone terminar — se excluyen del cálculo de capacidad */
+  asignacionIdsATerminar: string[] = []
 ): Promise<{ personas: PersonaFit[]; error: string | null }> {
   const hoy = today();
   // Período efectivo: desde hoy (o fecha_inicio si es futura) hasta fecha_fin
@@ -297,11 +300,11 @@ export async function fetchPersonasFit(
   if (pErr) return { personas: [], error: pErr.message };
 
   // 2. Asignaciones que solapan con [desdeEfectivo, hastaEfectivo]
-  //    Incluimos fechas y nombre del engagement para el mini-Gantt
+  //    Incluimos id, fechas y nombre del engagement para el mini-Gantt y para excluir terminaciones
   const { data: asigRaw, error: aErr } = await supabase
     .from("asignacion")
     .select(`
-      persona_id, pct_dedicacion, requerimiento_id, fecha_inicio, fecha_fin,
+      id, persona_id, pct_dedicacion, requerimiento_id, fecha_inicio, fecha_fin,
       requerimiento_engagement!requerimiento_id (
         engagement!engagement_id (nombre)
       )
@@ -321,6 +324,7 @@ export async function fetchPersonasFit(
 
   interface PersonaRow { id: string; nombre: string; apellido: string; cargo_actual: string }
   interface AsigRow    {
+    id: string;
     persona_id: string;
     pct_dedicacion: number;
     requerimiento_id: string | null;
@@ -340,9 +344,11 @@ export async function fetchPersonasFit(
   const asigsPorPersona = new Map<string, AsignacionDetalle[]>();
 
   for (const a of asigs) {
+    // Registrar para mini-Gantt (siempre, incluso si se va a terminar)
     if (!asigsPorPersona.has(a.persona_id)) asigsPorPersona.set(a.persona_id, []);
     const engNombre = a.requerimiento_engagement?.engagement?.nombre ?? "—";
     asigsPorPersona.get(a.persona_id)!.push({
+      asignacion_id: a.id,
       requerimiento_id: a.requerimiento_id,
       engagement_nombre: engNombre,
       pct_dedicacion: Number(a.pct_dedicacion),
@@ -350,7 +356,9 @@ export async function fetchPersonasFit(
       fecha_fin: a.fecha_fin ?? null,
     });
 
-    if (a.requerimiento_id === req.id) continue; // no contar la asignación actual del req
+    // Excluir de capacidad: la del req actual, o asignaciones en proceso de terminación tentativa
+    if (a.requerimiento_id === req.id) continue;
+    if (asignacionIdsATerminar.includes(a.id)) continue;
     pctPorPersona.set(a.persona_id, (pctPorPersona.get(a.persona_id) ?? 0) + Number(a.pct_dedicacion));
   }
 

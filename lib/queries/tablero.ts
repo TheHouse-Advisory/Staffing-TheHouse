@@ -104,18 +104,49 @@ export async function fetchOcupacionDiariaPersona(
   const asigData = (asigRaw ?? []) as unknown as AsigRaw[];
 
   // 3. Asignaciones del plan (si aplica)
-  type AsigSimple = { persona_id: string; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string };
-  let planAsig: AsigSimple[] = [];
+  type AsigSimple    = { persona_id: string; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string };
+  type AsigPlanFull  = AsigSimple & { tipo: string | null; asignacion_a_terminar_id: string | null };
+  /** Represents a freed slot: active from fecha_liberacion until the original assignment's fecha_fin */
+  type AsigLiberada  = { persona_id: string; pct_dedicacion: number; fecha_liberacion: string; fecha_fin_orig: string | null };
+
+  let planAsig: AsigSimple[]     = []; // tipo = asignar
+  let asigLiberadas: AsigLiberada[] = []; // tipo = liberar, enriched with original dates
 
   if (planId) {
-    const { data } = await supabase
+    const { data: planData } = await (supabase as any)
       .from("asignacion_propuesta")
-      .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin")
+      .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin, tipo, asignacion_a_terminar_id")
       .eq("plan_id", planId)
-      .eq("estado", "borrador")
-      .lte("fecha_inicio", finStr)
-      .gte("fecha_fin", inicioStr);
-    planAsig = (data ?? []) as unknown as AsigSimple[];
+      .eq("estado", "borrador");
+
+    const allPlan = (planData ?? []) as unknown as AsigPlanFull[];
+
+    // Tipo asignar – filter to semana range
+    planAsig = allPlan
+      .filter((a) => a.tipo !== "liberar" && a.fecha_inicio <= finStr && a.fecha_fin >= inicioStr)
+      .map((a) => ({ persona_id: a.persona_id, pct_dedicacion: a.pct_dedicacion, fecha_inicio: a.fecha_inicio, fecha_fin: a.fecha_fin }));
+
+    // Tipo liberar – fetch original asignacion to get its full date range
+    const liberaciones = allPlan.filter((a) => a.tipo === "liberar" && a.asignacion_a_terminar_id);
+    if (liberaciones.length > 0) {
+      const { data: origData } = await (supabase as any)
+        .from("asignacion")
+        .select("id, fecha_fin")
+        .in("id", liberaciones.map((l) => l.asignacion_a_terminar_id!));
+
+      const origMap = new Map<string, string | null>(
+        (origData ?? []).map((o: { id: string; fecha_fin: string | null }) => [o.id, o.fecha_fin])
+      );
+
+      for (const lib of liberaciones) {
+        asigLiberadas.push({
+          persona_id: lib.persona_id,
+          pct_dedicacion: lib.pct_dedicacion,
+          fecha_liberacion: lib.fecha_fin, // termination date stored in fecha_fin of liberar row
+          fecha_fin_orig: origMap.get(lib.asignacion_a_terminar_id!) ?? null,
+        });
+      }
+    }
   }
 
   // 4. Construir mapa persona → días
@@ -143,6 +174,16 @@ export async function fetchOcupacionDiariaPersona(
         )
         .reduce((s, a) => s + Number(a.pct_dedicacion), 0);
 
+      // Capacity freed on this day by liberations in the plan
+      const liberado = asigLiberadas
+        .filter(
+          (a) =>
+            a.persona_id === personaId &&
+            a.fecha_liberacion <= diaStr &&
+            (a.fecha_fin_orig === null || a.fecha_fin_orig >= diaStr)
+        )
+        .reduce((s, a) => s + Number(a.pct_dedicacion), 0);
+
       const planExtra = planAsig
         .filter(
           (a) =>
@@ -152,7 +193,7 @@ export async function fetchOcupacionDiariaPersona(
         )
         .reduce((s, a) => s + Number(a.pct_dedicacion), 0);
 
-      fila.dias[diaStr] = { actual, proyectado: actual + planExtra };
+      fila.dias[diaStr] = { actual, proyectado: Math.max(0, actual - liberado) + planExtra };
     }
   }
 
@@ -228,19 +269,50 @@ export async function fetchCoberturaProyecto(
   const asigData = (asigRawEng ?? []) as unknown as AsigEng[];
 
   // 3. Asignaciones del plan (si aplica)
-  type AsigEngPlan = { engagement_id: string; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string };
-  let planAsig: AsigEngPlan[] = [];
+  type AsigEngPlan     = { engagement_id: string; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string };
+  type AsigEngPlanFull = AsigEngPlan & { tipo: string | null; asignacion_a_terminar_id: string | null };
+  /** Freed slot for a given engagement: active from fecha_liberacion to the original end date */
+  type AsigEngLiberada = { engagement_id: string; pct_dedicacion: number; fecha_liberacion: string; fecha_fin_orig: string | null };
+
+  let planAsig: AsigEngPlan[]          = []; // tipo = asignar
+  let planLiberadas: AsigEngLiberada[] = []; // tipo = liberar, enriched
 
   if (planId) {
-    const { data } = await supabase
+    const { data: planData } = await (supabase as any)
       .from("asignacion_propuesta")
-      .select("engagement_id, pct_dedicacion, fecha_inicio, fecha_fin")
+      .select("engagement_id, pct_dedicacion, fecha_inicio, fecha_fin, tipo, asignacion_a_terminar_id")
       .eq("plan_id", planId)
       .eq("estado", "borrador")
-      .in("engagement_id", engIds)
-      .lte("fecha_inicio", finStr)
-      .gte("fecha_fin", inicioStr);
-    planAsig = (data ?? []) as unknown as AsigEngPlan[];
+      .in("engagement_id", engIds);
+
+    const allPlan = (planData ?? []) as unknown as AsigEngPlanFull[];
+
+    // Tipo asignar – filter to semana range
+    planAsig = allPlan
+      .filter((a) => a.tipo !== "liberar" && a.fecha_inicio <= finStr && a.fecha_fin >= inicioStr)
+      .map((a) => ({ engagement_id: a.engagement_id, pct_dedicacion: a.pct_dedicacion, fecha_inicio: a.fecha_inicio, fecha_fin: a.fecha_fin }));
+
+    // Tipo liberar – enrich with original asignacion date range
+    const liberaciones = allPlan.filter((a) => a.tipo === "liberar" && a.asignacion_a_terminar_id);
+    if (liberaciones.length > 0) {
+      const { data: origData } = await (supabase as any)
+        .from("asignacion")
+        .select("id, fecha_fin")
+        .in("id", liberaciones.map((l) => l.asignacion_a_terminar_id!));
+
+      const origMap = new Map<string, string | null>(
+        (origData ?? []).map((o: { id: string; fecha_fin: string | null }) => [o.id, o.fecha_fin])
+      );
+
+      for (const lib of liberaciones) {
+        planLiberadas.push({
+          engagement_id: lib.engagement_id,
+          pct_dedicacion: lib.pct_dedicacion,
+          fecha_liberacion: lib.fecha_fin, // termination date
+          fecha_fin_orig: origMap.get(lib.asignacion_a_terminar_id!) ?? null,
+        });
+      }
+    }
   }
 
   // 4. Construir mapa engagement → días
@@ -279,6 +351,16 @@ export async function fetchCoberturaProyecto(
         )
         .reduce((s, a) => s + Number(a.pct_dedicacion), 0);
 
+      // Capacity freed from this engagement by the plan on this day
+      const liberado = planLiberadas
+        .filter(
+          (a) =>
+            a.engagement_id === engId &&
+            a.fecha_liberacion <= diaStr &&
+            (a.fecha_fin_orig === null || a.fecha_fin_orig >= diaStr)
+        )
+        .reduce((s, a) => s + Number(a.pct_dedicacion), 0);
+
       const asignadoPlan = planAsig
         .filter(
           (a) =>
@@ -288,12 +370,13 @@ export async function fetchCoberturaProyecto(
         )
         .reduce((s, a) => s + Number(a.pct_dedicacion), 0);
 
+      const asignadoEfectivo = Math.max(0, asignado - liberado);
       const cobertura =
         requerido > 0
-          ? Math.min(((asignado + asignadoPlan) / requerido) * 100, 100)
+          ? Math.min(((asignadoEfectivo + asignadoPlan) / requerido) * 100, 100)
           : -1;
 
-      fila.dias[diaStr] = { requerido, asignado, asignadoPlan, cobertura };
+      fila.dias[diaStr] = { requerido, asignado: asignadoEfectivo, asignadoPlan, cobertura };
     }
   }
 
