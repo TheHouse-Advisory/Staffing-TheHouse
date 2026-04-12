@@ -33,12 +33,18 @@ interface PlanEnriquecido extends PropuestaPlan {
 
 // Verificación de capacidad por asignación (para el modal de aprobación)
 interface CapacidadCheck {
+  persona_id: string;
   asignacion_id: string;
   persona_nombre: string;
   cargo: string | null;
   pct_propuesto: number;
+  /** Capacidad liberada por liberaciones en este mismo plan para la misma persona */
+  pct_liberado: number;
   breakpoints: { fecha: string; ocupacion_pct: number }[];
+  /** Ocupación máxima actual (sin ajuste) */
   max_ocupacion: number;
+  /** Ocupación máxima ajustada: max_ocupacion - pct_liberado */
+  max_ocupacion_ajustado: number;
   excede: boolean;
 }
 
@@ -238,9 +244,23 @@ export function PropuestasList({ rolActual }: Props) {
       setCapacidadLoading(true);
       const supabase = createAnyClient();
 
-      // Verificar capacidad para cada asignación del plan
+      // Separar por tipo
+      const asignacionesAsignar = plan.asignaciones.filter((a) => (a as any).tipo !== "liberar");
+      const asignacionesLiberar = plan.asignaciones.filter((a) => (a as any).tipo === "liberar");
+
+      // Cuánta capacidad se libera por persona en este plan
+      const pctLiberadoPorPersona = new Map<string, number>();
+      for (const lib of asignacionesLiberar) {
+        pctLiberadoPorPersona.set(
+          lib.persona_id,
+          (pctLiberadoPorPersona.get(lib.persona_id) ?? 0) + Number(lib.pct_dedicacion)
+        );
+      }
+
+      // Verificar capacidad solo para asignaciones tipo 'asignar',
+      // restando lo que se libera de la misma persona en este plan
       const checks: CapacidadCheck[] = await Promise.all(
-        plan.asignaciones.map(async (asig) => {
+        asignacionesAsignar.map(async (asig) => {
           const { data } = await supabase.rpc("check_capacidad_disponible", {
             p_persona_id: asig.persona_id,
             p_fecha_inicio: asig.fecha_inicio,
@@ -250,14 +270,19 @@ export function PropuestasList({ rolActual }: Props) {
           const maxOcupacion = breakpoints.length > 0
             ? Math.max(...breakpoints.map((b) => Number(b.ocupacion_pct)))
             : 0;
+          const pctLiberado = pctLiberadoPorPersona.get(asig.persona_id) ?? 0;
+          const maxAjustado = Math.max(0, maxOcupacion - pctLiberado);
           return {
+            persona_id: asig.persona_id,
             asignacion_id: asig.id,
             persona_nombre: asig.persona_nombre,
             cargo: asig.cargo_al_momento,
             pct_propuesto: Number(asig.pct_dedicacion),
+            pct_liberado: pctLiberado,
             breakpoints,
             max_ocupacion: maxOcupacion,
-            excede: maxOcupacion + Number(asig.pct_dedicacion) > 100,
+            max_ocupacion_ajustado: maxAjustado,
+            excede: maxAjustado + Number(asig.pct_dedicacion) > 100,
           };
         })
       );
@@ -284,10 +309,14 @@ export function PropuestasList({ rolActual }: Props) {
     };
 
     if (accion === "aprobada") {
-      // BUG #3 FIX: Validar que todas las propuestas tienen cargo antes de aprobar
-      const sinCargo = plan.asignaciones.filter((a) => !a.cargo_al_momento?.trim());
+      // Separar asignaciones por tipo
+      const asignacionesAsignar = plan.asignaciones.filter((a) => (a as any).tipo !== "liberar");
+      const asignacionesLiberar = plan.asignaciones.filter((a) => (a as any).tipo === "liberar");
+
+      // BUG #3 FIX: Validar cargo solo en las de tipo asignar
+      const sinCargo = asignacionesAsignar.filter((a) => !a.cargo_al_momento?.trim());
       if (sinCargo.length > 0) {
-        setRevisionError("Algunas propuestas no tienen cargo registrado y no pueden aprobarse.");
+        setRevisionError("Algunas propuestas de asignación no tienen cargo registrado y no pueden aprobarse.");
         setRevisionLoading(false);
         return;
       }
@@ -306,42 +335,65 @@ export function PropuestasList({ rolActual }: Props) {
         .eq("plan_id", plan.id);
       if (asigUpdErr) { setRevisionError(asigUpdErr.message); setRevisionLoading(false); return; }
 
-      // 3. Crear todas las asignaciones reales y recuperar sus IDs
-      const asignacionesACrear = plan.asignaciones.map((asig) => ({
-        persona_id: asig.persona_id,
-        engagement_id: asig.engagement_id,
-        requerimiento_id: asig.requerimiento_id,
-        cargo_al_momento: asig.cargo_al_momento!,   // validado arriba
-        pct_dedicacion: asig.pct_dedicacion,
-        fecha_inicio: asig.fecha_inicio,
-        fecha_fin: asig.fecha_fin,
-        estado: "activa",
-        propuesta_origen_id: asig.id,
-        aprobada_por: miPersonaId || null,
-        fecha_aprobacion: new Date().toISOString(),
-      }));
-
-      const { data: asigCreadas, error: asigInsErr } = await supabase
-        .from("asignacion")
-        .insert(asignacionesACrear)
-        .select("id, propuesta_origen_id");
-      if (asigInsErr || !asigCreadas) {
-        setRevisionError(asigInsErr?.message ?? "Error al crear asignaciones");
-        setRevisionLoading(false);
-        return;
+      // 3a. Ejecutar liberaciones: terminar asignaciones reales
+      if (asignacionesLiberar.length > 0) {
+        const libErrores: string[] = [];
+        await Promise.all(
+          asignacionesLiberar.map(async (lib) => {
+            const asigIdATerminar = (lib as any).asignacion_a_terminar_id;
+            if (!asigIdATerminar) return;
+            const { error } = await supabase
+              .from("asignacion")
+              .update({ estado: "finalizada", fecha_fin: lib.fecha_fin })
+              .eq("id", asigIdATerminar);
+            if (error) libErrores.push(error.message);
+          })
+        );
+        if (libErrores.length > 0) {
+          setRevisionError(`Error al terminar asignaciones: ${libErrores[0]}`);
+          setRevisionLoading(false);
+          return;
+        }
       }
 
-      // BUG #1 FIX: Vincular cada asignacion_propuesta con su asignacion real creada
-      await Promise.all(
-        asigCreadas
-          .filter((a: { id: string; propuesta_origen_id: string | null }) => a.propuesta_origen_id)
-          .map((a: { id: string; propuesta_origen_id: string | null }) =>
-            supabase
-              .from("asignacion_propuesta")
-              .update({ asignacion_resultante_id: a.id })
-              .eq("id", a.propuesta_origen_id!)
-          )
-      );
+      // 3b. Crear asignaciones reales para las de tipo asignar
+      if (asignacionesAsignar.length > 0) {
+        const asignacionesACrear = asignacionesAsignar.map((asig) => ({
+          persona_id: asig.persona_id,
+          engagement_id: asig.engagement_id,
+          requerimiento_id: asig.requerimiento_id,
+          cargo_al_momento: asig.cargo_al_momento!,
+          pct_dedicacion: asig.pct_dedicacion,
+          fecha_inicio: asig.fecha_inicio,
+          fecha_fin: asig.fecha_fin,
+          estado: "activa",
+          propuesta_origen_id: asig.id,
+          aprobada_por: miPersonaId || null,
+          fecha_aprobacion: new Date().toISOString(),
+        }));
+
+        const { data: asigCreadas, error: asigInsErr } = await supabase
+          .from("asignacion")
+          .insert(asignacionesACrear)
+          .select("id, propuesta_origen_id");
+        if (asigInsErr || !asigCreadas) {
+          setRevisionError(asigInsErr?.message ?? "Error al crear asignaciones");
+          setRevisionLoading(false);
+          return;
+        }
+
+        // BUG #1 FIX: Vincular cada asignacion_propuesta con su asignacion real creada
+        await Promise.all(
+          asigCreadas
+            .filter((a: { id: string; propuesta_origen_id: string | null }) => a.propuesta_origen_id)
+            .map((a: { id: string; propuesta_origen_id: string | null }) =>
+              supabase
+                .from("asignacion_propuesta")
+                .update({ asignacion_resultante_id: a.id })
+                .eq("id", a.propuesta_origen_id!)
+            )
+        );
+      }
 
     } else {
       // Rechazar plan y todas sus asignaciones
@@ -537,7 +589,14 @@ export function PropuestasList({ rolActual }: Props) {
                 disabled={revisionModal.accion === "aprobada" && (capacidadLoading || hayConflictos)}
               >
                 {revisionModal.accion === "aprobada"
-                  ? `Aprobar y crear ${revisionModal.plan.asignaciones.length} asignaci${revisionModal.plan.asignaciones.length !== 1 ? "ones" : "ón"}`
+                  ? (() => {
+                      const nuevas = revisionModal.plan.asignaciones.filter((a) => (a as any).tipo !== "liberar").length;
+                      const libera = revisionModal.plan.asignaciones.filter((a) => (a as any).tipo === "liberar").length;
+                      const partes: string[] = [];
+                      if (nuevas > 0) partes.push(`crear ${nuevas} asignaci${nuevas !== 1 ? "ones" : "ón"}`);
+                      if (libera > 0) partes.push(`liberar ${libera}`);
+                      return `Aprobar · ${partes.join(" y ")}`;
+                    })()
                   : "Rechazar plan"
                 }
               </Button>
@@ -548,10 +607,21 @@ export function PropuestasList({ rolActual }: Props) {
             {/* Resumen del plan */}
             <div className="p-3 bg-[#f9f9f9] rounded-lg text-sm space-y-1">
               <p><span className="text-[#888]">Plan:</span> <strong>{revisionModal.plan.nombre}</strong></p>
-              <p>
-                <span className="text-[#888]">Asignaciones:</span>{" "}
-                {revisionModal.plan.asignaciones.length} persona{revisionModal.plan.asignaciones.length !== 1 ? "s" : ""}
-              </p>
+              {(() => {
+                const nuevas = revisionModal.plan.asignaciones.filter((a) => (a as any).tipo !== "liberar").length;
+                const libera = revisionModal.plan.asignaciones.filter((a) => (a as any).tipo === "liberar").length;
+                return (
+                  <p>
+                    {nuevas > 0 && (
+                      <span><span className="text-[#888]">Asignaciones nuevas:</span> {nuevas}</span>
+                    )}
+                    {nuevas > 0 && libera > 0 && <span className="text-[#ccc] mx-1">·</span>}
+                    {libera > 0 && (
+                      <span><span className="text-[#888]">Liberaciones:</span> {libera}</span>
+                    )}
+                  </p>
+                );
+              })()}
               <p>
                 <span className="text-[#888]">Engagements:</span>{" "}
                 {revisionModal.plan.engagements.map((e) => e.nombre).join(", ")}
@@ -569,8 +639,8 @@ export function PropuestasList({ rolActual }: Props) {
                 ) : (
                   <div className="space-y-2 max-h-56 overflow-y-auto">
                     {capacidadChecks.map((check) => {
-                      const total = check.max_ocupacion + check.pct_propuesto;
-                      const { bg, text } = colorOcupacion(total);
+                      const finalPct = check.max_ocupacion_ajustado + check.pct_propuesto;
+                      const { bg, text } = colorOcupacion(finalPct);
                       return (
                         <div
                           key={check.asignacion_id}
@@ -580,25 +650,42 @@ export function PropuestasList({ rolActual }: Props) {
                               : "border-[#e8e8e8] bg-white"
                           }`}
                         >
-                          <div className="flex items-center justify-between gap-2">
+                          <div className="flex items-start justify-between gap-2">
                             <div>
                               <p className="font-medium">{check.persona_nombre}</p>
                               {check.cargo && (
                                 <p className="text-xs text-[#888]">{check.cargo}</p>
                               )}
                             </div>
-                            <div className="flex items-center gap-2">
-                              <span className="text-xs text-[#888]">
-                                actual máx: {formatPct(check.max_ocupacion)}
+                            <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                              {/* actual actual máx ocupación */}
+                              <span className="text-xs text-[#888]" title="Ocupación máxima actual">
+                                {formatPct(check.max_ocupacion)}
                               </span>
-                              <span className="text-xs font-bold" style={{ color: "#888" }}>+</span>
-                              <span className="text-xs font-semibold">{check.pct_propuesto}%</span>
-                              <span className="text-xs font-bold" style={{ color: "#888" }}>=</span>
+                              {/* liberación: solo si hay algo que liberar */}
+                              {check.pct_liberado > 0 && (
+                                <>
+                                  <span className="text-xs font-bold text-emerald-600">−</span>
+                                  <span
+                                    className="text-xs font-semibold text-emerald-600"
+                                    title="Capacidad liberada por este plan"
+                                  >
+                                    {check.pct_liberado}%
+                                  </span>
+                                </>
+                              )}
+                              {/* propuesto */}
+                              <span className="text-xs font-bold text-[#888]">+</span>
+                              <span className="text-xs font-semibold text-[#333]">
+                                {check.pct_propuesto}%
+                              </span>
+                              <span className="text-xs font-bold text-[#888]">=</span>
+                              {/* final */}
                               <span
                                 className="text-xs font-semibold px-2 py-0.5 rounded-full"
                                 style={{ background: bg, color: text }}
                               >
-                                {formatPct(total)}
+                                {formatPct(finalPct)}
                               </span>
                               {check.excede && (
                                 <AlertTriangle className="w-4 h-4 text-red-500 flex-shrink-0" />
@@ -676,6 +763,15 @@ function TarjetaPlan({
 }) {
   const estilos = ESTADO_ESTILOS[plan.estado] ?? ESTADO_ESTILOS.borrador;
 
+  const asigNuevas = plan.asignaciones.filter((a) => (a as any).tipo !== "liberar");
+  const asigLiberar = plan.asignaciones.filter((a) => (a as any).tipo === "liberar");
+
+  const metadataCuentas: string[] = [];
+  if (asigNuevas.length > 0)
+    metadataCuentas.push(`${asigNuevas.length} asignaci${asigNuevas.length !== 1 ? "ones" : "ón"}`);
+  if (asigLiberar.length > 0)
+    metadataCuentas.push(`${asigLiberar.length} liberaci${asigLiberar.length !== 1 ? "ones" : "ón"}`);
+
   return (
     <div className="bg-white border border-[#e8e8e8] rounded-xl overflow-hidden">
       {/* Header del plan */}
@@ -701,7 +797,7 @@ function TarjetaPlan({
             <div className="flex items-center gap-3 mt-1.5 flex-wrap text-xs text-[#888]">
               <span className="flex items-center gap-1">
                 <Users className="w-3 h-3" />
-                {plan.asignaciones.length} asignaci{plan.asignaciones.length !== 1 ? "ones" : "ón"}
+                {metadataCuentas.length > 0 ? metadataCuentas.join(" · ") : "Sin movimientos"}
               </span>
               <span className="flex items-center gap-1">
                 <Calendar className="w-3 h-3" />
@@ -745,34 +841,74 @@ function TarjetaPlan({
       {/* Detalle expandible de asignaciones */}
       {expandido && plan.asignaciones.length > 0 && (
         <div className="border-t border-[#f0f0f0]">
-          <div className="px-5 py-2 bg-[#fafafa]">
-            <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">
-              Asignaciones del plan
-            </p>
-          </div>
-          <div className="divide-y divide-[#f5f5f5]">
-            {plan.asignaciones.map((asig) => (
-              <div key={asig.id} className="px-5 py-3 flex items-center gap-3 text-sm">
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <span className="font-medium">{asig.persona_nombre}</span>
-                    {asig.cargo_al_momento && (
-                      <span className="text-xs text-[#aaa]">({asig.cargo_al_momento})</span>
-                    )}
-                    <span className="text-[#aaa] text-xs">→</span>
-                    <span className="text-[#555] truncate">{asig.engagement_nombre}</span>
-                  </div>
-                  <p className="text-xs text-[#888] mt-0.5">
-                    {asig.pct_dedicacion}%
-                    {" · "}
-                    {format(new Date(asig.fecha_inicio), "d MMM yy", { locale: es })}
-                    {" → "}
-                    {format(new Date(asig.fecha_fin), "d MMM yy", { locale: es })}
-                  </p>
-                </div>
+          {/* Sección: Liberaciones */}
+          {asigLiberar.length > 0 && (
+            <>
+              <div className="px-5 py-2 bg-red-50">
+                <p className="text-xs font-semibold text-red-500 uppercase tracking-widest">
+                  Liberaciones
+                </p>
               </div>
-            ))}
-          </div>
+              <div className="divide-y divide-[#f5f5f5]">
+                {asigLiberar.map((asig) => (
+                  <div key={asig.id} className="px-5 py-3 flex items-center gap-3 text-sm bg-red-50/40">
+                    <div className="flex-1 min-w-0 opacity-70">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium line-through text-red-700">{asig.persona_nombre}</span>
+                        {asig.cargo_al_momento && (
+                          <span className="text-xs text-red-400 line-through">({asig.cargo_al_momento})</span>
+                        )}
+                        <span className="text-red-400 text-xs">←</span>
+                        <span className="text-red-600 truncate line-through">{asig.engagement_nombre}</span>
+                      </div>
+                      <p className="text-xs text-red-400 mt-0.5">
+                        libera {asig.pct_dedicacion}%
+                        {" · "}
+                        desde {format(new Date(asig.fecha_fin!), "d MMM yy", { locale: es })}
+                      </p>
+                    </div>
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-red-100 text-red-600 font-medium flex-shrink-0">
+                      libera
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
+
+          {/* Sección: Nuevas asignaciones */}
+          {asigNuevas.length > 0 && (
+            <>
+              <div className="px-5 py-2 bg-[#fafafa]">
+                <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">
+                  {asigLiberar.length > 0 ? "Nuevas asignaciones" : "Asignaciones del plan"}
+                </p>
+              </div>
+              <div className="divide-y divide-[#f5f5f5]">
+                {asigNuevas.map((asig) => (
+                  <div key={asig.id} className="px-5 py-3 flex items-center gap-3 text-sm">
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className="font-medium">{asig.persona_nombre}</span>
+                        {asig.cargo_al_momento && (
+                          <span className="text-xs text-[#aaa]">({asig.cargo_al_momento})</span>
+                        )}
+                        <span className="text-[#aaa] text-xs">→</span>
+                        <span className="text-[#555] truncate">{asig.engagement_nombre}</span>
+                      </div>
+                      <p className="text-xs text-[#888] mt-0.5">
+                        {asig.pct_dedicacion}%
+                        {" · "}
+                        {format(new Date(asig.fecha_inicio), "d MMM yy", { locale: es })}
+                        {" → "}
+                        {format(new Date(asig.fecha_fin!), "d MMM yy", { locale: es })}
+                      </p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </>
+          )}
         </div>
       )}
       {expandido && plan.asignaciones.length === 0 && (
