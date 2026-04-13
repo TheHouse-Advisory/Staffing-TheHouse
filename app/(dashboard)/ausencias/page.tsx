@@ -40,6 +40,7 @@ export default function AusenciasPage() {
       {/* ── Header ─────────────────────────────────────────────── */}
       <header className="h-14 bg-white border-b border-[#e8e8e8] flex items-center px-6 gap-4 flex-shrink-0">
         <h1 className="text-[16px] font-bold text-[#1a1a1a]">Ausencias</h1>
+        <h1 className="text-[16px] font-bold text-[#1a1a1a]">Ausencias</h1>
 
         {/* Navegación mes */}
         <div className="flex items-center gap-2">
