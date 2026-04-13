@@ -58,11 +58,11 @@ export function Sidebar({
     .toUpperCase();
 
   return (
-    <aside className="w-[200px] bg-[#1a1a2e] flex flex-col flex-shrink-0 h-screen">
+    <aside className="w-[200px] bg-[#2d1b29] flex flex-col flex-shrink-0 h-screen">
       {/* Logo */}
       <div className="px-5 py-[18px] border-b border-white/[0.07]">
         <span className="text-[15px] font-extrabold text-white tracking-tight">
-          Staffing<span className="text-[#4a90e2]">Hub</span>
+          Staffing<span className="text-[#ec4899]">Hub</span>
         </span>
       </div>
 
@@ -87,8 +87,8 @@ export function Sidebar({
                     "flex items-center gap-2.5 px-4 py-2.5 mx-2 my-px rounded-[7px]",
                     "text-[13px] transition-all duration-150",
                     isActive
-                      ? "bg-[#4a90e2]/20 text-white"
-                      : "text-[#a0a8c0] hover:bg-white/[0.07] hover:text-white"
+                      ? "bg-[#ec4899]/20 text-white"
+                      : "text-[#c8a8c0] hover:bg-white/[0.07] hover:text-white"
                   )}
                 >
                   <Icon className="w-4 h-4 flex-shrink-0" />
@@ -104,7 +104,7 @@ export function Sidebar({
       <div className="p-3 border-t border-white/[0.07]">
         <div className="flex items-center gap-2.5 p-2 rounded-[7px] group">
           {/* Avatar */}
-          <div className="w-8 h-8 rounded-full bg-[#4a90e2] flex items-center justify-center text-[13px] font-bold text-white flex-shrink-0">
+          <div className="w-8 h-8 rounded-full bg-[#ec4899] flex items-center justify-center text-[13px] font-bold text-white flex-shrink-0">
             {initiales}
           </div>
           {/* Info */}
@@ -112,7 +112,7 @@ export function Sidebar({
             <p className="text-[12px] font-semibold text-white truncate">
               {nombreCompleto}
             </p>
-            <p className="text-[10px] text-[#a0a8c0] truncate">
+            <p className="text-[10px] text-[#c8a8c0] truncate">
               {rol === "admin" ? "Admin" : cargo ?? "Equipo"}
             </p>
           </div>
@@ -120,7 +120,7 @@ export function Sidebar({
           <button
             onClick={onSignOut}
             title="Cerrar sesión"
-            className="text-[#a0a8c0] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+            className="text-[#c8a8c0] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
           >
             <LogOut className="w-3.5 h-3.5" />
           </button>

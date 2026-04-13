@@ -11,12 +11,12 @@ const config: Config = {
       colors: {
         // Paleta del sistema — espeja las CSS vars del mockup
         sidebar: {
-          bg: "#1a1a2e",
-          txt: "#a0a8c0",
+          bg: "#2d1b29",
+          txt: "#c8a8c0",
           active: "#ffffff",
         },
         accent: "#1a1a1a",
-        brand: "#4a90e2",
+        brand: "#ec4899",
         // Escala de ocupación
         cap: {
           0: "#f0f0f0",
