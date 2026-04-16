@@ -6,7 +6,6 @@ import {
   LayoutDashboard,
   Briefcase,
   Users,
-  ClipboardList,
   Settings,
   LogOut,
   Kanban,
@@ -36,7 +35,6 @@ const navItems = [
     section: "Gestión",
     items: [
       { href: "/planificacion",  label: "Planificación",  icon: Kanban },
-      { href: "/propuestas",     label: "Propuestas",     icon: ClipboardList },
       { href: "/configuracion",  label: "Configuración",  icon: Settings },
     ],
   },
