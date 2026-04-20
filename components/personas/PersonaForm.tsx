@@ -198,7 +198,8 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
     }
 
     // Sincronizar relaciones N:N
-    await syncRelaciones(supabase, personaId, form);
+    const relError = await syncRelaciones(supabase, personaId, form);
+    if (relError) { setServerError(relError); setLoading(false); return; }
 
     setLoading(false);
     onSuccess();
@@ -394,20 +395,24 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
   );
 }
 
-// Sincroniza las relaciones N:N borrando y re-insertando
+// Sincroniza las relaciones N:N borrando y re-insertando.
+// Retorna un mensaje de error si algo falla, null si todo ok.
 async function syncRelaciones(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
   personaId: string,
   form: FormState
-) {
-  await Promise.all([
+): Promise<string | null> {
+  const deletes = await Promise.all([
     supabase.from("persona_industria").delete().eq("persona_id", personaId),
     supabase.from("persona_capacidad").delete().eq("persona_id", personaId),
     supabase.from("persona_tematica").delete().eq("persona_id", personaId),
   ]);
+  for (const { error } of deletes) {
+    if (error) return error.message;
+  }
 
-  const inserts: Promise<unknown>[] = [];
+  const inserts: Promise<{ error: { message: string } | null }>[] = [];
 
   if (form.industrias.length > 0) {
     inserts.push(
@@ -431,5 +436,10 @@ async function syncRelaciones(
     );
   }
 
-  await Promise.all(inserts);
+  const results = await Promise.all(inserts);
+  for (const { error } of results) {
+    if (error) return error.message;
+  }
+
+  return null;
 }
