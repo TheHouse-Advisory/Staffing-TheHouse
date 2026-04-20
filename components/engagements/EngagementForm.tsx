@@ -145,7 +145,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     setLoading(true); setServerError(null);
     const supabase = createAnyClient();
 
-    const payload = {
+    const corePayload = {
       nombre: form.nombre.trim(),
       cliente: form.cliente.trim(),
       tipo: form.tipo as "propuesta" | "proyecto",
@@ -154,13 +154,11 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
       fecha_inicio: form.fecha_inicio || null,
       fecha_fin_estimada: form.fecha_fin_estimada || null,
       industria_id: form.industria_id || null,
-      categoria_id: form.categoria_id || null,
-      nivel_dificultad: form.nivel_dificultad || null,
     };
 
     let engId: string;
     if (engagement) {
-      const { error } = await supabase.from("engagement").update(payload).eq("id", engagement.id);
+      const { error } = await supabase.from("engagement").update(corePayload).eq("id", engagement.id);
       if (error) { setServerError(error.message); setLoading(false); return; }
       engId = engagement.id;
       // Borrar reqs huérfanos
@@ -172,9 +170,19 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
         await supabase.from("requerimiento_engagement").delete().eq("engagement_id", engId);
       }
     } else {
-      const { data, error } = await supabase.from("engagement").insert(payload).select("id").single();
+      const { data, error } = await supabase.from("engagement").insert(corePayload).select("id").single();
       if (error || !data) { setServerError(error?.message ?? "Error"); setLoading(false); return; }
       engId = data.id;
+    }
+
+    // Campos nuevos (requieren migración SQL) — se ignoran si aún no existen
+    try {
+      await supabase.from("engagement").update({
+        categoria_id: form.categoria_id || null,
+        nivel_dificultad: form.nivel_dificultad || null,
+      }).eq("id", engId);
+    } catch (_) {
+      // migración pendiente — ignorar
     }
 
     for (const [i, r] of reqs.entries()) {

@@ -10,6 +10,7 @@ import {
   LogOut,
   Kanban,
   CalendarOff,
+  Plus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RolSistema } from "@/lib/types/database";
@@ -76,22 +77,33 @@ export function Sidebar({
                 pathname === item.href ||
                 (item.href !== "/tablero" && pathname.startsWith(item.href));
               const Icon = item.icon;
+              const showPlus = item.href === "/proyectos";
 
               return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  className={cn(
-                    "flex items-center gap-2.5 px-4 py-2.5 mx-2 my-px rounded-[7px]",
-                    "text-[13px] transition-all duration-150",
-                    isActive
-                      ? "bg-[#4a90e2]/20 text-white"
-                      : "text-[#a0a8c0] hover:bg-white/[0.07] hover:text-white"
+                <div key={item.href} className={cn("flex items-center mx-2 my-px gap-0.5", showPlus && "group/row")}>
+                  <Link
+                    href={item.href}
+                    className={cn(
+                      "flex items-center gap-2.5 px-4 py-2.5 rounded-[7px] flex-1",
+                      "text-[13px] transition-all duration-150",
+                      isActive
+                        ? "bg-[#4a90e2]/20 text-white"
+                        : "text-[#a0a8c0] hover:bg-white/[0.07] hover:text-white"
+                    )}
+                  >
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    <span>{item.label}</span>
+                  </Link>
+                  {showPlus && (
+                    <Link
+                      href="/proyectos/nuevo"
+                      title="Nuevo proyecto"
+                      className="w-6 h-6 flex items-center justify-center rounded-[5px] text-[#a0a8c0] hover:text-white hover:bg-white/[0.1] transition-colors flex-shrink-0 opacity-0 group-hover/row:opacity-100"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </Link>
                   )}
-                >
-                  <Icon className="w-4 h-4 flex-shrink-0" />
-                  <span>{item.label}</span>
-                </Link>
+                </div>
               );
             })}
           </div>

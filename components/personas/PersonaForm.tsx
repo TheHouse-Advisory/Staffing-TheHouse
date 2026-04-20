@@ -135,15 +135,13 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
     setServerError(null);
     const supabase = createAnyClient();
 
-    const payload = {
+    const corePayload = {
       nombre: form.nombre.trim(),
       apellido: form.apellido.trim(),
       email: form.email.trim().toLowerCase(),
       cargo_actual: form.cargo_actual,
       rol_sistema: form.rol_sistema || null,
       fecha_ingreso: form.fecha_ingreso || null,
-      estado_talento: form.estado_talento || null,
-      mentor_id: form.mentor_id || null,
     };
 
     let personaId: string;
@@ -152,7 +150,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
       // Editar
       const { error } = await supabase
         .from("persona")
-        .update(payload)
+        .update(corePayload)
         .eq("id", persona.id);
       if (error) { setServerError(error.message); setLoading(false); return; }
       personaId = persona.id;
@@ -160,7 +158,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
       // Crear
       const { data, error } = await supabase
         .from("persona")
-        .insert(payload)
+        .insert(corePayload)
         .select("id")
         .single();
       if (error || !data) { setServerError(error?.message ?? "Error al crear"); setLoading(false); return; }
@@ -172,6 +170,16 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
         cargo: form.cargo_actual,
         fecha_inicio: form.fecha_ingreso || new Date().toISOString().split("T")[0],
       });
+    }
+
+    // Campos nuevos (requieren migración SQL aplicada) — se ignoran si aún no existen
+    try {
+      await supabase.from("persona").update({
+        estado_talento: form.estado_talento || null,
+        mentor_id: form.mentor_id || null,
+      }).eq("id", personaId);
+    } catch (_) {
+      // migración pendiente — ignorar
     }
 
     // Subir foto si hay una nueva seleccionada
