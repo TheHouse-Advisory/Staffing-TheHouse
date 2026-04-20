@@ -145,6 +145,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     setLoading(true); setServerError(null);
     const supabase = createAnyClient();
 
+    const { data: { user } } = await supabase.auth.getUser();
+
     const corePayload = {
       nombre: form.nombre.trim(),
       cliente: form.cliente.trim(),
@@ -154,6 +156,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
       fecha_inicio: form.fecha_inicio || null,
       fecha_fin_estimada: form.fecha_fin_estimada || null,
       industria_id: form.industria_id || null,
+      created_by: user?.id ?? null,
     };
 
     let engId: string;
