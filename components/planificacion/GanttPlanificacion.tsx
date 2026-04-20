@@ -28,6 +28,7 @@ import {
   type PersonaFit,
   type FitNivel,
 } from "@/lib/queries/planificacion";
+import { PersonaFitTooltip } from "@/components/planificacion/PersonaFitTooltip";
 import { cn } from "@/lib/utils";
 
 // ─────────────────────────────────────────────────────────────
@@ -493,6 +494,7 @@ function MiniGantt({
 
 function FitPanel({
   req, personas, loading, onAsignar, onCerrar, asignacionIdsALiberar = [],
+  industriaId, industriaNombre, categoriaId, categoriaNombre,
 }: {
   req: ReqConEstado | null;
   personas: PersonaFit[];
@@ -500,8 +502,13 @@ function FitPanel({
   onAsignar: (p: PersonaFit) => void;
   onCerrar: () => void;
   asignacionIdsALiberar?: string[];
+  industriaId: string | null;
+  industriaNombre: string | null;
+  categoriaId: string | null;
+  categoriaNombre: string | null;
 }) {
   const hoy = today();
+  const [tooltipPersonaId, setTooltipPersonaId] = useState<string | null>(null);
 
   if (!req) {
     return (
@@ -571,13 +578,33 @@ function FitPanel({
 
               return (
                 <div key={p.persona_id} className="px-5 py-3 hover:bg-[#fafafa] transition-colors">
+                  {tooltipPersonaId === p.persona_id && req && (
+                    <PersonaFitTooltip
+                      personaId={p.persona_id}
+                      nombre={p.nombre}
+                      apellido={p.apellido}
+                      cargo={p.cargo_actual}
+                      industriaId={industriaId}
+                      categoriaId={categoriaId}
+                      industriaNombre={industriaNombre}
+                      categoriaNombre={categoriaNombre}
+                      fechaInicio={req.fecha_inicio}
+                      fechaFin={req.fecha_fin}
+                      onClose={() => setTooltipPersonaId(null)}
+                    />
+                  )}
                   <div className="flex items-center gap-3">
-                    <div
-                      className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white text-xs flex-shrink-0"
+                    <button
+                      type="button"
+                      title="Ver perfil"
+                      onClick={() => setTooltipPersonaId(
+                        tooltipPersonaId === p.persona_id ? null : p.persona_id
+                      )}
+                      className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white text-xs flex-shrink-0 hover:ring-2 hover:ring-offset-1 hover:ring-[#1a1a1a] transition-all cursor-pointer"
                       style={{ background: avatarColor(p.persona_id) }}
                     >
                       {iniciales(p.nombre, p.apellido)}
-                    </div>
+                    </button>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
                         <p className="text-xs font-semibold text-[#1a1a1a] truncate">
@@ -734,9 +761,10 @@ export function GanttPlanificacion() {
   const [error, setError]             = useState<string | null>(null);
 
   // Selección y fit
-  const [reqSeleccionado, setReqSeleccionado] = useState<ReqConEstado | null>(null);
-  const [fitPersonas, setFitPersonas]         = useState<PersonaFit[]>([]);
-  const [fitLoading, setFitLoading]           = useState(false);
+  const [reqSeleccionado, setReqSeleccionado]       = useState<ReqConEstado | null>(null);
+  const [engSeleccionado, setEngSeleccionado]        = useState<EngagementConReqs | null>(null);
+  const [fitPersonas, setFitPersonas]               = useState<PersonaFit[]>([]);
+  const [fitLoading, setFitLoading]                 = useState(false);
 
   // Propuestas borrador locales (adiciones)
   const [tentativas, setTentativas] = useState<Tentativa[]>([]);
@@ -770,10 +798,13 @@ export function GanttPlanificacion() {
   const handleSelectReq = useCallback(async (req: ReqConEstado) => {
     if (reqSeleccionado?.id === req.id) {
       setReqSeleccionado(null);
+      setEngSeleccionado(null);
       setFitPersonas([]);
       return;
     }
     setReqSeleccionado(req);
+    const parentEng = engagements.find((e) => e.engagement_id === req.engagement_id) ?? null;
+    setEngSeleccionado(parentEng);
     setFitLoading(true);
     const supabase = createClient();
     const result = await fetchPersonasFit(
@@ -784,7 +815,7 @@ export function GanttPlanificacion() {
     );
     setFitPersonas(result.personas);
     setFitLoading(false);
-  }, [reqSeleccionado?.id, tentativas, terminacionesTentativas]);
+  }, [reqSeleccionado?.id, tentativas, terminacionesTentativas, engagements]);
 
   // ── Proponer persona ───────────────────────────────────────
 
@@ -1016,7 +1047,7 @@ export function GanttPlanificacion() {
           {/* Búsqueda */}
           <input
             type="text"
-            placeholder="Buscar engagement o cargo..."
+            placeholder="Buscar proyecto o cargo..."
             value={filtro}
             onChange={(e) => setFiltro(e.target.value)}
             className="text-xs border border-[#e8e8e8] rounded-lg px-3 py-1.5 w-52 focus:outline-none focus:border-[#1a1a1a] bg-[#f9f9f9] focus:bg-white transition-colors"
@@ -1058,7 +1089,7 @@ export function GanttPlanificacion() {
               <p className="text-sm font-medium">
                 {filtro
                   ? "Sin resultados para tu búsqueda"
-                  : "No hay requerimientos vigentes en engagements activos"
+                  : "No hay requerimientos vigentes en proyectos activos"
                 }
               </p>
               <p className="text-xs">Solo se muestran requerimientos con fecha fin ≥ hoy</p>
@@ -1105,7 +1136,7 @@ export function GanttPlanificacion() {
         </div>
       </div>
 
-      {/* ── Panel derecho: fit ── */}
+      {/* ── Panel derecho: fit personas ── */}
       <div className={cn(
         "flex flex-col transition-all duration-200 overflow-hidden border-l border-[#e8e8e8]",
         reqSeleccionado ? "w-[340px]" : "w-[200px]"
@@ -1115,8 +1146,12 @@ export function GanttPlanificacion() {
           personas={fitPersonas}
           loading={fitLoading}
           onAsignar={handleAsignar}
-          onCerrar={() => { setReqSeleccionado(null); setFitPersonas([]); }}
+          onCerrar={() => { setReqSeleccionado(null); setEngSeleccionado(null); setFitPersonas([]); }}
           asignacionIdsALiberar={terminacionesTentativas.map((t) => t.asignacion_id)}
+          industriaId={engSeleccionado?.industria_id ?? null}
+          industriaNombre={engSeleccionado?.industria_nombre ?? null}
+          categoriaId={engSeleccionado?.categoria_id ?? null}
+          categoriaNombre={engSeleccionado?.categoria_nombre ?? null}
         />
       </div>
 

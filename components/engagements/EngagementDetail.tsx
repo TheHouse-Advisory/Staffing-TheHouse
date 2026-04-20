@@ -189,7 +189,7 @@ export function EngagementDetail({ id }: Props) {
     const sb = createAnyClient();
     const { error } = await sb.from("engagement").delete().eq("id", engagement.id);
     if (error) { setEliminandoError(error.message); setEliminando(false); return; }
-    router.push("/engagements");
+    router.push("/proyectos");
   };
 
   // ── CRUD Requerimientos ────────────────────────────────────────
@@ -301,11 +301,11 @@ export function EngagementDetail({ id }: Props) {
 
         {/* Volver */}
         <Link
-          href="/engagements"
+          href="/proyectos"
           className="inline-flex items-center gap-1.5 text-sm text-[#888] hover:text-[#1a1a1a] transition-colors"
         >
           <ArrowLeft className="w-3.5 h-3.5" />
-          Volver a Engagements
+          Volver a Proyectos
         </Link>
 
         {/* Encabezado */}
@@ -320,11 +320,11 @@ export function EngagementDetail({ id }: Props) {
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <Button variant="ghost" size="sm" onClick={() => setEditando(true)}
-                className="text-[#888] hover:text-[#1a1a1a]" title="Editar engagement">
+                className="text-[#888] hover:text-[#1a1a1a]" title="Editar proyecto">
                 <Pencil className="w-3.5 h-3.5" />
               </Button>
               <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(true)}
-                className="text-[#888] hover:text-red-500" title="Eliminar engagement">
+                className="text-[#888] hover:text-red-500" title="Eliminar proyecto">
                 <Trash2 className="w-3.5 h-3.5" />
               </Button>
               <span className="text-xs px-2.5 py-1 rounded-full font-medium"
@@ -483,7 +483,7 @@ export function EngagementDetail({ id }: Props) {
           ) : (
             <div className="bg-white rounded-xl border border-[#e8e8e8] p-8 text-center">
               <p className="text-sm text-[#888] mb-3">
-                Este engagement no tiene requerimientos definidos aún.
+                Este proyecto no tiene requerimientos definidos aún.
               </p>
               <Button size="sm" onClick={abrirNuevoReq}>
                 <Plus className="w-3.5 h-3.5" />
@@ -499,7 +499,7 @@ export function EngagementDetail({ id }: Props) {
             <Flame className="w-4 h-4 text-orange-500 flex-shrink-0" />
             <p className="font-semibold text-sm text-[#1a1a1a]">Días críticos</p>
             <span className="ml-auto text-xs text-[#888]">
-              Fechas de alta intensidad para este engagement
+              Fechas de alta intensidad para este proyecto
             </span>
           </div>
 
@@ -724,8 +724,8 @@ export function EngagementDetail({ id }: Props) {
         onClose={() => { setConfirmDelete(false); setEliminandoError(null); }}
         onConfirm={handleEliminar}
         loading={eliminando}
-        title="Eliminar engagement"
-        message={`¿Eliminar el engagement "${engagement?.nombre}"? Esta acción no se puede deshacer y eliminará todas las asignaciones asociadas.`}
+        title="Eliminar proyecto"
+        message={`¿Eliminar el proyecto "${engagement?.nombre}"? Esta acción no se puede deshacer y eliminará todas las asignaciones asociadas.`}
         confirmLabel="Eliminar"
       />
 

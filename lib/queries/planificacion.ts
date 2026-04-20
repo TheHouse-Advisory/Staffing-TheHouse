@@ -68,7 +68,23 @@ export interface EngagementConReqs {
   estado: string;
   fecha_inicio: string | null;
   fecha_fin_estimada: string | null;
+  industria_id: string | null;
+  industria_nombre: string | null;
+  categoria_id: string | null;
+  categoria_nombre: string | null;
   requerimientos: ReqConEstado[];
+}
+
+export interface PersonaFitDetalle {
+  persona_id: string;
+  foto_url: string | null;
+  estado_talento: "talento" | "en_proceso" | "no_talento" | null;
+  mentor_nombre: string | null;
+  proyectos_misma_industria: number;
+  proyectos_misma_categoria: number;
+  vacaciones_en_rango: Array<{ fecha_inicio: string; fecha_fin: string; dias: number }>;
+  ultima_epp: { calificacion: number; fecha: string; engagement_nombre: string | null } | null;
+  ultima_edd: { calificacion: number; fecha: string; periodo: number } | null;
 }
 
 export type FitNivel = "excelente" | "bueno" | "advertencia" | "riesgo";
@@ -132,7 +148,11 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
         cliente,
         estado,
         fecha_inicio,
-        fecha_fin_estimada
+        fecha_fin_estimada,
+        industria_id,
+        categoria_id,
+        industria:industria_id(nombre),
+        categoria:categoria_id(nombre)
       )
     `)
     .gte("fecha_fin", hoy)
@@ -185,6 +205,10 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
       estado: string;
       fecha_inicio: string | null;
       fecha_fin_estimada: string | null;
+      industria_id: string | null;
+      categoria_id: string | null;
+      industria: { nombre: string } | null;
+      categoria: { nombre: string } | null;
     } | null;
   }
   interface AsigRow {
@@ -224,6 +248,10 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
         estado: eng.estado,
         fecha_inicio: eng.fecha_inicio,
         fecha_fin_estimada: eng.fecha_fin_estimada,
+        industria_id: eng.industria_id ?? null,
+        industria_nombre: eng.industria?.nombre ?? null,
+        categoria_id: eng.categoria_id ?? null,
+        categoria_nombre: eng.categoria?.nombre ?? null,
         requerimientos: [],
       });
     }
@@ -523,6 +551,121 @@ export async function fetchPersonasFit(
   });
 
   return { personas: resultado, error: null };
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Detalle completo de una persona para la tarjeta de recomendación
+// ─────────────────────────────────────────────────────────────
+
+export async function fetchPersonaFitDetalle(
+  supabase: any,
+  personaId: string,
+  industriaId: string | null,
+  categoriaId: string | null,
+  fechaInicio: string,
+  fechaFin: string
+): Promise<{ detalle: PersonaFitDetalle | null; error: string | null }> {
+  // 1. Datos de la persona + mentor
+  const { data: pData, error: pErr } = await supabase
+    .from("persona")
+    .select("id, foto_url, estado_talento, mentor:mentor_id(nombre, apellido)")
+    .eq("id", personaId)
+    .single();
+
+  if (pErr) return { detalle: null, error: pErr.message };
+
+  // 2. Proyectos en la misma industria (únicos)
+  let proyectosMismaIndustria = 0;
+  if (industriaId) {
+    const { data: engsInd } = await supabase
+      .from("engagement")
+      .select("id")
+      .eq("industria_id", industriaId);
+    const engIdsInd = (engsInd ?? []).map((e: any) => e.id);
+    if (engIdsInd.length > 0) {
+      const { data: asigInd } = await supabase
+        .from("asignacion")
+        .select("engagement_id")
+        .eq("persona_id", personaId)
+        .in("engagement_id", engIdsInd);
+      proyectosMismaIndustria = new Set((asigInd ?? []).map((a: any) => a.engagement_id)).size;
+    }
+  }
+
+  // 3. Proyectos en la misma categoría (únicos)
+  let proyectosMismaCategoria = 0;
+  if (categoriaId) {
+    const { data: engsCat } = await supabase
+      .from("engagement")
+      .select("id")
+      .eq("categoria_id", categoriaId);
+    const engIdsCat = (engsCat ?? []).map((e: any) => e.id);
+    if (engIdsCat.length > 0) {
+      const { data: asigCat } = await supabase
+        .from("asignacion")
+        .select("engagement_id")
+        .eq("persona_id", personaId)
+        .in("engagement_id", engIdsCat);
+      proyectosMismaCategoria = new Set((asigCat ?? []).map((a: any) => a.engagement_id)).size;
+    }
+  }
+
+  // 4. Vacaciones dentro del período del proyecto
+  const { data: ausData } = await supabase
+    .from("ausencia")
+    .select("fecha_inicio, fecha_fin, dias_habiles")
+    .eq("persona_id", personaId)
+    .eq("tipo", "vacaciones")
+    .lte("fecha_inicio", fechaFin)
+    .gte("fecha_fin", fechaInicio);
+
+  // 5. Última EPP
+  const { data: eppData } = await supabase
+    .from("evaluacion_epp")
+    .select("calificacion, fecha, engagement:engagement_id(nombre)")
+    .eq("persona_id", personaId)
+    .order("fecha", { ascending: false })
+    .limit(1);
+
+  // 6. Última EDD
+  const { data: eddData } = await supabase
+    .from("evaluacion_edd")
+    .select("calificacion, fecha, periodo")
+    .eq("persona_id", personaId)
+    .order("fecha", { ascending: false })
+    .limit(1);
+
+  const detalle: PersonaFitDetalle = {
+    persona_id: personaId,
+    foto_url: pData.foto_url ?? null,
+    estado_talento: pData.estado_talento ?? null,
+    mentor_nombre: pData.mentor
+      ? `${pData.mentor.nombre} ${pData.mentor.apellido}`
+      : null,
+    proyectos_misma_industria: proyectosMismaIndustria,
+    proyectos_misma_categoria: proyectosMismaCategoria,
+    vacaciones_en_rango: (ausData ?? []).map((a: any) => ({
+      fecha_inicio: a.fecha_inicio,
+      fecha_fin: a.fecha_fin,
+      dias: a.dias_habiles ?? 0,
+    })),
+    ultima_epp: eppData?.[0]
+      ? {
+          calificacion: Number(eppData[0].calificacion),
+          fecha: eppData[0].fecha,
+          engagement_nombre: eppData[0].engagement?.nombre ?? null,
+        }
+      : null,
+    ultima_edd: eddData?.[0]
+      ? {
+          calificacion: Number(eddData[0].calificacion),
+          fecha: eddData[0].fecha,
+          periodo: eddData[0].periodo,
+        }
+      : null,
+  };
+
+  return { detalle, error: null };
 }
 
 // ─────────────────────────────────────────────────────────────

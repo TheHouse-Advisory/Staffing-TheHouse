@@ -32,6 +32,10 @@ export type TipoAusencia =
   | "dia_administrativo"
   | "otro";
 
+export type EstadoTalento = "talento" | "en_proceso" | "no_talento";
+
+export type NivelDificultad = "bajo" | "medio" | "alto";
+
 // ─────────────────────────────────────────────────────────────
 //  TABLAS — Row types (lo que devuelve SELECT)
 // ─────────────────────────────────────────────────────────────
@@ -72,8 +76,8 @@ export interface CatTematica {
 
 /**
  * persona: id, auth_user_id, nombre, apellido, email, cargo_actual,
- *          rol_sistema, activo, fecha_ingreso, created_at, updated_at
- * NOTA: NO tiene columna 'notas' ni 'cargo_id_actual'
+ *          rol_sistema, activo, fecha_ingreso, foto_url, estado_talento,
+ *          mentor_id, created_at, updated_at
  */
 export interface Persona {
   id: string;
@@ -85,6 +89,9 @@ export interface Persona {
   rol_sistema: RolSistema | null;
   activo: boolean;
   fecha_ingreso: string | null;
+  foto_url: string | null;
+  estado_talento: EstadoTalento | null;
+  mentor_id: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -127,9 +134,9 @@ export interface PersonaTematica {
 }
 
 /**
- * engagement: id, nombre, cliente, descripcion, industria_id, tipo, estado,
- *             fecha_inicio, fecha_fin_estimada, fecha_fin_real,
- *             propuesta_origen_id, color, created_by, created_at, updated_at
+ * engagement: id, nombre, cliente, descripcion, industria_id, categoria_id,
+ *             nivel_dificultad, tipo, estado, fecha_inicio, fecha_fin_estimada,
+ *             fecha_fin_real, propuesta_origen_id, color, created_by, created_at, updated_at
  */
 export interface Engagement {
   id: string;
@@ -138,6 +145,8 @@ export interface Engagement {
   tipo: TipoEngagement;
   estado: EstadoEngagement;
   industria_id: string | null;
+  categoria_id: string | null;
+  nivel_dificultad: NivelDificultad | null;
   descripcion: string | null;
   fecha_inicio: string | null;
   fecha_fin_estimada: string | null;
@@ -249,6 +258,28 @@ export interface AsignacionHistorial {
   valor_anterior: string | null;
   valor_nuevo: string | null;
   realizado_por: string | null;
+  created_at: string;
+}
+
+/** evaluacion_epp: evaluación por proyecto */
+export interface EvaluacionEpp {
+  id: string;
+  persona_id: string;
+  engagement_id: string | null;
+  fecha: string;
+  calificacion: number;
+  comentario: string | null;
+  created_at: string;
+}
+
+/** evaluacion_edd: evaluación de desempeño anual */
+export interface EvaluacionEdd {
+  id: string;
+  persona_id: string;
+  periodo: number;
+  fecha: string;
+  calificacion: number;
+  comentario: string | null;
   created_at: string;
 }
 
@@ -408,6 +439,18 @@ export type Database = {
         Row: Ausencia;
         Insert: Omit<Ausencia, "id" | "created_at" | "fuente"> & { fuente?: "manual" | "importacion_buk" };
         Update: Partial<Omit<Ausencia, "id" | "created_at">>;
+        Relationships: [];
+      };
+      evaluacion_epp: {
+        Row: EvaluacionEpp;
+        Insert: Omit<EvaluacionEpp, "id" | "created_at">;
+        Update: Partial<Omit<EvaluacionEpp, "id" | "created_at">>;
+        Relationships: [];
+      };
+      evaluacion_edd: {
+        Row: EvaluacionEdd;
+        Insert: Omit<EvaluacionEdd, "id" | "created_at">;
+        Update: Partial<Omit<EvaluacionEdd, "id" | "created_at">>;
         Relationships: [];
       };
     };

@@ -752,7 +752,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista }: Props) {
           <table className="w-full text-sm border-collapse">
             <thead>
               <tr className="border-b border-[#e8e8e8] bg-[#f9f9f9]">
-                <th className="text-left px-4 py-3 font-semibold text-[#555] w-52 sticky left-0 bg-[#f9f9f9] z-10">Engagement</th>
+                <th className="text-left px-4 py-3 font-semibold text-[#555] w-52 sticky left-0 bg-[#f9f9f9] z-10">Proyecto</th>
                 <th className="text-left px-3 py-3 font-semibold text-[#555] w-36">Cliente</th>
                 {dias.map((dia) => (
                   <th key={format(dia, "yyyy-MM-dd")} className="px-1.5 py-3 font-semibold text-center min-w-[90px]">

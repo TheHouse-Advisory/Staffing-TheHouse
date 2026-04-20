@@ -28,7 +28,8 @@ interface EngagementFormProps {
 
 const EMPTY_ENG = {
   nombre: "", cliente: "", tipo: "proyecto", estado: "activo",
-  descripcion: "", fecha_inicio: "", fecha_fin_estimada: "", industria_id: "",
+  descripcion: "", fecha_inicio: "", fecha_fin_estimada: "",
+  industria_id: "", categoria_id: "", nivel_dificultad: "",
 };
 
 const EMPTY_REQ: ReqRow = {
@@ -43,6 +44,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [industrias, setIndustrias] = useState<{ value: string; label: string }[]>([]);
+  const [categorias, setCategorias] = useState<{ value: string; label: string }[]>([]);
 
   useEffect(() => {
     if (!open) {
@@ -51,9 +53,12 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     }
     async function load() {
       const supabase = createAnyClient();
-      const { data: iData } = await supabase
-        .from("cat_industria").select("id,nombre").eq("activo", true).order("nombre");
-      setIndustrias((iData ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
+      const [iData, cData] = await Promise.all([
+        supabase.from("cat_industria").select("id,nombre").eq("activo", true).order("nombre"),
+        supabase.from("cat_tematica").select("id,nombre").eq("activo", true).order("nombre"),
+      ]);
+      setIndustrias((iData.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
+      setCategorias((cData.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
 
       if (engagement) {
         setForm({
@@ -65,6 +70,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
           fecha_inicio: engagement.fecha_inicio ?? "",
           fecha_fin_estimada: engagement.fecha_fin_estimada ?? "",
           industria_id: engagement.industria_id ?? "",
+          categoria_id: (engagement as any).categoria_id ?? "",
+          nivel_dificultad: (engagement as any).nivel_dificultad ?? "",
         });
         const { data: reqData } = await supabase
           .from("requerimiento_engagement")
@@ -147,6 +154,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
       fecha_inicio: form.fecha_inicio || null,
       fecha_fin_estimada: form.fecha_fin_estimada || null,
       industria_id: form.industria_id || null,
+      categoria_id: form.categoria_id || null,
+      nivel_dificultad: form.nivel_dificultad || null,
     };
 
     let engId: string;
@@ -198,13 +207,13 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     <Drawer
       open={open}
       onClose={onClose}
-      title={engagement ? "Editar engagement" : "Nuevo engagement"}
+      title={engagement ? "Editar proyecto" : "Nuevo proyecto"}
       width="lg"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={loading}>Cancelar</Button>
           <Button onClick={handleSubmit} loading={loading}>
-            {engagement ? "Guardar cambios" : "Crear engagement"}
+            {engagement ? "Guardar cambios" : "Crear proyecto"}
           </Button>
         </>
       }
@@ -225,6 +234,18 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
           </FieldWrapper>
           <FieldWrapper label="Industria">
             <Select value={form.industria_id} onChange={setField("industria_id")} options={industrias} placeholder="Sin industria" />
+          </FieldWrapper>
+          <FieldWrapper label="Categoría">
+            <Select value={form.categoria_id} onChange={setField("categoria_id")} options={categorias} placeholder="Sin categoría" />
+          </FieldWrapper>
+          <FieldWrapper label="Nivel de dificultad">
+            <Select value={form.nivel_dificultad} onChange={setField("nivel_dificultad")}
+              options={[
+                { value: "bajo", label: "Bajo" },
+                { value: "medio", label: "Medio" },
+                { value: "alto", label: "Alto" },
+              ]}
+              placeholder="Sin especificar" />
           </FieldWrapper>
           <FieldWrapper label="Tipo">
             <Select value={form.tipo} onChange={setField("tipo")}
@@ -251,7 +272,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
         </div>
 
         <FieldWrapper label="Descripción">
-          <Textarea value={form.descripcion} onChange={setField("descripcion")} placeholder="Contexto del engagement..." />
+          <Textarea value={form.descripcion} onChange={setField("descripcion")} placeholder="Contexto del proyecto..." />
         </FieldWrapper>
 
         {/* Requerimientos */}
@@ -261,7 +282,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
               <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">Requerimientos</p>
               {(minReqDate || maxReqDate) && (
                 <p className="text-[10px] text-[#aaa] mt-0.5">
-                  Las fechas deben estar dentro del rango del engagement
+                  Las fechas deben estar dentro del rango del proyecto
                   {minReqDate && ` (desde ${minReqDate}`}{maxReqDate && ` → ${maxReqDate}`}{(minReqDate || maxReqDate) && ")"}
                 </p>
               )}

@@ -38,11 +38,11 @@ export function EngagementsList({ rolActual }: Props) {
     <>
       <div className="flex items-center justify-between mb-5">
         <p className="text-sm text-[#888]">
-          {engagements.length} engagement{engagements.length !== 1 ? "s" : ""}
+          {engagements.length} proyecto{engagements.length !== 1 ? "s" : ""}
         </p>
         {isAdmin && (
           <Button onClick={() => setDrawerOpen(true)} size="sm">
-            <Plus className="w-3.5 h-3.5" /> Nuevo engagement
+            <Plus className="w-3.5 h-3.5" /> Nuevo proyecto
           </Button>
         )}
       </div>
@@ -50,7 +50,7 @@ export function EngagementsList({ rolActual }: Props) {
       {engagements.length === 0 ? (
         <div className="text-center py-12 text-[#888]">
           <Circle className="w-10 h-10 mx-auto mb-3 opacity-20" />
-          <p className="text-sm font-medium">No hay engagements registrados.</p>
+          <p className="text-sm font-medium">No hay proyectos registrados.</p>
         </div>
       ) : (
         <div className="space-y-2 max-w-4xl">
@@ -59,7 +59,7 @@ export function EngagementsList({ rolActual }: Props) {
             return (
               <Link
                 key={e.id}
-                href={`/engagements/${e.id}`}
+                href={`/proyectos/${e.id}`}
                 className="group flex items-center gap-4 bg-white border border-[#e8e8e8] rounded-xl px-5 py-4 hover:shadow-sm hover:border-[#d0d0d0] transition-all"
               >
                 {/* Nombre + cliente */}

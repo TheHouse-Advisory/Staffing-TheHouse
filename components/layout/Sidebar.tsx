@@ -26,7 +26,7 @@ const navItems = [
     section: "Principal",
     items: [
       { href: "/tablero",   label: "Tablero",   icon: LayoutDashboard },
-      { href: "/engagements", label: "Engagements", icon: Briefcase },
+      { href: "/proyectos", label: "Proyectos", icon: Briefcase },
       { href: "/personas",  label: "Personas",  icon: Users },
       { href: "/ausencias", label: "Ausencias", icon: CalendarOff },
     ],
