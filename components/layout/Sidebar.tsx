@@ -10,6 +10,7 @@ import {
   LogOut,
   Kanban,
   CalendarOff,
+  Home,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RolSistema } from "@/lib/types/database";
@@ -25,6 +26,7 @@ const navItems = [
   {
     section: "Principal",
     items: [
+      { href: "/inicio",    label: "Inicio",    icon: Home },
       { href: "/tablero",   label: "Tablero",   icon: LayoutDashboard },
       { href: "/engagements", label: "Engagements", icon: Briefcase },
       { href: "/personas",  label: "Personas",  icon: Users },

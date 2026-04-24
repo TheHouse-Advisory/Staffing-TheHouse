@@ -49,13 +49,15 @@ export function PersonaProfile({ id }: Props) {
   const [capacidades, setCapacidades] = useState<TagItem[]>([]);
   const [tematicas, setTematicas] = useState<TagItem[]>([]);
   const [asignaciones, setAsignaciones] = useState<AsignacionActiva[]>([]);
+  const [mentor, setMentor] = useState<Persona | null>(null);
+  const [mentoreados, setMentoreados] = useState<Persona[]>([]);
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(false);
 
   const load = async () => {
     const supabase = createAnyClient();
 
-    const [pRes, indRes, capRes, temRes, asigRes] = await Promise.all([
+    const [pRes, indRes, capRes, temRes, asigRes, mentoreRes] = await Promise.all([
       supabase.from("persona").select("*").eq("id", id).single(),
 
       supabase
@@ -80,9 +82,31 @@ export function PersonaProfile({ id }: Props) {
         .eq("persona_id", id)
         .eq("estado", "activa")
         .order("fecha_inicio"),
+
+      // Personas a las que esta persona hace de mentor
+      supabase
+        .from("persona")
+        .select("id, nombre, apellido, cargo_actual")
+        .eq("mentor_id", id)
+        .eq("activo", true)
+        .order("apellido"),
     ]);
 
-    if (pRes.data) setPersona(pRes.data as Persona);
+    if (pRes.data) {
+      const p = pRes.data as Persona;
+      setPersona(p);
+      // Cargar mentor si tiene uno asignado
+      if (p.mentor_id) {
+        const { data: mentorData } = await supabase
+          .from("persona")
+          .select("id, nombre, apellido, cargo_actual")
+          .eq("id", p.mentor_id)
+          .single();
+        setMentor(mentorData as Persona ?? null);
+      } else {
+        setMentor(null);
+      }
+    }
 
     setIndustrias(
       (indRes.data ?? []).map((r: any) => ({
@@ -122,6 +146,7 @@ export function PersonaProfile({ id }: Props) {
       }))
     );
 
+    setMentoreados((mentoreRes.data ?? []) as Persona[]);
     setLoading(false);
   };
 
@@ -156,7 +181,23 @@ export function PersonaProfile({ id }: Props) {
                   </span>
                 )}
               </div>
-              <p className="text-[#888] mt-0.5">{persona.cargo_actual ?? "Sin cargo"}</p>
+              <div className="flex items-center gap-2 mt-0.5 flex-wrap">
+                <p className="text-[#888]">{persona.cargo_actual ?? "Sin cargo"}</p>
+                {persona.talento && (
+                  <span
+                    className="text-xs px-2.5 py-0.5 rounded-full font-semibold"
+                    style={
+                      persona.talento === "talento"
+                        ? { background: "#f0fdf4", color: "#16a34a" }
+                        : persona.talento === "en_desarrollo"
+                        ? { background: "#fefce8", color: "#ca8a04" }
+                        : { background: "#fef2f2", color: "#dc2626" }
+                    }
+                  >
+                    {persona.talento === "talento" ? "Talento" : persona.talento === "en_desarrollo" ? "En desarrollo" : "No talento"}
+                  </span>
+                )}
+              </div>
               <div className="flex gap-2 mt-1.5 flex-wrap">
                 {persona.rol_sistema && (
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#eaf4ff] text-[#1a5276] font-medium">
@@ -196,6 +237,35 @@ export function PersonaProfile({ id }: Props) {
                 <dt className="text-[#888]">Fecha de ingreso</dt>
                 <dd className="font-medium mt-0.5">
                   {format(new Date(persona.fecha_ingreso + "T00:00:00"), "d 'de' MMMM yyyy", { locale: es })}
+                </dd>
+              </div>
+            )}
+            {mentor && (
+              <div>
+                <dt className="text-[#888]">Mentor</dt>
+                <dd className="font-medium mt-0.5 flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-full bg-[#4a90e2] flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0">
+                    {mentor.nombre[0]}{mentor.apellido[0]}
+                  </div>
+                  {mentor.nombre} {mentor.apellido}
+                </dd>
+              </div>
+            )}
+            {mentoreados.length > 0 && (
+              <div className="col-span-2">
+                <dt className="text-[#888] mb-1.5">Es mentor de</dt>
+                <dd className="flex flex-wrap gap-2">
+                  {mentoreados.map((m) => (
+                    <span
+                      key={m.id}
+                      className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full bg-[#f0f9f4] text-[#1e7e45] font-medium"
+                    >
+                      <div className="w-4 h-4 rounded-full bg-[#4ab89a] flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0">
+                        {m.nombre[0]}{m.apellido[0]}
+                      </div>
+                      {m.nombre} {m.apellido}
+                    </span>
+                  ))}
                 </dd>
               </div>
             )}

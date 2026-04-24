@@ -22,6 +22,8 @@ interface FormState {
   cargo_actual: string;
   rol_sistema: string;
   fecha_ingreso: string;
+  mentor_id: string;
+  talento: string;
   industrias: string[];
   capacidades: string[];
   tematicas: string[];
@@ -34,6 +36,8 @@ const EMPTY: FormState = {
   cargo_actual: "",
   rol_sistema: "",
   fecha_ingreso: "",
+  mentor_id: "",
+  talento: "",
   industrias: [],
   capacidades: [],
   tematicas: [],
@@ -50,25 +54,33 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
   const [industrias, setIndustrias] = useState<Option[]>([]);
   const [capacidades, setCapacidades] = useState<Option[]>([]);
   const [tematicas, setTematicas] = useState<Option[]>([]);
+  const [mentoresOpciones, setMentoresOpciones] = useState<Option[]>([]);
 
   // Cargar catálogos una vez
   useEffect(() => {
     if (!open) return;
     async function loadCatalogs() {
       const supabase = createAnyClient();
-      const [c, i, cap, t] = await Promise.all([
+      const [c, i, cap, t, pers] = await Promise.all([
         supabase.from("config_cargo").select("nombre").order("nombre"),
         supabase.from("cat_industria").select("id,nombre").eq("activo", true).order("nombre"),
         supabase.from("cat_capacidad").select("id,nombre").eq("activo", true).order("nombre"),
         supabase.from("cat_tematica").select("id,nombre").eq("activo", true).order("nombre"),
+        supabase.from("persona").select("id,nombre,apellido").eq("activo", true).order("apellido"),
       ]);
       setCargos((c.data ?? []).map((r: any) => ({ value: r.nombre, label: r.nombre })));
       setIndustrias((i.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
       setCapacidades((cap.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
       setTematicas((t.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
+      // Excluir a la persona que se está editando de la lista de mentores
+      setMentoresOpciones(
+        ((pers.data ?? []) as { id: string; nombre: string; apellido: string }[])
+          .filter((r) => r.id !== persona?.id)
+          .map((r) => ({ value: r.id, label: `${r.nombre} ${r.apellido}` }))
+      );
     }
     loadCatalogs();
-  }, [open]);
+  }, [open, persona?.id]);
 
   // Poblar form al editar
   useEffect(() => {
@@ -89,6 +101,8 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
         cargo_actual: persona!.cargo_actual ?? "",
         rol_sistema: persona!.rol_sistema ?? "",
         fecha_ingreso: persona!.fecha_ingreso ?? "",
+        mentor_id: persona!.mentor_id ?? "",
+        talento: persona!.talento ?? "",
         industrias: (pi.data ?? []).map((r: any) => r.industria_id),
         capacidades: (pc.data ?? []).map((r: any) => r.capacidad_id),
         tematicas: (pt.data ?? []).map((r: any) => r.tematica_id),
@@ -124,6 +138,8 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
       cargo_actual: form.cargo_actual,
       rol_sistema: form.rol_sistema || null,
       fecha_ingreso: form.fecha_ingreso || null,
+      mentor_id: form.mentor_id || null,
+      talento: form.talento || null,
     };
 
     let personaId: string;
@@ -249,6 +265,39 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
             value={form.fecha_ingreso}
             onChange={(e) => set("fecha_ingreso")(e.target.value)}
           />
+        </FieldWrapper>
+
+        <FieldWrapper label="Mentor" hint="Persona del equipo que guía su desarrollo">
+          <Select
+            value={form.mentor_id}
+            onChange={(e) => set("mentor_id")(e.target.value)}
+            options={mentoresOpciones}
+            placeholder="Sin mentor asignado"
+          />
+        </FieldWrapper>
+
+        <FieldWrapper label="Talento" hint="Evaluación del potencial de la persona">
+          <div className="flex gap-2">
+            {[
+              { value: "talento",       label: "Talento",       color: "#16a34a", bg: "#f0fdf4", border: "#86efac" },
+              { value: "en_desarrollo", label: "En desarrollo", color: "#ca8a04", bg: "#fefce8", border: "#fde047" },
+              { value: "no_talento",    label: "No talento",    color: "#dc2626", bg: "#fef2f2", border: "#fca5a5" },
+            ].map((op) => (
+              <button
+                key={op.value}
+                type="button"
+                onClick={() => set("talento")(form.talento === op.value ? "" : op.value)}
+                className="flex-1 py-2 px-3 rounded-lg border-2 text-xs font-semibold transition-all"
+                style={
+                  form.talento === op.value
+                    ? { background: op.bg, borderColor: op.border, color: op.color }
+                    : { background: "#f9f9f9", borderColor: "#e8e8e8", color: "#aaa" }
+                }
+              >
+                {op.label}
+              </button>
+            ))}
+          </div>
         </FieldWrapper>
 
         {/* Preferencias de matching */}

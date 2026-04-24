@@ -85,6 +85,8 @@ export interface Persona {
   rol_sistema: RolSistema | null;
   activo: boolean;
   fecha_ingreso: string | null;
+  mentor_id: string | null;
+  talento: "talento" | "en_desarrollo" | "no_talento" | null;
   created_at: string;
   updated_at: string;
 }

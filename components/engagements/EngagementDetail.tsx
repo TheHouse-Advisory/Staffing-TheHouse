@@ -82,6 +82,22 @@ export function EngagementDetail({ id }: Props) {
   const [reqDeleteId, setReqDeleteId] = useState<string | null>(null);
   const [reqDeleteLoading, setReqDeleteLoading] = useState(false);
 
+  // Asignación directa
+  interface AsigForm {
+    requerimiento_id: string;
+    cargo_requerido: string;
+    fecha_inicio: string;
+    fecha_fin: string;
+    pct_dedicacion: string;
+    persona_id: string;
+  }
+  const [asigForm, setAsigForm] = useState<AsigForm | null>(null);
+  const [asigLoading, setAsigLoading] = useState(false);
+  const [asigError, setAsigError] = useState<string | null>(null);
+  const [personasDisponibles, setPersonasDisponibles] = useState<{ id: string; nombre: string; apellido: string; cargo_actual: string | null }[]>([]);
+  const [quitarAsigId, setQuitarAsigId] = useState<string | null>(null);
+  const [quitarAsigLoading, setQuitarAsigLoading] = useState(false);
+
   // Días críticos
   type DiaCritico = { id: string; fecha: string; descripcion: string | null };
   const [diasCriticos, setDiasCriticos] = useState<DiaCritico[]>([]);
@@ -153,6 +169,15 @@ export function EngagementDetail({ id }: Props) {
     setAsignacionesPorReq(porReq);
     setAsignacionesSinReq(sinReq);
     setDiasCriticos((dcResult.data ?? []) as DiaCritico[]);
+
+    // Personas para asignación directa
+    const { data: pData } = await sb
+      .from("persona")
+      .select("id, nombre, apellido, cargo_actual")
+      .eq("activo", true)
+      .order("apellido");
+    setPersonasDisponibles((pData ?? []) as { id: string; nombre: string; apellido: string; cargo_actual: string | null }[]);
+
     setLoading(false);
   };
 
@@ -270,6 +295,59 @@ export function EngagementDetail({ id }: Props) {
     await sb.from("requerimiento_engagement").delete().eq("id", reqDeleteId);
     setReqDeleteId(null);
     setReqDeleteLoading(false);
+    load();
+  };
+
+  // ── Asignación directa ─────────────────────────────────────────
+  const abrirAsignar = (r: CoberturaEngagement) => {
+    setAsigForm({
+      requerimiento_id: r.requerimiento_id,
+      cargo_requerido: r.cargo_requerido ?? "",
+      fecha_inicio: r.req_fecha_inicio,
+      fecha_fin: r.req_fecha_fin,
+      pct_dedicacion: String(r.pct_requerido),
+      persona_id: "",
+    });
+    setAsigError(null);
+  };
+
+  const guardarAsignacion = async () => {
+    if (!asigForm || !engagement) return;
+    if (!asigForm.persona_id) {
+      setAsigError("Selecciona una persona.");
+      return;
+    }
+    if (!asigForm.fecha_inicio || !asigForm.fecha_fin) {
+      setAsigError("Las fechas son obligatorias.");
+      return;
+    }
+    setAsigLoading(true);
+    setAsigError(null);
+    const sb = createAnyClient();
+    const persona = personasDisponibles.find((p) => p.id === asigForm.persona_id);
+    const { error } = await sb.from("asignacion").insert({
+      engagement_id: engagement.id,
+      requerimiento_id: asigForm.requerimiento_id,
+      persona_id: asigForm.persona_id,
+      cargo_al_momento: persona?.cargo_actual ?? null,
+      pct_dedicacion: Math.min(100, Math.max(1, Number(asigForm.pct_dedicacion) || 100)),
+      fecha_inicio: asigForm.fecha_inicio,
+      fecha_fin: asigForm.fecha_fin,
+      estado: "activa",
+    });
+    if (error) { setAsigError(error.message); setAsigLoading(false); return; }
+    setAsigForm(null);
+    setAsigLoading(false);
+    load();
+  };
+
+  const confirmarQuitarAsignacion = async () => {
+    if (!quitarAsigId) return;
+    setQuitarAsigLoading(true);
+    const sb = createAnyClient();
+    await sb.from("asignacion").delete().eq("id", quitarAsigId);
+    setQuitarAsigId(null);
+    setQuitarAsigLoading(false);
     load();
   };
 
@@ -436,6 +514,13 @@ export function EngagementDetail({ id }: Props) {
                               >
                                 <Trash2 className="w-3.5 h-3.5" />
                               </button>
+                              <button
+                                onClick={() => abrirAsignar(r)}
+                                className="p-1 rounded hover:bg-blue-50 text-[#aaa] hover:text-blue-500 transition-colors"
+                                title="Asignar persona"
+                              >
+                                <Plus className="w-3.5 h-3.5" />
+                              </button>
                             </div>
                           </div>
 
@@ -464,6 +549,13 @@ export function EngagementDetail({ id }: Props) {
                                         ? ` → ${format(fLocal(a.fecha_fin), "d MMM yy", { locale: es })}`
                                         : " →"}
                                     </span>
+                                    <button
+                                      onClick={() => setQuitarAsigId(a.id)}
+                                      className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-400 transition-colors flex-shrink-0"
+                                      title="Quitar asignación"
+                                    >
+                                      <X className="w-3 h-3" />
+                                    </button>
                                   </div>
                                 );
                               })}
@@ -706,6 +798,87 @@ export function EngagementDetail({ id }: Props) {
         title="Eliminar requerimiento"
         message="¿Eliminar este requerimiento? Las asignaciones vinculadas a él quedarán sin requerimiento asociado."
         confirmLabel="Eliminar"
+      />
+
+      {/* ── Drawer: asignar persona a requerimiento ──────────── */}
+      <Drawer
+        open={!!asigForm}
+        onClose={() => setAsigForm(null)}
+        title="Asignar persona"
+        subtitle={engagement.nombre}
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setAsigForm(null)} disabled={asigLoading}>
+              Cancelar
+            </Button>
+            <Button onClick={guardarAsignacion} loading={asigLoading}>
+              Asignar
+            </Button>
+          </>
+        }
+      >
+        {asigForm && (
+          <div className="space-y-5">
+            {asigError && (
+              <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
+                {asigError}
+              </div>
+            )}
+
+            <FieldWrapper label="Persona" required>
+              <Select
+                value={asigForm.persona_id}
+                onChange={(e) => setAsigForm({ ...asigForm, persona_id: e.target.value })}
+                options={[
+                  { value: "", label: "Selecciona una persona…" },
+                  ...personasDisponibles.map((p) => ({
+                    value: p.id,
+                    label: `${p.nombre} ${p.apellido}${p.cargo_actual ? ` · ${p.cargo_actual}` : ""}`,
+                  })),
+                ]}
+              />
+            </FieldWrapper>
+
+            <FieldWrapper label="% Dedicación" required>
+              <Input
+                type="number"
+                min={1}
+                max={100}
+                value={asigForm.pct_dedicacion}
+                onChange={(e) => setAsigForm({ ...asigForm, pct_dedicacion: e.target.value })}
+              />
+            </FieldWrapper>
+
+            <div className="grid grid-cols-2 gap-4">
+              <FieldWrapper label="Fecha inicio" required>
+                <Input
+                  type="date"
+                  value={asigForm.fecha_inicio}
+                  onChange={(e) => setAsigForm({ ...asigForm, fecha_inicio: e.target.value })}
+                />
+              </FieldWrapper>
+              <FieldWrapper label="Fecha fin" required>
+                <Input
+                  type="date"
+                  value={asigForm.fecha_fin}
+                  min={asigForm.fecha_inicio}
+                  onChange={(e) => setAsigForm({ ...asigForm, fecha_fin: e.target.value })}
+                />
+              </FieldWrapper>
+            </div>
+          </div>
+        )}
+      </Drawer>
+
+      {/* ── Confirmación quitar asignación ───────────────────── */}
+      <ConfirmDialog
+        open={!!quitarAsigId}
+        onClose={() => setQuitarAsigId(null)}
+        onConfirm={confirmarQuitarAsignacion}
+        loading={quitarAsigLoading}
+        title="Quitar asignación"
+        message="¿Quitar esta asignación del requerimiento?"
+        confirmLabel="Quitar"
       />
 
       {/* ── Formulario de edición del engagement ─────────────── */}
