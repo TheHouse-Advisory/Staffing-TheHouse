@@ -1,13 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, ChevronLeft, ChevronRight } from "lucide-react";
-import { startOfISOWeek, addWeeks, subWeeks, format } from "date-fns";
+import { X, ChevronLeft, ChevronRight, Bell } from "lucide-react";
+import { startOfISOWeek, addWeeks, subWeeks, format, isSameDay, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
+import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
 import { GanttAusencias } from "@/components/inicio/GanttAusencias";
 import { TablonOcupacion } from "@/components/tablero/TablonOcupacion";
 import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTablero";
+import { DisponiblesTablero } from "@/components/inicio/DisponiblesTablero";
+import { DesgloceEngagements } from "@/components/inicio/DesgloceEngagements";
 import type { Persona } from "@/lib/types/database";
 
 const JERARQUIA_CARGOS = [
@@ -77,10 +80,11 @@ interface ResumenPersona {
 export default function InicioPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [loading, setLoading] = useState(true);
+  const [alertasHoy, setAlertasHoy] = useState(0);
 
   // Tablero (cuadrante 2)
   const [semanaInicio, setSemanaInicio] = useState<Date>(() => startOfISOWeek(new Date()));
-  const [vistaTablero, setVistaTablero] = useState<"persona" | "proyecto" | "perfil">("persona");
+  const [vistaTablero, setVistaTablero] = useState<"persona" | "proyecto" | "perfil" | "desgloce">("persona");
   const semanaLabel = `${format(semanaInicio, "d MMM", { locale: es })} – ${format(addWeeks(semanaInicio, 1), "d MMM yyyy", { locale: es })}`;
 
   // Popup
@@ -97,6 +101,18 @@ export default function InicioPage() {
       ]);
 
       setPersonas(persRes.data ?? []);
+
+      // Contar aniversarios de hoy
+      const hoy = new Date();
+      const conAniv = ((persRes.data ?? []) as Persona[]).filter((p) => {
+        if (!p.fecha_ingreso) return false;
+        const ingreso = parseISO(p.fecha_ingreso);
+        const aniv = new Date(hoy.getFullYear(), ingreso.getMonth(), ingreso.getDate());
+        const años = hoy.getFullYear() - ingreso.getFullYear();
+        return isSameDay(aniv, hoy) && años > 0;
+      });
+      setAlertasHoy(conAniv.length);
+
       setLoading(false);
     }
     load();
@@ -213,9 +229,23 @@ export default function InicioPage() {
 
   return (
     <div className="flex flex-col h-full p-6 gap-4">
-      <div>
-        <h1 className="text-[22px] font-bold text-[#1a1a2e]">Menú Principal</h1>
-        <p className="text-sm text-gray-400 mt-0.5">Resumen general del equipo</p>
+      <div className="flex items-start justify-between">
+        <div>
+          <h1 className="text-[22px] font-bold text-[#1a1a2e]">Menú Principal</h1>
+          <p className="text-sm text-gray-400 mt-0.5">Resumen general del equipo</p>
+        </div>
+        <Link
+          href="/alertas"
+          className="relative flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#4a90e2] transition-colors text-sm font-semibold text-[#1a1a2e] shadow-sm"
+        >
+          <Bell className="w-4 h-4 text-[#4a90e2]" />
+          Alertas
+          {alertasHoy > 0 && (
+            <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+              {alertasHoy}
+            </span>
+          )}
+        </Link>
       </div>
 
       <div className="grid gap-4 flex-1 min-h-0" style={{ gridTemplateColumns: "1fr 2fr", gridTemplateRows: "2fr 1fr" }}>
@@ -421,7 +451,8 @@ export default function InicioPage() {
                 {([
                   { value: "persona", label: "Por persona" },
                   { value: "proyecto", label: "Por proyecto" },
-                  { value: "perfil",   label: "Perfil individual" },
+                  { value: "perfil",    label: "Perfil individual" },
+                  { value: "desgloce", label: "Desglose engagements" },
                 ] as const).map(({ value, label }) => (
                   <button
                     key={value}
@@ -437,20 +468,26 @@ export default function InicioPage() {
                   </button>
                 ))}
               </div>
-              {/* Navegación semana */}
-              <button onClick={() => setSemanaInicio((s) => subWeeks(s, 1))} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-              <span className="text-[11px] text-gray-400 whitespace-nowrap">{semanaLabel}</span>
-              <button onClick={() => setSemanaInicio((s) => addWeeks(s, 1))} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
+              {/* Navegación semana — oculta en desglose (tiene su propia navegación) */}
+              {vistaTablero !== "desgloce" && (
+                <>
+                  <button onClick={() => setSemanaInicio((s) => subWeeks(s, 1))} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <span className="text-[11px] text-gray-400 whitespace-nowrap">{semanaLabel}</span>
+                  <button onClick={() => setSemanaInicio((s) => addWeeks(s, 1))} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
           {/* Contenido según vista */}
           <div className="flex-1 overflow-auto min-h-0">
-            {vistaTablero === "perfil" ? (
+            {vistaTablero === "desgloce" ? (
+              <DesgloceEngagements />
+            ) : vistaTablero === "perfil" ? (
               <PerfilIndividualTablero semanaInicio={semanaInicio} />
             ) : (
               <TablonOcupacion
@@ -462,14 +499,12 @@ export default function InicioPage() {
           </div>
         </div>
 
-        {/* ── Cuadrante 3 ── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3">
-            Cuadrante 3
+        {/* ── Cuadrante 3: Disponibles ── */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
+            Disponibles hoy
           </p>
-          <div className="flex-1 flex items-center justify-center text-gray-300 text-sm">
-            Próximamente…
-          </div>
+          <DisponiblesTablero onVerPersona={abrirResumen} />
         </div>
 
         {/* ── Cuadrante 4: Gantt Ausencias ── */}

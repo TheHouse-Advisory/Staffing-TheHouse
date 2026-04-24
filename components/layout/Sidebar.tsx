@@ -11,6 +11,7 @@ import {
   Kanban,
   CalendarOff,
   Home,
+  Bell,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RolSistema } from "@/lib/types/database";
@@ -31,6 +32,7 @@ const navItems = [
       { href: "/engagements", label: "Engagements", icon: Briefcase },
       { href: "/personas",  label: "Personas",  icon: Users },
       { href: "/ausencias", label: "Ausencias", icon: CalendarOff },
+      { href: "/alertas",   label: "Alertas",   icon: Bell },
     ],
   },
   {
