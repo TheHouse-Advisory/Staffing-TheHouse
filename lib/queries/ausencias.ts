@@ -19,13 +19,13 @@ export const SENIORITY_ORDER = [
 
 // Colores por tipo de ausencia
 export const COLOR_AUSENCIA: Record<TipoAusencia, { bg: string; text: string; label: string }> = {
-  vacaciones:        { bg: "#3b82f6", text: "#fff",   label: "Vacaciones" },
-  dia_libre:         { bg: "#22c55e", text: "#fff",   label: "Día libre" },
-  dia_administrativo:{ bg: "#f59e0b", text: "#fff",   label: "Día administrativo" },
-  permiso:           { bg: "#a855f7", text: "#fff",   label: "Permiso" },
-  licencia_medica:   { bg: "#ef4444", text: "#fff",   label: "Licencia médica" },
-  capacitacion:      { bg: "#06b6d4", text: "#fff",   label: "Capacitación" },
-  otro:              { bg: "#6b7280", text: "#fff",   label: "Otro" },
+  vacaciones_confirmadas:   { bg: "#38bdf8", text: "#fff", label: "Vacaciones confirmadas" },
+  vacaciones_por_confirmar: { bg: "#fbbf24", text: "#fff", label: "Vacaciones por confirmar" },
+  permiso_sin_goce:         { bg: "#92400e", text: "#fff", label: "Permiso sin goce de sueldo" },
+  dia_post_proyecto:        { bg: "#f97316", text: "#fff", label: "Día post proyecto" },
+  dia_beneficio:            { bg: "#a855f7", text: "#fff", label: "Día beneficio" },
+  dia_administrativo:       { bg: "#22c55e", text: "#fff", label: "Día administrativo" },
+  otro:                     { bg: "#9ca3af", text: "#fff", label: "Otro" },
 };
 
 // ─────────────────────────────────────────────────────────────

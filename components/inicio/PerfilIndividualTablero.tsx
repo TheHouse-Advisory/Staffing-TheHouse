@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { addDays, format, startOfISOWeek } from "date-fns";
+import { addDays, addMonths, format, isWeekend, startOfMonth } from "date-fns";
 import { es } from "date-fns/locale";
 import { createAnyClient } from "@/lib/supabase/client";
+import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 
 const JERARQUIA: Record<string, number> = {
   "Socio": 1, "Director de Proyectos": 2, "Director": 2,
@@ -22,31 +23,70 @@ interface PersonaFila {
   ausencias: { inicio: string; fin: string; tipo: string }[];
 }
 
+interface Columna {
+  label: string;
+  sublabel: string;
+  inicioStr: string;
+  finStr: string;
+}
+
 interface Props {
   semanaInicio: Date;
+  periodoVista?: "dia" | "semana" | "mes";
 }
 
-const DIAS_SEMANA = 7;
-
-function estaActivo(inicio: string, fin: string, dia: Date): boolean {
-  const d = dia.toISOString().split("T")[0];
-  return inicio <= d && d <= fin;
+function getColumnas(semanaInicio: Date, pv: string): Columna[] {
+  if (pv === "semana") {
+    return Array.from({ length: 5 }, (_, i) => {
+      const ini = addDays(semanaInicio, i * 7);
+      const fin = addDays(ini, 6);
+      return {
+        label: format(ini, "d MMM", { locale: es }),
+        sublabel: format(fin, "d MMM", { locale: es }),
+        inicioStr: format(ini, "yyyy-MM-dd"),
+        finStr: format(fin, "yyyy-MM-dd"),
+      };
+    });
+  }
+  if (pv === "mes") {
+    return Array.from({ length: 4 }, (_, i) => {
+      const mesInicio = startOfMonth(addMonths(semanaInicio, i));
+      const mesFin = addDays(startOfMonth(addMonths(semanaInicio, i + 1)), -1);
+      return {
+        label: format(mesInicio, "MMM", { locale: es }),
+        sublabel: format(mesInicio, "yyyy"),
+        inicioStr: format(mesInicio, "yyyy-MM-dd"),
+        finStr: format(mesFin, "yyyy-MM-dd"),
+      };
+    });
+  }
+  // dia: 7 columnas individuales
+  return Array.from({ length: 7 }, (_, i) => {
+    const d = addDays(semanaInicio, i);
+    const key = format(d, "yyyy-MM-dd");
+    return {
+      label: format(d, "EEE", { locale: es }),
+      sublabel: format(d, "d MMM", { locale: es }),
+      inicioStr: key,
+      finStr: key,
+    };
+  });
 }
 
-const TIPO_LABEL: Record<string, string> = {
-  vacaciones: "Vacaciones",
-  licencia_medica: "Licencia médica",
-  capacitacion: "Capacitación",
-  permiso: "Permiso",
-};
+function overlapsColumna(inicio: string, fin: string, col: Columna): boolean {
+  return inicio <= col.finStr && fin >= col.inicioStr;
+}
 
-export function PerfilIndividualTablero({ semanaInicio }: Props) {
+export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
   const [filas, setFilas] = useState<PersonaFila[]>([]);
   const [loading, setLoading] = useState(true);
 
-  const dias = Array.from({ length: DIAS_SEMANA }, (_, i) => addDays(semanaInicio, i));
+  const pv = periodoVista ?? "dia";
+
+  // Rango de fetch según período
+  const totalDias = pv === "semana" ? 35 : pv === "mes" ? 120 : 7;
   const fechaInicio = format(semanaInicio, "yyyy-MM-dd");
-  const fechaFin = format(addDays(semanaInicio, DIAS_SEMANA - 1), "yyyy-MM-dd");
+  const fechaFin = format(addDays(semanaInicio, totalDias - 1), "yyyy-MM-dd");
 
   useEffect(() => {
     async function load() {
@@ -55,13 +95,11 @@ export function PerfilIndividualTablero({ semanaInicio }: Props) {
 
       const [persRes, asigRes, ausenRes] = await Promise.all([
         sb.from("persona").select("id, nombre, apellido, cargo_actual").eq("activo", true),
-
         sb.from("asignacion")
           .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin, engagement:engagement_id(id, nombre, cliente)" as any)
           .eq("estado", "activa")
           .lte("fecha_inicio", fechaFin)
           .gte("fecha_fin", fechaInicio),
-
         sb.from("ausencia")
           .select("persona_id, fecha_inicio, fecha_fin, tipo")
           .lte("fecha_inicio", fechaFin)
@@ -85,11 +123,9 @@ export function PerfilIndividualTablero({ semanaInicio }: Props) {
               fin: a.fecha_fin,
               pct: a.pct_dedicacion,
             }));
-
           const ausencias = ((ausenRes.data ?? []) as any[])
             .filter((a) => a.persona_id === p.id)
             .map((a) => ({ inicio: a.fecha_inicio, fin: a.fecha_fin, tipo: a.tipo }));
-
           return {
             id: p.id,
             nombre: p.nombre,
@@ -99,7 +135,6 @@ export function PerfilIndividualTablero({ semanaInicio }: Props) {
             ausencias,
           };
         })
-        // Solo mostrar personas con al menos algo esta semana
         .filter((p) => p.proyectos.length > 0 || p.ausencias.length > 0);
 
       setFilas(personas);
@@ -109,125 +144,144 @@ export function PerfilIndividualTablero({ semanaInicio }: Props) {
   }, [fechaInicio, fechaFin]);
 
   if (loading) return <p className="text-sm text-gray-300 p-2">Cargando...</p>;
-  if (filas.length === 0) return <p className="text-sm text-gray-300 italic p-2">Sin actividad esta semana.</p>;
+  if (filas.length === 0) return <p className="text-sm text-gray-300 italic p-2">Sin actividad en este período.</p>;
 
   const hoy = format(new Date(), "yyyy-MM-dd");
+  const columnas = getColumnas(semanaInicio, pv);
+
+  // En modo día: filtrar fines de semana
+  const columnasMostradas = pv === "dia"
+    ? columnas.filter((c) => {
+        const d = new Date(c.inicioStr + "T00:00:00");
+        return !isWeekend(d);
+      })
+    : columnas;
 
   return (
     <div className="overflow-auto h-full">
       <table className="w-full text-xs border-collapse" style={{ minWidth: 520 }}>
         <thead>
           <tr>
-            {/* Columna persona */}
             <th className="text-left pr-3 pb-2 text-gray-400 font-semibold w-36 sticky left-0 bg-white z-10">
               Persona
             </th>
-            {dias.map((d) => {
-              const key = format(d, "yyyy-MM-dd");
-              const esHoy = key === hoy;
+            {columnasMostradas.map((col, i) => {
+              const esHoy = col.inicioStr <= hoy && hoy <= col.finStr;
               return (
                 <th
-                  key={key}
+                  key={i}
                   className="text-center pb-2 font-semibold"
-                  style={{ color: esHoy ? "#4a90e2" : "#aaa", minWidth: 48 }}
+                  style={{ color: esHoy ? "#4a90e2" : "#aaa", minWidth: pv === "dia" ? 48 : 72 }}
                 >
-                  <div className="capitalize">{format(d, "EEE", { locale: es })}</div>
-                  <div className="font-normal text-[10px]">{format(d, "d MMM", { locale: es })}</div>
+                  <div className="capitalize">{col.label}</div>
+                  <div className="font-normal text-[10px]">{col.sublabel}</div>
                 </th>
               );
             })}
           </tr>
         </thead>
         <tbody>
-          {filas.map((persona, pi) => (
-            <>
-              {/* Separador entre personas */}
-              {pi > 0 && (
-                <tr key={`sep-${persona.id}`}>
-                  <td colSpan={DIAS_SEMANA + 1} className="py-1">
-                    <div className="border-t border-gray-100" />
+          {(() => {
+            const cargoOrden = [...CARGOS];
+            const sinCargo = filas.filter(
+              (f) => !cargoOrden.includes(f.cargo as typeof CARGOS[number])
+            );
+            const grupos = [
+              ...cargoOrden.map((c) => ({ cargo: c, lista: filas.filter((f) => f.cargo === c) })),
+              ...(sinCargo.length > 0 ? [{ cargo: "Sin cargo", lista: sinCargo }] : []),
+            ].filter((g) => g.lista.length > 0);
+
+            return grupos.flatMap(({ cargo, lista }) => {
+              const cargoColor = CARGO_COLORS[cargo] ?? CARGO_COLOR_DEFAULT;
+
+              const filaSeccion = (
+                <tr key={`sec-${cargo}`}>
+                  <td colSpan={columnasMostradas.length + 1} className="pt-4 pb-1">
+                    <div className="flex items-center gap-2">
+                      <div className="w-1 h-4 rounded-full flex-shrink-0" style={{ background: cargoColor }} />
+                      <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: cargoColor }}>{cargo}</span>
+                      <span className="text-[10px] text-gray-300">{lista.length}</span>
+                      <div className="flex-1 h-0.5 rounded-full" style={{ background: cargoColor, opacity: 0.35 }} />
+                    </div>
                   </td>
                 </tr>
-              )}
+              );
 
-              {/* Nombre y cargo */}
-              <tr key={`hdr-${persona.id}`}>
-                <td className="pr-3 pt-2 pb-1 sticky left-0 bg-white z-10">
-                  <p className="font-semibold text-[#1a1a2e] truncate max-w-[130px]">
-                    {persona.nombre} {persona.apellido}
-                  </p>
-                  <p className="text-[10px] text-gray-400 truncate max-w-[130px]">{persona.cargo}</p>
-                </td>
-                {/* Celdas vacías del header */}
-                {dias.map((d) => (
-                  <td key={format(d, "yyyy-MM-dd")} />
-                ))}
-              </tr>
+              const filasPersonas = lista.flatMap((persona, pi) => {
+                const separador = pi > 0 ? (
+                  <tr key={`sep-${persona.id}`}>
+                    <td colSpan={columnasMostradas.length + 1} className="py-0.5">
+                      <div className="border-t border-gray-100" />
+                    </td>
+                  </tr>
+                ) : null;
 
-              {/* Fila por proyecto */}
-              {persona.proyectos.map((proy) => (
-                <tr key={`proy-${persona.id}-${proy.id}`}>
-                  <td className="pr-3 py-0.5 sticky left-0 bg-white z-10">
-                    <p className="text-gray-500 truncate max-w-[130px] pl-2">
-                      {proy.nombre}
-                      {proy.cliente && (
-                        <span className="text-gray-300 ml-1">· {proy.cliente}</span>
-                      )}
-                    </p>
-                  </td>
-                  {dias.map((d) => {
-                    const key = format(d, "yyyy-MM-dd");
-                    const activo = estaActivo(proy.inicio, proy.fin, d);
-                    return (
-                      <td key={key} className="py-0.5 px-0.5">
-                        {activo ? (
-                          <div
-                            className="h-5 rounded text-center leading-5 font-semibold text-[10px]"
-                            style={{
-                              background: key === hoy ? "#bfdbfe" : "#dbeafe",
-                              color: "#1d4ed8",
-                            }}
-                          >
-                            {proy.pct}%
-                          </div>
-                        ) : (
-                          <div className="h-5 rounded bg-gray-50" />
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              ))}
+                const filaHdr = (
+                  <tr key={`hdr-${persona.id}`}>
+                    <td className="pr-3 pt-2 pb-1 sticky left-0 bg-white z-10">
+                      <p className="font-semibold text-[#1a1a2e] truncate max-w-[130px]">
+                        {persona.nombre} {persona.apellido}
+                      </p>
+                    </td>
+                    {columnasMostradas.map((_, i) => <td key={i} />)}
+                  </tr>
+                );
 
-              {/* Fila de ausencias */}
-              {persona.ausencias.length > 0 && (
-                <tr key={`aus-${persona.id}`}>
-                  <td className="pr-3 py-0.5 sticky left-0 bg-white z-10">
-                    <p className="text-orange-400 pl-2 truncate max-w-[130px]">Ausencia</p>
-                  </td>
-                  {dias.map((d) => {
-                    const key = format(d, "yyyy-MM-dd");
-                    const ausenciaActiva = persona.ausencias.find((a) =>
-                      estaActivo(a.inicio, a.fin, d)
-                    );
-                    return (
-                      <td key={key} className="py-0.5 px-0.5">
-                        {ausenciaActiva ? (
-                          <div
-                            title={TIPO_LABEL[ausenciaActiva.tipo] ?? ausenciaActiva.tipo}
-                            className="h-5 rounded"
-                            style={{ background: "#fed7aa" }}
-                          />
-                        ) : (
-                          <div className="h-5 rounded bg-gray-50" />
-                        )}
-                      </td>
-                    );
-                  })}
-                </tr>
-              )}
-            </>
-          ))}
+                const filasProyectos = persona.proyectos.map((proy) => (
+                  <tr key={`proy-${persona.id}-${proy.id}`}>
+                    <td className="pr-3 py-0.5 sticky left-0 bg-white z-10">
+                      <p className="text-gray-500 truncate max-w-[130px] pl-2">
+                        {proy.nombre}
+                        {proy.cliente && <span className="text-gray-300 ml-1">· {proy.cliente}</span>}
+                      </p>
+                    </td>
+                    {columnasMostradas.map((col, i) => {
+                      const activo = overlapsColumna(proy.inicio, proy.fin, col);
+                      const esHoy = col.inicioStr <= hoy && hoy <= col.finStr;
+                      return (
+                        <td key={i} className="py-0.5 px-0.5">
+                          {activo ? (
+                            <div
+                              className="h-5 rounded text-center leading-5 font-semibold text-[10px]"
+                              style={{ background: esHoy ? "#bfdbfe" : "#dbeafe", color: "#1d4ed8" }}
+                            >
+                              {proy.pct}%
+                            </div>
+                          ) : (
+                            <div className="h-5 rounded bg-gray-50" />
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ));
+
+                const filaAusencia = persona.ausencias.length > 0 ? (
+                  <tr key={`aus-${persona.id}`}>
+                    <td className="pr-3 py-0.5 sticky left-0 bg-white z-10">
+                      <p className="text-orange-400 pl-2 truncate max-w-[130px]">Ausencia</p>
+                    </td>
+                    {columnasMostradas.map((col, i) => {
+                      const activa = persona.ausencias.some((a) => overlapsColumna(a.inicio, a.fin, col));
+                      return (
+                        <td key={i} className="py-0.5 px-0.5">
+                          {activa ? (
+                            <div className="h-5 rounded" style={{ background: "#fed7aa" }} />
+                          ) : (
+                            <div className="h-5 rounded bg-gray-50" />
+                          )}
+                        </td>
+                      );
+                    })}
+                  </tr>
+                ) : null;
+
+                return [separador, filaHdr, ...filasProyectos, filaAusencia].filter(Boolean);
+              });
+
+              return [filaSeccion, ...filasPersonas];
+            });
+          })()}
         </tbody>
       </table>
     </div>

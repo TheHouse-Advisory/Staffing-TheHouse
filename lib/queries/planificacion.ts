@@ -99,8 +99,10 @@ export interface PersonaFit {
   /** % total si se asignara */
   pct_si_asigna: number;
   alertas: FitAlerta[];
-  score: number;   // 0–100 (mayor = mejor fit)
+  score: number;
   nivel: FitNivel;
+  /** Qué criterios de experiencia similar coinciden */
+  experiencia: { industria: boolean; capacidad: boolean; tematica: boolean };
   /** Asignaciones activas que solapan con el período del req (para mini-Gantt) */
   asignaciones: AsignacionDetalle[];
 }
@@ -368,12 +370,70 @@ export async function fetchPersonasFit(
     }
   }
 
-  // 4. Ausencias en el período (soft alert)
+  // 4. Ausencias en el período (soft alert) — incluye ausencias sin fecha_fin (abiertas)
   const { data: ausRaw } = await supabase
     .from("ausencia")
     .select("persona_id, tipo, fecha_inicio, fecha_fin")
     .lte("fecha_inicio", hastaEfectivo)
-    .gte("fecha_fin", desdeEfectivo);
+    .or(`fecha_fin.gte.${desdeEfectivo},fecha_fin.is.null`);
+
+  // 5. Experiencia en engagement similar: industria, capacidades, temáticas
+  const personaIdsList = ((personasRaw ?? []) as { id: string }[]).map((p) => p.id);
+
+  const experienciaPorPersona = new Map<string, { industria: boolean; capacidad: boolean; tematica: boolean }>();
+
+  const [{ data: engData }, { data: engCapsData }, { data: engTemsData }] = await Promise.all([
+    supabase.from("engagement").select("industria_id").eq("id", req.engagement_id).single(),
+    (supabase as any).from("engagement_capacidad").select("capacidad_id").eq("engagement_id", req.engagement_id),
+    (supabase as any).from("engagement_tematica").select("tematica_id").eq("engagement_id", req.engagement_id),
+  ]);
+
+  const engIndustriaId = (engData as any)?.industria_id as string | null ?? null;
+  const engCapIds = new Set<string>(((engCapsData ?? []) as any[]).map((r: any) => r.capacidad_id as string));
+  const engTemIds = new Set<string>(((engTemsData ?? []) as any[]).map((r: any) => r.tematica_id as string));
+
+  if (personaIdsList.length > 0 && (engIndustriaId || engCapIds.size > 0 || engTemIds.size > 0)) {
+    // Historial de engagements de cada persona (excluyendo el engagement actual)
+    const { data: histAsigRaw } = await (supabase as any)
+      .from("asignacion")
+      .select("persona_id, engagement_id")
+      .in("persona_id", personaIdsList)
+      .neq("engagement_id", req.engagement_id);
+
+    const engIdsPorPersona = new Map<string, Set<string>>();
+    for (const a of ((histAsigRaw ?? []) as any[])) {
+      if (!engIdsPorPersona.has(a.persona_id)) engIdsPorPersona.set(a.persona_id, new Set());
+      engIdsPorPersona.get(a.persona_id)!.add(a.engagement_id as string);
+    }
+
+    const allHistEngIds = [...new Set(((histAsigRaw ?? []) as any[]).map((a: any) => a.engagement_id as string))];
+
+    if (allHistEngIds.length > 0) {
+      const [indRes, capRes, temRes] = await Promise.all([
+        engIndustriaId
+          ? supabase.from("engagement").select("id").eq("industria_id", engIndustriaId).in("id", allHistEngIds)
+          : Promise.resolve({ data: [] as any[] }),
+        engCapIds.size > 0
+          ? (supabase as any).from("engagement_capacidad").select("engagement_id").in("capacidad_id", [...engCapIds]).in("engagement_id", allHistEngIds)
+          : Promise.resolve({ data: [] as any[] }),
+        engTemIds.size > 0
+          ? (supabase as any).from("engagement_tematica").select("engagement_id").in("tematica_id", [...engTemIds]).in("engagement_id", allHistEngIds)
+          : Promise.resolve({ data: [] as any[] }),
+      ]);
+
+      const engConMismaInd = new Set<string>(((indRes.data ?? []) as any[]).map((r: any) => r.id as string));
+      const engConMismaCap = new Set<string>(((capRes.data ?? []) as any[]).map((r: any) => r.engagement_id as string));
+      const engConMismaTem = new Set<string>(((temRes.data ?? []) as any[]).map((r: any) => r.engagement_id as string));
+
+      for (const [personaId, engIds] of engIdsPorPersona) {
+        experienciaPorPersona.set(personaId, {
+          industria: engIndustriaId ? [...engIds].some((id) => engConMismaInd.has(id)) : false,
+          capacidad: engCapIds.size > 0 ? [...engIds].some((id) => engConMismaCap.has(id)) : false,
+          tematica: engTemIds.size > 0 ? [...engIds].some((id) => engConMismaTem.has(id)) : false,
+        });
+      }
+    }
+  }
 
   interface PersonaRow { id: string; nombre: string; apellido: string; cargo_actual: string }
   interface AsigRow    {
@@ -495,12 +555,20 @@ export async function fetchPersonasFit(
       });
     }
 
-    score = Math.max(0, Math.min(100, score));
+    // Bonus por experiencia en engagement similar
+    // (+15 misma industria, +10 alguna capacidad en común, +8 alguna temática en común)
+    const exp = experienciaPorPersona.get(p.id);
+    if (exp?.industria) score += 15;
+    if (exp?.capacidad) score += 10;
+    if (exp?.tematica)  score += 8;
 
+    score = Math.max(0, score);  // sin cap superior — el bonus empuja hacia arriba
+
+    // Umbrales ajustados al rango extendido (base 100 + hasta 33 de experiencia)
     let nivel: FitNivel;
-    if (score >= 85)      nivel = "excelente";
-    else if (score >= 65) nivel = "bueno";
-    else if (score >= 40) nivel = "advertencia";
+    if (score >= 100)     nivel = "excelente";
+    else if (score >= 75) nivel = "bueno";
+    else if (score >= 45) nivel = "advertencia";
     else                  nivel = "riesgo";
 
     return {
@@ -513,6 +581,7 @@ export async function fetchPersonasFit(
       alertas,
       score,
       nivel,
+      experiencia: exp ?? { industria: false, capacidad: false, tematica: false },
       asignaciones: asigsPorPersona.get(p.id) ?? [],
     };
   });

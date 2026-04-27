@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { X, ChevronLeft, ChevronRight, Bell } from "lucide-react";
-import { startOfISOWeek, addWeeks, subWeeks, format, isSameDay, parseISO } from "date-fns";
+import { startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths, format, isSameDay, parseISO } from "date-fns";
 import { es } from "date-fns/locale";
 import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
@@ -85,7 +85,25 @@ export default function InicioPage() {
   // Tablero (cuadrante 2)
   const [semanaInicio, setSemanaInicio] = useState<Date>(() => startOfISOWeek(new Date()));
   const [vistaTablero, setVistaTablero] = useState<"persona" | "proyecto" | "perfil" | "desgloce">("persona");
-  const semanaLabel = `${format(semanaInicio, "d MMM", { locale: es })} – ${format(addWeeks(semanaInicio, 1), "d MMM yyyy", { locale: es })}`;
+  const [periodoTablero, setPeriodoTablero] = useState<"dia" | "semana" | "mes">("dia");
+
+  const periodoLabel =
+    periodoTablero === "semana"
+      ? `${format(semanaInicio, "d MMM", { locale: es })} – ${format(addWeeks(semanaInicio, 5), "d MMM yyyy", { locale: es })}`
+      : periodoTablero === "mes"
+      ? `${format(semanaInicio, "MMM", { locale: es })} – ${format(addMonths(semanaInicio, 4), "MMM yyyy", { locale: es })}`
+      : `${format(semanaInicio, "d MMM", { locale: es })} – ${format(addWeeks(semanaInicio, 1), "d MMM yyyy", { locale: es })}`;
+
+  function handlePrevPeriodo() {
+    if (periodoTablero === "semana") setSemanaInicio((s) => subWeeks(s, 5));
+    else if (periodoTablero === "mes") setSemanaInicio((s) => subMonths(s, 4));
+    else setSemanaInicio((s) => subWeeks(s, 1));
+  }
+  function handleNextPeriodo() {
+    if (periodoTablero === "semana") setSemanaInicio((s) => addWeeks(s, 5));
+    else if (periodoTablero === "mes") setSemanaInicio((s) => addMonths(s, 4));
+    else setSemanaInicio((s) => addWeeks(s, 1));
+  }
 
   // Popup
   const [seleccionada, setSeleccionada] = useState<Persona | null>(null);
@@ -445,7 +463,7 @@ export default function InicioPage() {
           {/* Header */}
           <div className="flex items-center justify-between mb-3 flex-shrink-0">
             <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Tablero</p>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap justify-end">
               {/* Toggle vistas */}
               <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
                 {([
@@ -468,14 +486,31 @@ export default function InicioPage() {
                   </button>
                 ))}
               </div>
-              {/* Navegación semana — oculta en desglose (tiene su propia navegación) */}
+
+              {/* Toggle Día/Semana/Mes — oculto en desglose (tiene su propia navegación) */}
               {vistaTablero !== "desgloce" && (
                 <>
-                  <button onClick={() => setSemanaInicio((s) => subWeeks(s, 1))} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                  <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
+                    {(["dia", "semana", "mes"] as const).map((pv) => (
+                      <button
+                        key={pv}
+                        onClick={() => setPeriodoTablero(pv)}
+                        className="px-2.5 py-1 transition-colors"
+                        style={
+                          periodoTablero === pv
+                            ? { background: "#1a1a1a", color: "#fff" }
+                            : { background: "#f9f9f9", color: "#888" }
+                        }
+                      >
+                        {pv === "dia" ? "Día" : pv === "semana" ? "Semana" : "Mes"}
+                      </button>
+                    ))}
+                  </div>
+                  <button onClick={handlePrevPeriodo} className="p-1 rounded hover:bg-gray-100 text-gray-400">
                     <ChevronLeft className="w-3.5 h-3.5" />
                   </button>
-                  <span className="text-[11px] text-gray-400 whitespace-nowrap">{semanaLabel}</span>
-                  <button onClick={() => setSemanaInicio((s) => addWeeks(s, 1))} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                  <span className="text-[11px] text-gray-400 whitespace-nowrap">{periodoLabel}</span>
+                  <button onClick={handleNextPeriodo} className="p-1 rounded hover:bg-gray-100 text-gray-400">
                     <ChevronRight className="w-3.5 h-3.5" />
                   </button>
                 </>
@@ -488,12 +523,13 @@ export default function InicioPage() {
             {vistaTablero === "desgloce" ? (
               <DesgloceEngagements />
             ) : vistaTablero === "perfil" ? (
-              <PerfilIndividualTablero semanaInicio={semanaInicio} />
+              <PerfilIndividualTablero semanaInicio={semanaInicio} periodoVista={periodoTablero} />
             ) : (
               <TablonOcupacion
                 semanaInicio={semanaInicio}
                 planId={null}
                 vista={vistaTablero}
+                periodoVista={periodoTablero}
               />
             )}
           </div>

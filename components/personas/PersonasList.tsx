@@ -7,6 +7,7 @@ import { createAnyClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { PersonaForm } from "./PersonaForm";
+import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import type { Persona, RolSistema } from "@/lib/types/database";
 
 interface PersonasListProps {
@@ -68,10 +69,36 @@ export function PersonasList({ rolActual }: PersonasListProps) {
         )}
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-        {activas.map((p) => (
-          <PersonaCard key={p.id} persona={p} isAdmin={isAdmin} onToggle={setDesactivando} />
-        ))}
+      <div className="space-y-6">
+        {(() => {
+          const cargoOrden = [...CARGOS];
+          const sinCargo = activas.filter(
+            (p) => !cargoOrden.includes((p.cargo_actual ?? "") as typeof CARGOS[number])
+          );
+          const grupos = [
+            ...cargoOrden.map((c) => ({ cargo: c, lista: activas.filter((p) => p.cargo_actual === c) })),
+            ...(sinCargo.length > 0 ? [{ cargo: "Sin cargo", lista: sinCargo }] : []),
+          ].filter((g) => g.lista.length > 0);
+
+          return grupos.map(({ cargo, lista }) => {
+            const color = CARGO_COLORS[cargo] ?? CARGO_COLOR_DEFAULT;
+            return (
+              <div key={cargo}>
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-1 h-4 rounded-full flex-shrink-0" style={{ background: color }} />
+                  <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color }}>{cargo}</span>
+                  <span className="text-[11px] text-[#ccc]">{lista.length}</span>
+                  <div className="flex-1 h-0.5 rounded-full" style={{ background: color, opacity: 0.3 }} />
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  {lista.map((p) => (
+                    <PersonaCard key={p.id} persona={p} isAdmin={isAdmin} onToggle={setDesactivando} cargoColor={color} />
+                  ))}
+                </div>
+              </div>
+            );
+          });
+        })()}
       </div>
 
       {inactivas.length > 0 && (
@@ -114,12 +141,15 @@ function PersonaCard({
   persona,
   isAdmin,
   onToggle,
+  cargoColor,
 }: {
   persona: Persona;
   isAdmin: boolean;
   onToggle: (p: Persona) => void;
+  cargoColor?: string;
 }) {
   const initials = `${persona.nombre[0]}${persona.apellido[0]}`.toUpperCase();
+  const avatarColor = cargoColor ?? CARGO_COLORS[persona.cargo_actual ?? ""] ?? CARGO_COLOR_DEFAULT;
 
   return (
     <div className={`bg-white border rounded-xl p-4 flex items-center gap-3 group transition-all ${
@@ -128,7 +158,10 @@ function PersonaCard({
         : "border-[#f0f0f0] opacity-60"
     }`}>
       {/* Avatar */}
-      <div className="w-10 h-10 rounded-full bg-[#4a90e2] flex items-center justify-center text-white font-bold text-sm flex-shrink-0">
+      <div
+        className="w-10 h-10 rounded-full flex items-center justify-center text-white font-bold text-sm flex-shrink-0"
+        style={{ backgroundColor: avatarColor }}
+      >
         {initials}
       </div>
 
@@ -137,7 +170,7 @@ function PersonaCard({
         <p className="font-semibold text-[14px] truncate">
           {persona.nombre} {persona.apellido}
         </p>
-        <p className="text-xs text-[#888] truncate">
+        <p className="text-xs truncate font-medium" style={{ color: avatarColor }}>
           {persona.cargo_actual ?? "Sin cargo"}
         </p>
         {persona.rol_sistema && (

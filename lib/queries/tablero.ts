@@ -58,6 +58,7 @@ export interface FilaProyecto {
   engagement_id: string;
   engagement_nombre: string;
   cliente: string;
+  tipo: string;
   dias: Record<string, DatoDiaProyecto>; // key = "yyyy-MM-dd"
 }
 
@@ -73,11 +74,12 @@ export interface FilaProyecto {
 export async function fetchOcupacionDiariaPersona(
   supabase: TypedSupabaseClient,
   semanaInicio: Date,
-  planId: string | null
+  planId: string | null,
+  totalDias: number = 7
 ): Promise<{ filas: FilaDia[]; dias: Date[]; diasCriticosPersona: Set<string>; error: string | null }> {
-  const dias = Array.from({ length: 7 }, (_, i) => addDays(semanaInicio, i));
+  const dias = Array.from({ length: totalDias }, (_, i) => addDays(semanaInicio, i));
   const inicioStr = format(dias[0], "yyyy-MM-dd");
-  const finStr    = format(dias[6], "yyyy-MM-dd");
+  const finStr    = format(dias[totalDias - 1], "yyyy-MM-dd");
 
   type PersonaRaw = { id: string; nombre: string; apellido: string; cargo_actual: string | null };
   type AsigRaw = { persona_id: string; engagement_id: string | null; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string | null };
@@ -260,16 +262,17 @@ interface ReqRaw {
 export async function fetchCoberturaProyecto(
   supabase: TypedSupabaseClient,
   semanaInicio: Date,
-  planId: string | null
+  planId: string | null,
+  totalDias: number = 7
 ): Promise<{ filas: FilaProyecto[]; dias: Date[]; diasCriticosEng: Set<string>; error: string | null }> {
-  const dias = Array.from({ length: 7 }, (_, i) => addDays(semanaInicio, i));
+  const dias = Array.from({ length: totalDias }, (_, i) => addDays(semanaInicio, i));
   const inicioStr = format(dias[0], "yyyy-MM-dd");
-  const finStr    = format(dias[6], "yyyy-MM-dd");
+  const finStr    = format(dias[totalDias - 1], "yyyy-MM-dd");
 
   // 1a. Engagements activos que solapan con la semana (con o sin requerimientos)
   const { data: engsRaw, error: engsErr } = await supabase
     .from("engagement")
-    .select("id, nombre, cliente, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
+    .select("id, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
     .eq("estado", "activo")
     .lte("fecha_inicio", finStr)
     .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null`);
@@ -368,6 +371,7 @@ export async function fetchCoberturaProyecto(
       engagement_id: eng.id,
       engagement_nombre: eng.nombre ?? "—",
       cliente: eng.cliente ?? "—",
+      tipo: eng.tipo ?? "proyecto",
       dias: {},
     });
   }

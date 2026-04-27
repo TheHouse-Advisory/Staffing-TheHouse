@@ -34,9 +34,19 @@ export function EngagementsList({ rolActual }: Props) {
 
   if (loading) return <p className="text-sm text-[#888]">Cargando...</p>;
 
+  const proyectos      = engagements.filter((e) => e.tipo === "proyecto");
+  const propuestas     = engagements.filter((e) => e.tipo === "propuesta");
+  const ayudaInterna   = engagements.filter((e) => e.tipo === "ayuda_interna");
+
+  const secciones = [
+    { titulo: "Proyectos",           lista: proyectos,    color: "#4a90e2" },
+    { titulo: "Propuestas comerciales", lista: propuestas, color: "#9b59b6" },
+    { titulo: "Ayuda interna",       lista: ayudaInterna, color: "#27ae60" },
+  ];
+
   return (
     <>
-      <div className="flex items-center justify-between mb-5">
+      <div className="flex items-center justify-between mb-6">
         <p className="text-sm text-[#888]">
           {engagements.length} engagement{engagements.length !== 1 ? "s" : ""}
         </p>
@@ -53,61 +63,82 @@ export function EngagementsList({ rolActual }: Props) {
           <p className="text-sm font-medium">No hay engagements registrados.</p>
         </div>
       ) : (
-        <div className="space-y-2 max-w-4xl">
-          {engagements.map((e) => {
-            const estilos = ESTADO_ENGAGEMENT[e.estado] ?? ESTADO_ENGAGEMENT.activo;
+        <div className="space-y-8 max-w-4xl">
+          {secciones.map(({ titulo, lista, color }) => {
+            if (lista.length === 0) return null;
             return (
-              <Link
-                key={e.id}
-                href={`/engagements/${e.id}`}
-                className="group flex items-center gap-4 bg-white border border-[#e8e8e8] rounded-xl px-5 py-4 hover:shadow-sm hover:border-[#d0d0d0] transition-all"
-              >
-                {/* Nombre + cliente */}
-                <div className="flex-1 min-w-0">
-                  <div className="flex items-center gap-2 mb-0.5">
-                    <p className="font-semibold text-[15px] truncate">{e.nombre}</p>
-                    {e.tiene_alerta && (
-                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
-                    )}
-                  </div>
-                  <p className="text-sm text-[#888] truncate">{e.cliente}</p>
+              <div key={titulo}>
+                {/* Encabezado de sección */}
+                <div className="flex items-center gap-2 mb-3">
+                  <div className="w-1 h-5 rounded-full flex-shrink-0" style={{ background: color }} />
+                  <h2 className="text-sm font-bold text-[#1a1a1a] uppercase tracking-wide">
+                    {titulo}
+                  </h2>
+                  <span className="text-xs text-[#aaa] font-medium">
+                    {lista.length}
+                  </span>
                 </div>
 
-                {/* Fechas */}
-                {e.fecha_inicio && (
-                  <p className="text-xs text-[#aaa] flex-shrink-0 hidden sm:block">
-                    {format(fLocal(e.fecha_inicio), "d MMM", { locale: es })}
-                    {e.fecha_fin_estimada && (
-                      <> → {format(fLocal(e.fecha_fin_estimada), "d MMM yy", { locale: es })}</>
-                    )}
-                  </p>
-                )}
+                <div className="space-y-2">
+                  {lista.map((e) => {
+                    const estilos = ESTADO_ENGAGEMENT[e.estado] ?? ESTADO_ENGAGEMENT.activo;
+                    return (
+                      <Link
+                        key={e.id}
+                        href={`/engagements/${e.id}`}
+                        className="group flex items-center gap-4 bg-white border border-[#e8e8e8] rounded-xl px-5 py-4 hover:shadow-sm hover:border-[#d0d0d0] transition-all"
+                      >
+                        {/* Nombre + cliente */}
+                        <div className="flex-1 min-w-0">
+                          <div className="flex items-center gap-2 mb-0.5">
+                            <p className="font-semibold text-[15px] truncate">{e.nombre}</p>
+                            {e.tiene_alerta && (
+                              <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0" />
+                            )}
+                          </div>
+                          <p className="text-sm text-[#888] truncate">
+                            {e.cliente || <span className="italic text-[#bbb]">Sin cliente</span>}
+                          </p>
+                        </div>
 
-                {/* Cobertura */}
-                {e.requerimientos_total > 0 && (
-                  <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
-                    e.tiene_alerta
-                      ? "bg-amber-50 text-amber-700"
-                      : "bg-[#dcf5e7] text-[#1e7e45]"
-                  }`}>
-                    {e.tiene_alerta
-                      ? <AlertTriangle className="w-3 h-3" />
-                      : <CheckCircle className="w-3 h-3" />}
-                    {e.tiene_alerta ? "Sin cubrir" : "Cubierto"}
-                  </span>
-                )}
+                        {/* Fechas */}
+                        {e.fecha_inicio && (
+                          <p className="text-xs text-[#aaa] flex-shrink-0 hidden sm:block">
+                            {format(fLocal(e.fecha_inicio), "d MMM", { locale: es })}
+                            {e.fecha_fin_estimada && (
+                              <> → {format(fLocal(e.fecha_fin_estimada), "d MMM yy", { locale: es })}</>
+                            )}
+                          </p>
+                        )}
 
-                {/* Estado */}
-                <span
-                  className="text-xs px-2.5 py-1 rounded-full font-medium flex-shrink-0"
-                  style={{ background: estilos.bg, color: estilos.text }}
-                >
-                  {estilos.label}
-                </span>
+                        {/* Cobertura */}
+                        {e.requerimientos_total > 0 && (
+                          <span className={`flex items-center gap-1 text-xs px-2 py-0.5 rounded-full font-medium flex-shrink-0 ${
+                            e.tiene_alerta
+                              ? "bg-amber-50 text-amber-700"
+                              : "bg-[#dcf5e7] text-[#1e7e45]"
+                          }`}>
+                            {e.tiene_alerta
+                              ? <AlertTriangle className="w-3 h-3" />
+                              : <CheckCircle className="w-3 h-3" />}
+                            {e.tiene_alerta ? "Sin cubrir" : "Cubierto"}
+                          </span>
+                        )}
 
-                {/* Ver detalle */}
-                <ChevronRight className="w-4 h-4 text-[#ccc] group-hover:text-[#888] transition-colors flex-shrink-0" />
-              </Link>
+                        {/* Estado */}
+                        <span
+                          className="text-xs px-2.5 py-1 rounded-full font-medium flex-shrink-0"
+                          style={{ background: estilos.bg, color: estilos.text }}
+                        >
+                          {estilos.label}
+                        </span>
+
+                        <ChevronRight className="w-4 h-4 text-[#ccc] group-hover:text-[#888] transition-colors flex-shrink-0" />
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
         </div>

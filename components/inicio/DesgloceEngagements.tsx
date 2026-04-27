@@ -80,6 +80,7 @@ interface EngRow {
   id: string;
   nombre: string;
   cliente: string | null;
+  tipo: string;
   fecha_inicio: string;
   fecha_fin: string | null;
   personas: PersonaAsig[];
@@ -107,7 +108,7 @@ export function DesgloceEngagements() {
 
       const [engRes, asigRes, ausRes] = await Promise.all([
         sb.from("engagement")
-          .select("id, nombre, cliente, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
+          .select("id, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
           .eq("estado", "activo")
           .lte("fecha_inicio", finStr)
           .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null`),
@@ -130,6 +131,7 @@ export function DesgloceEngagements() {
           id: e.id,
           nombre: e.nombre,
           cliente: e.cliente,
+          tipo: e.tipo ?? "proyecto",
           fecha_inicio: e.fecha_inicio,
           fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? null,
           personas: [],
@@ -237,33 +239,48 @@ export function DesgloceEngagements() {
             </thead>
 
             <tbody>
-              {engs.map((eng, ei) => {
-                const cargosUnicos = Array.from(
-                  new Set(eng.personas.map((p) => p.cargo ?? "Sin cargo"))
-                ).sort((a, b) => {
-                  const ia = JERARQUIA[a] ?? 99;
-                  const ib = JERARQUIA[b] ?? 99;
-                  return ia - ib;
-                });
+              {[
+                { tipo: "proyecto",      label: "Proyectos",              color: "#4a90e2" },
+                { tipo: "propuesta",     label: "Propuestas comerciales", color: "#9b59b6" },
+                { tipo: "ayuda_interna", label: "Ayuda interna",          color: "#27ae60" },
+              ].flatMap(({ tipo, label, color: secColor }) => {
+                const lista = engs.filter((e) => e.tipo === tipo);
+                if (lista.length === 0) return [];
 
-                const personaIdsEng = new Set(eng.personas.map((p) => p.id));
+                const filaSeccion = (
+                  <tr key={`sec-${tipo}`}>
+                    <td colSpan={columnas.length + 1} className="pt-4 pb-1">
+                      <div className="flex items-center gap-2">
+                        <div className="w-1 h-4 rounded-full flex-shrink-0" style={{ background: secColor }} />
+                        <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: secColor }}>
+                          {label}
+                        </span>
+                        <span className="text-[10px] text-gray-300">{lista.length}</span>
+                        <div className="flex-1 h-0.5 rounded-full" style={{ background: secColor, opacity: 0.35 }} />
+                      </div>
+                    </td>
+                  </tr>
+                );
 
-                return (
-                  <>
-                    {ei > 0 && (
-                      <tr key={`sep-${eng.id}`}>
-                        <td colSpan={columnas.length + 1} className="py-0.5">
-                          <div className="border-t-2 border-gray-100" />
-                        </td>
-                      </tr>
-                    )}
+                const filasEngs = lista.flatMap((eng, ei) => {
+                  const cargosUnicos = Array.from(
+                    new Set(eng.personas.map((p) => p.cargo ?? "Sin cargo"))
+                  ).sort((a, b) => (JERARQUIA[a] ?? 99) - (JERARQUIA[b] ?? 99));
 
-                    {/* Nombre del engagement */}
+                  const personaIdsEng = new Set(eng.personas.map((p) => p.id));
+
+                  const separador = ei > 0 ? (
+                    <tr key={`sep-${eng.id}`}>
+                      <td colSpan={columnas.length + 1} className="py-0.5">
+                        <div className="border-t-2 border-gray-100" />
+                      </td>
+                    </tr>
+                  ) : null;
+
+                  const filaHdr = (
                     <tr key={`hdr-${eng.id}`}>
                       <td className="pr-3 pt-2 pb-1 sticky left-0 bg-white z-10">
-                        <p className="font-bold text-[#1a1a2e] truncate max-w-[150px] text-[12px]">
-                          {eng.nombre}
-                        </p>
+                        <p className="font-bold text-[#1a1a2e] truncate max-w-[150px] text-[12px]">{eng.nombre}</p>
                         {eng.cliente && (
                           <p className="text-[10px] text-gray-400 truncate max-w-[150px]">{eng.cliente}</p>
                         )}
@@ -274,87 +291,70 @@ export function DesgloceEngagements() {
                         return (
                           <td key={i} className="py-1 px-1">
                             {activo && (
-                              <div
-                                className="h-1.5 rounded-full"
-                                style={{ background: esHoy ? "#bfdbfe" : "#e0e7ff" }}
-                              />
+                              <div className="h-1.5 rounded-full"
+                                style={{ background: esHoy ? "#bfdbfe" : "#e0e7ff" }} />
                             )}
                           </td>
                         );
                       })}
                     </tr>
+                  );
 
-                    {/* Fila por cargo */}
-                    {cargosUnicos.map((cargo) => {
-                      const personas = eng.personas.filter(
-                        (p) => (p.cargo ?? "Sin cargo") === cargo
-                      );
-                      const color = COLORES[cargo] ?? COLOR_DEFAULT;
-
-                      return (
-                        <tr key={`cargo-${eng.id}-${cargo}`}>
-                          <td className="pr-3 py-0.5 sticky left-0 bg-white z-10">
-                            <p className="text-gray-400 truncate max-w-[150px] pl-3 text-[11px]">
-                              {cargo}
-                            </p>
-                          </td>
-                          {columnas.map((col, i) => {
-                            const esHoy = col.inicio <= hoy && hoy <= col.fin;
-                            const activos = personas.filter((p) =>
-                              rangoSolapan(p.fecha_inicio, p.fecha_fin, col.inicio, col.fin)
-                            );
-                            return (
-                              <td key={i} className="py-0.5 px-1">
-                                <div className="flex flex-wrap gap-1 justify-center min-h-[36px] items-center">
-                                  {activos.map((p) => (
-                                    <div
-                                      key={p.id}
-                                      title={`${p.nombre} ${p.apellido} · ${p.pct}%`}
-                                      className="flex flex-col items-center gap-0.5"
-                                    >
-                                      <div
-                                        className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-sm"
-                                        style={{
-                                          backgroundColor: color,
-                                          opacity: esHoy ? 1 : 0.75,
-                                          outline: esHoy ? `2px solid ${color}` : "none",
-                                          outlineOffset: "2px",
-                                        }}
-                                      >
-                                        {iniciales(p.nombre, p.apellido)}
-                                      </div>
-                                      <span
-                                        className="text-[9px] font-bold px-1 rounded-full leading-tight"
-                                        style={{
-                                          background: esHoy ? "#dbeafe" : "#f1f5f9",
-                                          color: esHoy ? "#1d4ed8" : "#64748b",
-                                        }}
-                                      >
-                                        {p.pct}%
-                                      </span>
+                  const filasCargo = cargosUnicos.map((cargo) => {
+                    const personas = eng.personas.filter((p) => (p.cargo ?? "Sin cargo") === cargo);
+                    const cargoColor = COLORES[cargo] ?? COLOR_DEFAULT;
+                    return (
+                      <tr key={`cargo-${eng.id}-${cargo}`}>
+                        <td className="pr-3 py-0.5 sticky left-0 bg-white z-10">
+                          <p className="text-gray-400 truncate max-w-[150px] pl-3 text-[11px]">{cargo}</p>
+                        </td>
+                        {columnas.map((col, i) => {
+                          const esHoy = col.inicio <= hoy && hoy <= col.fin;
+                          const activos = personas.filter((p) =>
+                            rangoSolapan(p.fecha_inicio, p.fecha_fin, col.inicio, col.fin)
+                          );
+                          return (
+                            <td key={i} className="py-0.5 px-1">
+                              <div className="flex flex-wrap gap-1 justify-center min-h-[36px] items-center">
+                                {activos.map((p) => (
+                                  <div key={p.id} title={`${p.nombre} ${p.apellido} · ${p.pct}%`}
+                                    className="flex flex-col items-center gap-0.5">
+                                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-sm"
+                                      style={{
+                                        backgroundColor: cargoColor,
+                                        opacity: esHoy ? 1 : 0.75,
+                                        outline: esHoy ? `2px solid ${cargoColor}` : "none",
+                                        outlineOffset: "2px",
+                                      }}>
+                                      {iniciales(p.nombre, p.apellido)}
                                     </div>
-                                  ))}
-                                </div>
-                              </td>
-                            );
-                          })}
-                        </tr>
-                      );
-                    })}
+                                    <span className="text-[9px] font-bold px-1 rounded-full leading-tight"
+                                      style={{
+                                        background: esHoy ? "#dbeafe" : "#f1f5f9",
+                                        color: esHoy ? "#1d4ed8" : "#64748b",
+                                      }}>
+                                      {p.pct}%
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    );
+                  });
 
-                    {/* Fila de ausentes */}
+                  const filaAusentes = (
                     <tr key={`aus-${eng.id}`}>
                       <td className="pr-3 py-0.5 sticky left-0 bg-white z-10">
                         <p className="text-orange-400 pl-3 text-[11px]">Ausentes</p>
                       </td>
                       {columnas.map((col, i) => {
-                        const ausentesEnCol = ausencias
-                          .filter(
-                            (a) =>
-                              personaIdsEng.has(a.persona_id) &&
-                              rangoSolapan(a.fecha_inicio, a.fecha_fin, col.inicio, col.fin)
-                          );
-
+                        const ausentesEnCol = ausencias.filter((a) =>
+                          personaIdsEng.has(a.persona_id) &&
+                          rangoSolapan(a.fecha_inicio, a.fecha_fin, col.inicio, col.fin)
+                        );
                         const vistos = new Set<string>();
                         const ausUnicos = ausentesEnCol.reduce<PersonaAsig[]>((acc, a) => {
                           if (vistos.has(a.persona_id)) return acc;
@@ -363,17 +363,13 @@ export function DesgloceEngagements() {
                           if (p) acc.push(p);
                           return acc;
                         }, []);
-
                         return (
                           <td key={i} className="py-0.5 px-1">
                             <div className="flex flex-wrap gap-1 justify-center min-h-[28px] items-center">
                               {ausUnicos.map((p) => (
-                                <div
-                                  key={p.id}
-                                  title={`${p.nombre} ${p.apellido} — ausente`}
+                                <div key={p.id} title={`${p.nombre} ${p.apellido} — ausente`}
                                   className="w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold"
-                                  style={{ background: "#fed7aa", color: "#c2410c" }}
-                                >
+                                  style={{ background: "#fed7aa", color: "#c2410c" }}>
                                   {iniciales(p.nombre, p.apellido)}
                                 </div>
                               ))}
@@ -382,8 +378,12 @@ export function DesgloceEngagements() {
                         );
                       })}
                     </tr>
-                  </>
-                );
+                  );
+
+                  return [separador, filaHdr, ...filasCargo, filaAusentes].filter(Boolean);
+                });
+
+                return [filaSeccion, ...filasEngs];
               })}
             </tbody>
           </table>

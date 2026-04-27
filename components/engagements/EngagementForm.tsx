@@ -6,6 +6,7 @@ import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
 import { FieldWrapper, Input, Select, Textarea } from "@/components/ui/FormField";
+import { MultiSelect } from "@/components/ui/MultiSelect";
 import { CARGOS_OPTIONS } from "@/lib/constants";
 import type { Engagement, RequerimientoEngagement } from "@/lib/types/database";
 
@@ -29,6 +30,8 @@ interface EngagementFormProps {
 const EMPTY_ENG = {
   nombre: "", cliente: "", tipo: "proyecto", estado: "activo",
   descripcion: "", fecha_inicio: "", fecha_fin_estimada: "", industria_id: "",
+  capacidades: [] as string[],
+  tematicas: [] as string[],
 };
 
 const EMPTY_REQ: ReqRow = {
@@ -43,6 +46,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
   const [industrias, setIndustrias] = useState<{ value: string; label: string }[]>([]);
+  const [capacidadesOpts, setCapacidadesOpts] = useState<{ value: string; label: string }[]>([]);
+  const [tematicasOpts, setTematicasOpts] = useState<{ value: string; label: string }[]>([]);
 
   useEffect(() => {
     if (!open) {
@@ -51,11 +56,21 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     }
     async function load() {
       const supabase = createAnyClient();
-      const { data: iData } = await supabase
-        .from("cat_industria").select("id,nombre").eq("activo", true).order("nombre");
-      setIndustrias((iData ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
+      const [iData, capData, temData] = await Promise.all([
+        supabase.from("cat_industria").select("id,nombre").eq("activo", true).order("nombre"),
+        supabase.from("cat_capacidad").select("id,nombre").eq("activo", true).order("nombre"),
+        supabase.from("cat_tematica").select("id,nombre").eq("activo", true).order("nombre"),
+      ]);
+      setIndustrias((iData.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
+      setCapacidadesOpts((capData.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
+      setTematicasOpts((temData.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
 
       if (engagement) {
+        const [{ data: reqData }, { data: ecData }, { data: etData }] = await Promise.all([
+          supabase.from("requerimiento_engagement").select("*").eq("engagement_id", engagement.id).order("fase_nombre"),
+          (supabase as any).from("engagement_capacidad").select("capacidad_id").eq("engagement_id", engagement.id),
+          (supabase as any).from("engagement_tematica").select("tematica_id").eq("engagement_id", engagement.id),
+        ]);
         setForm({
           nombre: engagement.nombre,
           cliente: engagement.cliente,
@@ -65,12 +80,9 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
           fecha_inicio: engagement.fecha_inicio ?? "",
           fecha_fin_estimada: engagement.fecha_fin_estimada ?? "",
           industria_id: engagement.industria_id ?? "",
+          capacidades: (ecData ?? []).map((r: any) => r.capacidad_id),
+          tematicas: (etData ?? []).map((r: any) => r.tematica_id),
         });
-        const { data: reqData } = await supabase
-          .from("requerimiento_engagement")
-          .select("*")
-          .eq("engagement_id", engagement.id)
-          .order("fase_nombre");
         setReqs((reqData ?? []).map((r: RequerimientoEngagement) => ({
           id: r.id,
           fase_nombre: r.fase_nombre ?? "",
@@ -106,7 +118,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
   const validate = () => {
     const e: Record<string, string> = {};
     if (!form.nombre.trim()) e.nombre = "Requerido";
-    if (!form.cliente.trim()) e.cliente = "Requerido";
+    if (form.tipo !== "ayuda_interna" && !form.cliente.trim()) e.cliente = "Requerido";
     if (form.fecha_fin_estimada && form.fecha_inicio && form.fecha_fin_estimada < form.fecha_inicio) {
       e.fecha_fin_estimada = "No puede ser anterior a la fecha de inicio";
     }
@@ -141,7 +153,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     const payload = {
       nombre: form.nombre.trim(),
       cliente: form.cliente.trim(),
-      tipo: form.tipo as "propuesta" | "proyecto",
+      tipo: form.tipo as "propuesta" | "proyecto" | "ayuda_interna",
       estado: form.estado as "activo" | "terminado",
       descripcion: form.descripcion.trim() || null,
       fecha_inicio: form.fecha_inicio || null,
@@ -167,6 +179,18 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
       if (error || !data) { setServerError(error?.message ?? "Error"); setLoading(false); return; }
       engId = data.id;
     }
+
+    // Capacidades y temáticas: borrar y reinsertar
+    await Promise.all([
+      (supabase as any).from("engagement_capacidad").delete().eq("engagement_id", engId),
+      (supabase as any).from("engagement_tematica").delete().eq("engagement_id", engId),
+    ]);
+    const caps = form.capacidades.map((id) => ({ engagement_id: engId, capacidad_id: id }));
+    const tems = form.tematicas.map((id) => ({ engagement_id: engId, tematica_id: id }));
+    await Promise.all([
+      caps.length > 0 ? (supabase as any).from("engagement_capacidad").insert(caps) : Promise.resolve(),
+      tems.length > 0 ? (supabase as any).from("engagement_tematica").insert(tems) : Promise.resolve(),
+    ]);
 
     for (const [i, r] of reqs.entries()) {
       const reqPayload = {
@@ -220,8 +244,18 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
           <FieldWrapper label="Nombre" required error={errors.nombre} className="col-span-2">
             <Input value={form.nombre} onChange={setField("nombre")} placeholder="Transformación Operacional..." error={!!errors.nombre} />
           </FieldWrapper>
-          <FieldWrapper label="Cliente" required error={errors.cliente}>
-            <Input value={form.cliente} onChange={setField("cliente")} placeholder="Empresa SA" error={!!errors.cliente} />
+          <FieldWrapper
+            label="Cliente"
+            required={form.tipo !== "ayuda_interna"}
+            error={errors.cliente}
+            hint={form.tipo === "ayuda_interna" ? "Opcional para ayuda interna" : undefined}
+          >
+            <Input
+              value={form.cliente}
+              onChange={setField("cliente")}
+              placeholder={form.tipo === "ayuda_interna" ? "Equipo / área interna (opcional)" : "Empresa SA"}
+              error={!!errors.cliente}
+            />
           </FieldWrapper>
           <FieldWrapper label="Industria">
             <Select value={form.industria_id} onChange={setField("industria_id")} options={industrias} placeholder="Sin industria" />
@@ -231,6 +265,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
               options={[
                 { value: "propuesta", label: "Propuesta comercial" },
                 { value: "proyecto", label: "Proyecto" },
+                { value: "ayuda_interna", label: "Ayuda interna" },
               ]} />
           </FieldWrapper>
           <FieldWrapper label="Estado">
@@ -253,6 +288,25 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
         <FieldWrapper label="Descripción">
           <Textarea value={form.descripcion} onChange={setField("descripcion")} placeholder="Contexto del engagement..." />
         </FieldWrapper>
+
+        <div className="grid grid-cols-2 gap-4">
+          <FieldWrapper label="Capacidades" hint="Habilidades técnicas requeridas">
+            <MultiSelect
+              options={capacidadesOpts}
+              value={form.capacidades}
+              onChange={(v) => setForm((f) => ({ ...f, capacidades: v }))}
+              placeholder="Agregar capacidades..."
+            />
+          </FieldWrapper>
+          <FieldWrapper label="Temáticas" hint="Áreas temáticas del engagement">
+            <MultiSelect
+              options={tematicasOpts}
+              value={form.tematicas}
+              onChange={(v) => setForm((f) => ({ ...f, tematicas: v }))}
+              placeholder="Agregar temáticas..."
+            />
+          </FieldWrapper>
+        </div>
 
         {/* Requerimientos */}
         <div className="border-t border-[#f0f0f0] pt-5">

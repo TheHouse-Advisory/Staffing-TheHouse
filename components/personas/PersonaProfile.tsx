@@ -7,6 +7,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { Button } from "@/components/ui/Button";
 import { PersonaForm } from "./PersonaForm";
+import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import type { Persona } from "@/lib/types/database";
 
 interface Props {
@@ -160,6 +161,7 @@ export function PersonaProfile({ id }: Props) {
   const initials = `${persona.nombre[0]}${persona.apellido[0]}`.toUpperCase();
   const pctTotal = asignaciones.reduce((sum, a) => sum + a.pct_dedicacion, 0);
   const { bg: bgOcp, text: textOcp } = colorOcupacion(pctTotal);
+  const cargoColor = CARGO_COLORS[persona.cargo_actual ?? ""] ?? CARGO_COLOR_DEFAULT;
 
   return (
     <>
@@ -167,7 +169,10 @@ export function PersonaProfile({ id }: Props) {
         {/* ── Header ─────────────────────────────────────────── */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6 flex items-start justify-between gap-5">
           <div className="flex items-center gap-5">
-            <div className="w-16 h-16 rounded-full bg-[#4a90e2] flex items-center justify-center text-white text-2xl font-bold flex-shrink-0">
+            <div
+              className="w-16 h-16 rounded-full flex items-center justify-center text-white text-2xl font-bold flex-shrink-0"
+              style={{ backgroundColor: cargoColor }}
+            >
               {initials}
             </div>
             <div className="flex-1 min-w-0">
@@ -182,7 +187,7 @@ export function PersonaProfile({ id }: Props) {
                 )}
               </div>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
-                <p className="text-[#888]">{persona.cargo_actual ?? "Sin cargo"}</p>
+                <p className="font-semibold text-sm" style={{ color: cargoColor }}>{persona.cargo_actual ?? "Sin cargo"}</p>
                 {persona.talento && (
                   <span
                     className="text-xs px-2.5 py-0.5 rounded-full font-semibold"
@@ -237,6 +242,14 @@ export function PersonaProfile({ id }: Props) {
                 <dt className="text-[#888]">Fecha de ingreso</dt>
                 <dd className="font-medium mt-0.5">
                   {format(new Date(persona.fecha_ingreso + "T00:00:00"), "d 'de' MMMM yyyy", { locale: es })}
+                </dd>
+              </div>
+            )}
+            {persona.fecha_nacimiento && (
+              <div>
+                <dt className="text-[#888]">Fecha de nacimiento</dt>
+                <dd className="font-medium mt-0.5">
+                  {format(new Date(persona.fecha_nacimiento + "T00:00:00"), "d 'de' MMMM yyyy", { locale: es })}
                 </dd>
               </div>
             )}

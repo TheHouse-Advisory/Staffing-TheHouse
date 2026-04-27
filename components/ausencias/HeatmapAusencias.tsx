@@ -19,13 +19,13 @@ import type { TipoAusencia } from "@/lib/types/database";
 // ─────────────────────────────────────────────────────────────
 
 const TIPOS_AUSENCIA: { value: TipoAusencia; label: string }[] = [
-  { value: "vacaciones",          label: "Vacaciones" },
-  { value: "dia_libre",           label: "Día libre post proyecto" },
-  { value: "dia_administrativo",  label: "Día administrativo" },
-  { value: "permiso",             label: "Permiso" },
-  { value: "licencia_medica",     label: "Licencia médica" },
-  { value: "capacitacion",        label: "Capacitación" },
-  { value: "otro",                label: "Otro" },
+  { value: "vacaciones_confirmadas",   label: "Vacaciones confirmadas" },
+  { value: "vacaciones_por_confirmar", label: "Vacaciones por confirmar" },
+  { value: "permiso_sin_goce",         label: "Permiso sin goce de sueldo" },
+  { value: "dia_post_proyecto",        label: "Día post proyecto" },
+  { value: "dia_beneficio",            label: "Día beneficio" },
+  { value: "dia_administrativo",       label: "Día administrativo" },
+  { value: "otro",                     label: "Otro" },
 ];
 
 const DIAS_SEMANA_LETRA = ["L", "M", "X", "J", "V"];
@@ -119,7 +119,7 @@ interface ModalProps {
 
 function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, onClose, onGuardado }: ModalProps) {
   const [personaId, setPersonaId] = useState(personaInicial ?? "");
-  const [tipo, setTipo]           = useState<TipoAusencia>("vacaciones");
+  const [tipo, setTipo]           = useState<TipoAusencia>("vacaciones_confirmadas");
   const [fechaInicio, setFechaInicio] = useState(fechaInicial ?? "");
   const [fechaFin, setFechaFin]       = useState(fechaInicial ?? "");
   const [descripcion, setDescripcion] = useState("");

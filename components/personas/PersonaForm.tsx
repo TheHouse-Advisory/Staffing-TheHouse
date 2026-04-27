@@ -22,6 +22,7 @@ interface FormState {
   cargo_actual: string;
   rol_sistema: string;
   fecha_ingreso: string;
+  fecha_nacimiento: string;
   mentor_id: string;
   talento: string;
   industrias: string[];
@@ -36,6 +37,7 @@ const EMPTY: FormState = {
   cargo_actual: "",
   rol_sistema: "",
   fecha_ingreso: "",
+  fecha_nacimiento: "",
   mentor_id: "",
   talento: "",
   industrias: [],
@@ -101,6 +103,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
         cargo_actual: persona!.cargo_actual ?? "",
         rol_sistema: persona!.rol_sistema ?? "",
         fecha_ingreso: persona!.fecha_ingreso ?? "",
+        fecha_nacimiento: persona!.fecha_nacimiento ?? "",
         mentor_id: persona!.mentor_id ?? "",
         talento: persona!.talento ?? "",
         industrias: (pi.data ?? []).map((r: any) => r.industria_id),
@@ -138,6 +141,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
       cargo_actual: form.cargo_actual,
       rol_sistema: form.rol_sistema || null,
       fecha_ingreso: form.fecha_ingreso || null,
+      fecha_nacimiento: form.fecha_nacimiento || null,
       mentor_id: form.mentor_id || null,
       talento: form.talento || null,
     };
@@ -264,6 +268,14 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
             type="date"
             value={form.fecha_ingreso}
             onChange={(e) => set("fecha_ingreso")(e.target.value)}
+          />
+        </FieldWrapper>
+
+        <FieldWrapper label="Fecha de nacimiento">
+          <Input
+            type="date"
+            value={form.fecha_nacimiento}
+            onChange={(e) => set("fecha_nacimiento")(e.target.value)}
           />
         </FieldWrapper>
 
