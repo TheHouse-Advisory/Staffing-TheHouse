@@ -1,12 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   startOfISOWeek, addDays, addWeeks, addMonths,
   subWeeks, subMonths, format, startOfMonth, endOfMonth,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, Plus, Pencil } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
 import type { Engagement } from "@/lib/types/database";
@@ -117,6 +117,11 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const [formOpen, setFormOpen] = useState(false);
   const [engToEdit, setEngToEdit] = useState<Engagement | undefined>();
 
+  // Modal detalle engagement
+  const [engModal, setEngModal] = useState<EngRow | null>(null);
+  const [modalIndustria, setModalIndustria] = useState<string | null>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
   // Drag & Drop
   const [dragOverReqId, setDragOverReqId] = useState<string | null>(null);
   const [desasignando, setDesasignando] = useState<string | null>(null);
@@ -212,6 +217,26 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     load();
   }, [inicioStr, finStr, reloadKey, externalReloadKey]);
 
+  async function abrirDetalleEng(eng: EngRow) {
+    setEngModal(eng);
+    setModalIndustria(null);
+    if (eng.raw.industria_id) {
+      const sb = createAnyClient();
+      const { data } = await sb.from("cat_industria").select("nombre").eq("id", eng.raw.industria_id).single();
+      setModalIndustria((data as any)?.nombre ?? null);
+    }
+  }
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
+        setEngModal(null);
+      }
+    }
+    if (engModal) document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [engModal]);
+
   function navAnterior() {
     if (vista === "dia")    setBase((b) => addDays(startOfISOWeek(b), -7));
     if (vista === "semana") setBase((b) => subWeeks(b, 5));
@@ -263,7 +288,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const hoy = new Date();
 
   return (
-    <div className="flex flex-col h-full">
+    <div className="flex flex-col h-full relative">
       {/* Barra de controles */}
       <div className="flex items-center justify-between mb-3 flex-shrink-0">
         <button
@@ -364,7 +389,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                       <td className="pr-3 pt-2 pb-1 sticky left-0 bg-white z-10">
                         <div className="flex items-center gap-1 group">
                           <div className="flex-1 min-w-0">
-                            <p className="font-bold text-[#1a1a2e] truncate max-w-[130px] text-[12px]">{eng.nombre}</p>
+                            <button
+                              onClick={() => abrirDetalleEng(eng)}
+                              className="font-bold text-[#1a1a2e] truncate max-w-[130px] text-[12px] text-left hover:text-[#4a90e2] hover:underline transition-colors"
+                              title="Ver detalle del engagement"
+                            >
+                              {eng.nombre}
+                            </button>
                             {eng.cliente && <p className="text-[10px] text-gray-400 truncate max-w-[130px]">{eng.cliente}</p>}
                           </div>
                           <button onClick={() => { setEngToEdit(eng.raw); setFormOpen(true); }}
@@ -525,6 +556,151 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── Modal detalle engagement ── */}
+      {engModal && (
+        <div className="absolute inset-0 bg-black/10 rounded-xl z-20 flex items-start justify-end p-3">
+          <div
+            ref={modalRef}
+            className="bg-white rounded-xl shadow-xl border border-gray-100 w-80 flex flex-col overflow-hidden"
+            style={{ maxHeight: "96%" }}
+          >
+            {/* Header */}
+            <div className="p-4 pb-3 border-b border-gray-100 flex-shrink-0">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
+                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
+                      style={{
+                        background: engModal.tipo === "proyecto" ? "#eaf4ff" : engModal.tipo === "propuesta" ? "#f5f0ff" : "#f0fdf4",
+                        color:      engModal.tipo === "proyecto" ? "#1a5276"  : engModal.tipo === "propuesta" ? "#6b21a8"  : "#15803d",
+                      }}>
+                      {engModal.tipo === "proyecto" ? "Proyecto" : engModal.tipo === "propuesta" ? "Propuesta" : "Ayuda interna"}
+                    </span>
+                  </div>
+                  <h3 className="font-bold text-[#1a1a2e] text-sm leading-tight">{engModal.nombre}</h3>
+                  {engModal.cliente && (
+                    <p className="text-xs text-gray-400 mt-0.5">{engModal.cliente}</p>
+                  )}
+                </div>
+                <div className="flex items-center gap-1 flex-shrink-0">
+                  <button
+                    onClick={() => { setEngToEdit(engModal.raw); setFormOpen(true); setEngModal(null); }}
+                    title="Editar"
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setEngModal(null)}
+                    title="Cerrar"
+                    className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Body scrolleable */}
+            <div className="overflow-y-auto p-4 flex-1 space-y-4">
+
+              {/* Fechas */}
+              <div className="flex items-start gap-2.5">
+                <Calendar className="w-3.5 h-3.5 text-gray-300 mt-0.5 flex-shrink-0" />
+                <div>
+                  <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-0.5">Fechas</p>
+                  <p className="text-xs text-[#1a1a2e]">
+                    {engModal.fecha_inicio
+                      ? format(new Date(engModal.fecha_inicio + "T00:00:00"), "d 'de' MMM yyyy", { locale: es })
+                      : "—"}
+                    {" → "}
+                    {engModal.fecha_fin
+                      ? format(new Date(engModal.fecha_fin + "T00:00:00"), "d 'de' MMM yyyy", { locale: es })
+                      : "Sin fecha de término"}
+                  </p>
+                </div>
+              </div>
+
+              {/* Industria */}
+              {(modalIndustria || engModal.raw.industria_id) && (
+                <div className="flex items-start gap-2.5">
+                  <Building2 className="w-3.5 h-3.5 text-gray-300 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-0.5">Industria</p>
+                    <p className="text-xs text-[#1a1a2e]">
+                      {modalIndustria ?? <span className="text-gray-300 italic">Cargando...</span>}
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {/* Descripción */}
+              {engModal.raw.descripcion && (
+                <div className="flex items-start gap-2.5">
+                  <AlignLeft className="w-3.5 h-3.5 text-gray-300 mt-0.5 flex-shrink-0" />
+                  <div>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-0.5">Descripción</p>
+                    <p className="text-xs text-[#555] leading-relaxed whitespace-pre-line">{engModal.raw.descripcion}</p>
+                  </div>
+                </div>
+              )}
+
+              {/* Roles / perfiles requeridos */}
+              {engModal.reqs.length > 0 && (() => {
+                const cargosUnicos = Array.from(
+                  new Set(engModal.reqs.map((r) => r.cargo_requerido).filter(Boolean) as string[])
+                ).sort((a, b) => (JERARQUIA[a] ?? 99) - (JERARQUIA[b] ?? 99));
+                return (
+                  <div className="flex items-start gap-2.5">
+                    <Briefcase className="w-3.5 h-3.5 text-gray-300 mt-0.5 flex-shrink-0" />
+                    <div>
+                      <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Perfiles requeridos</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {cargosUnicos.map((c) => {
+                          const count = engModal.reqs.filter((r) => r.cargo_requerido === c).length;
+                          return (
+                            <span key={c} className="text-[11px] px-2 py-0.5 rounded-full bg-[#f1f5f9] text-[#475569] font-medium">
+                              {c}{count > 1 && <span className="ml-1 text-[#94a3b8]">×{count}</span>}
+                            </span>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Personas asignadas actualmente */}
+              {engModal.personas.length > 0 && (
+                <div className="flex items-start gap-2.5">
+                  <Users className="w-3.5 h-3.5 text-gray-300 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Equipo asignado</p>
+                    <div className="space-y-1">
+                      {engModal.personas.map((p) => (
+                        <div key={p.asignacionId} className="flex items-center justify-between gap-2">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <div
+                              className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0"
+                              style={{ background: COLORES[normalizeCargoDisplay(p.cargo ?? "")] ?? COLOR_DEFAULT }}
+                            >
+                              {(p.nombre[0] ?? "")}{(p.apellido[0] ?? "")}
+                            </div>
+                            <span className="text-xs truncate text-[#1a1a2e]">{p.nombre} {p.apellido}</span>
+                          </div>
+                          <span className="text-[10px] text-gray-400 flex-shrink-0">{p.pct}%</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+            </div>
+          </div>
         </div>
       )}
 
