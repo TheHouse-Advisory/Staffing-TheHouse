@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import {
-  X, AlertTriangle, CalendarX, Info, Zap, Loader2, CheckCircle,
+  X, ChevronRight, AlertTriangle, CalendarX, Info, Zap, Loader2, CheckCircle,
 } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import {
@@ -339,10 +339,11 @@ interface Props {
   engagementCliente: string;
   onClose: () => void;
   onAsignado: () => void;
+  onCollapse?: () => void;
 }
 
 export function PanelFitAsignacion({
-  reqId, engagementId, engagementNombre, engagementCliente, onClose, onAsignado,
+  reqId, engagementId, engagementNombre, engagementCliente, onClose, onAsignado, onCollapse,
 }: Props) {
   const [req, setReq] = useState<ReqConEstado | null>(null);
   const [personas, setPersonas] = useState<PersonaFit[]>([]);
@@ -511,7 +512,7 @@ export function PanelFitAsignacion({
       {/* Header */}
       <div className="px-5 py-4 border-b border-[#e8e8e8] bg-[#f9f9f9] flex-shrink-0">
           <div className="flex items-start justify-between gap-2">
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-0 min-w-0">
               <p className="text-[10px] text-[#aaa] mb-0.5 truncate">
                 {engagementNombre} · {engagementCliente}
               </p>
@@ -538,12 +539,24 @@ export function PanelFitAsignacion({
                 <p className="text-sm text-[#888]">Cargando requerimiento...</p>
               )}
             </div>
-            <button
-              onClick={onClose}
-              className="w-7 h-7 rounded-lg flex items-center justify-center text-[#aaa] hover:text-[#555] hover:bg-[#eee] transition-colors flex-shrink-0"
-            >
-              <X className="w-4 h-4" />
-            </button>
+            <div className="flex items-center gap-1 flex-shrink-0">
+              {onCollapse && (
+                <button
+                  onClick={onCollapse}
+                  title="Colapsar panel"
+                  className="w-7 h-7 rounded-lg flex items-center justify-center text-[#aaa] hover:text-[#555] hover:bg-[#eee] transition-colors"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              )}
+              <button
+                onClick={onClose}
+                title="Cerrar"
+                className="w-7 h-7 rounded-lg flex items-center justify-center text-[#aaa] hover:text-[#555] hover:bg-[#eee] transition-colors"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
           </div>
         </div>
 

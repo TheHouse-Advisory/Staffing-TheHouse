@@ -6,7 +6,7 @@ import {
   format, isSameDay, parseISO,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { X, ChevronLeft, ChevronRight, Bell, ChevronUp, ChevronDown } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell } from "lucide-react";
 import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
 import { GanttAusencias } from "@/components/inicio/GanttAusencias";
@@ -70,7 +70,13 @@ export default function InicioPage() {
 
   // Panel lateral de recomendaciones
   const [panelReq, setPanelReq] = useState<PanelInfo | null>(null);
+  const [panelColapsado, setPanelColapsado] = useState(false);
   const [tableroReloadKey, setTableroReloadKey] = useState(0);
+
+  function abrirPanel(info: PanelInfo | null) {
+    setPanelReq(info);
+    if (info) setPanelColapsado(false); // siempre expandido al abrir
+  }
 
   // Control expansión columna derecha
   const [activeQuadrant, setActiveQuadrant] = useState<"both" | "tablero" | "resumen">("both");
@@ -424,7 +430,7 @@ export default function InicioPage() {
 
         {/* Cuadrante 2: TABLERO */}
         <div
-          className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden transition-all duration-300 ease-in-out"
+          className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden transition-all duration-500 ease-in-out"
           style={
             activeQuadrant === "resumen"
               ? { flexGrow: 0, flexShrink: 0, flexBasis: "44px" }
@@ -444,7 +450,7 @@ export default function InicioPage() {
           <div className="flex-1 overflow-auto min-h-0">
             <DesgloceEngagements
               onAsignacionChange={refreshOcupacion}
-              onOpenPanel={setPanelReq}
+              onOpenPanel={abrirPanel}
               externalReloadKey={tableroReloadKey}
             />
           </div>
@@ -452,7 +458,7 @@ export default function InicioPage() {
 
         {/* Cuadrante 3: RESÚMEN */}
         <div
-          className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden transition-all duration-300 ease-in-out"
+          className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden transition-all duration-500 ease-in-out"
           style={
             activeQuadrant === "tablero"
               ? { flexGrow: 0, flexShrink: 0, flexBasis: "44px" }
@@ -535,24 +541,46 @@ export default function InicioPage() {
 
         {/* ── Columna 3: Panel lateral RECOMENDACIONES ── */}
         <div
-          className="flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out"
-          style={{ width: panelReq ? 380 : 0 }}
+          className="flex-shrink-0 overflow-hidden transition-all duration-500 ease-in-out"
+          style={{ width: !panelReq ? 0 : panelColapsado ? 40 : 380 }}
         >
           {panelReq && (
-            <div className="w-[380px] h-full rounded-xl border border-gray-100 shadow-sm overflow-hidden">
-              <PanelFitAsignacion
-                reqId={panelReq.reqId}
-                engagementId={panelReq.engId}
-                engagementNombre={panelReq.engNombre}
-                engagementCliente={panelReq.engCliente}
-                onClose={() => setPanelReq(null)}
-                onAsignado={() => {
-                  setPanelReq(null);
-                  refreshOcupacion();
-                  setTableroReloadKey((k) => k + 1);
-                }}
-              />
-            </div>
+            panelColapsado ? (
+              /* Strip colapsado */
+              <div className="w-10 h-full rounded-xl border border-gray-100 shadow-sm bg-white flex flex-col items-center py-3 gap-3">
+                <button
+                  onClick={() => setPanelColapsado(false)}
+                  title="Expandir recomendaciones"
+                  className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+                <span
+                  className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex-1 flex items-center"
+                  style={{ writingMode: "vertical-rl", textOrientation: "mixed" }}
+                >
+                  Recomendaciones
+                </span>
+              </div>
+            ) : (
+              /* Panel expandido */
+              <div className="w-[380px] h-full rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                <PanelFitAsignacion
+                  reqId={panelReq.reqId}
+                  engagementId={panelReq.engId}
+                  engagementNombre={panelReq.engNombre}
+                  engagementCliente={panelReq.engCliente}
+                  onClose={() => setPanelReq(null)}
+                  onCollapse={() => setPanelColapsado(true)}
+                  onAsignado={() => {
+                    setPanelReq(null);
+                    setPanelColapsado(false);
+                    refreshOcupacion();
+                    setTableroReloadKey((k) => k + 1);
+                  }}
+                />
+              </div>
+            )
           )}
         </div>
 
