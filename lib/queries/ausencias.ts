@@ -87,8 +87,8 @@ export function diasDelMes(year: number, month: number): string[] {
   return dias;
 }
 
-/** Expande un rango fecha_inicio..fecha_fin a array de fechas ISO */
-function expandirRango(inicio: string, fin: string): string[] {
+/** Expande un rango fecha_inicio..fecha_fin a array de fechas ISO (días hábiles lun–vie) */
+export function expandirRango(inicio: string, fin: string): string[] {
   const result: string[] = [];
   const start = new Date(inicio + "T00:00:00");
   const end = new Date(fin + "T00:00:00");
@@ -233,4 +233,93 @@ export async function eliminarAusencia(
     .delete()
     .eq("id", ausenciaId);
   return { error: error?.message ?? null };
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Detalle de ausencias por persona
+// ─────────────────────────────────────────────────────────────
+
+export interface AusenciaDetalle {
+  id: string;
+  fechaInicio: string;    // "YYYY-MM-DD"
+  fechaFin: string;       // "YYYY-MM-DD"
+  numDias: number;        // días hábiles lun–vie
+  tipo: TipoAusencia;
+  tipoLabel: string;      // texto legible del tipo
+  descripcion: string | null;
+}
+
+export interface DetalleAusenciasPersona {
+  /** Ausencias cuya fecha_fin >= hoy (en curso o futuras) */
+  ausenciasFuturas: AusenciaDetalle[];
+  /** Ausencias ya terminadas dentro del año calendario actual (fecha_fin < hoy) */
+  ausenciasPasadasAnioActual: AusenciaDetalle[];
+  /** Suma de días hábiles de todas las ausencias del año actual (pasadas + en curso hasta hoy) */
+  totalDiasAnioActual: number;
+}
+
+/**
+ * Devuelve el desglose detallado de ausencias de una persona:
+ * futuras, pasadas del año actual y total de días del año.
+ */
+export async function getDetailedPersonAbsences(
+  supabase: any,
+  personaId: string
+): Promise<DetalleAusenciasPersona> {
+  const hoy = new Date().toISOString().split("T")[0];          // "YYYY-MM-DD"
+  const inicioAnio = `${new Date().getFullYear()}-01-01`;
+  const finAnio    = `${new Date().getFullYear()}-12-31`;
+
+  // Una sola query: todas las ausencias de esta persona en el año actual + futuras
+  // Condición: fecha_fin >= inicioAnio (cubre todo el año + futuras sin límite)
+  const { data, error } = await supabase
+    .from("ausencia")
+    .select("id, tipo, fecha_inicio, fecha_fin, descripcion")
+    .eq("persona_id", personaId)
+    .gte("fecha_fin", inicioAnio)   // descarta ausencias de años anteriores
+    .order("fecha_inicio", { ascending: true });
+
+  if (error || !data) {
+    return { ausenciasFuturas: [], ausenciasPasadasAnioActual: [], totalDiasAnioActual: 0 };
+  }
+
+  type RawRow = { id: string; tipo: string; fecha_inicio: string; fecha_fin: string; descripcion: string | null };
+
+  const ausenciasFuturas: AusenciaDetalle[] = [];
+  const ausenciasPasadasAnioActual: AusenciaDetalle[] = [];
+  let totalDiasAnioActual = 0;
+
+  for (const row of data as RawRow[]) {
+    const tipo = row.tipo as TipoAusencia;
+    const numDias = expandirRango(row.fecha_inicio, row.fecha_fin).length;
+    const detalle: AusenciaDetalle = {
+      id: row.id,
+      fechaInicio: row.fecha_inicio,
+      fechaFin: row.fecha_fin,
+      numDias,
+      tipo,
+      tipoLabel: COLOR_AUSENCIA[tipo]?.label ?? row.tipo,
+      descripcion: row.descripcion,
+    };
+
+    const esFutura = row.fecha_fin >= hoy;          // termina hoy o más adelante
+    const esPasadaDesteAnio = row.fecha_fin < hoy && row.fecha_inicio >= inicioAnio;
+
+    if (esFutura) {
+      ausenciasFuturas.push(detalle);
+    }
+
+    if (esPasadaDesteAnio) {
+      ausenciasPasadasAnioActual.push(detalle);
+    }
+
+    // Contribución al total del año: días hábiles que caen dentro del año actual y hasta hoy
+    if (row.fecha_inicio <= hoy && row.fecha_fin >= inicioAnio) {
+      const finClamped  = row.fecha_fin  < hoy     ? row.fecha_fin  : hoy;
+      const iniClamped  = row.fecha_inicio > inicioAnio ? row.fecha_inicio : inicioAnio;
+      totalDiasAnioActual += expandirRango(iniClamped, finClamped).length;
+    }
+  }
+
+  return { ausenciasFuturas, ausenciasPasadasAnioActual, totalDiasAnioActual };
 }
