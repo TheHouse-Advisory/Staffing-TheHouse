@@ -142,7 +142,7 @@ export function GanttAusencias({ onVerPersona }: { onVerPersona: (p: Persona) =>
     <div className="flex flex-col h-full">
       {/* ── Header ─────────────────────────────── */}
       <div className="flex items-center justify-between mb-3 flex-shrink-0">
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Ausencias</p>
+        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Resúmen</p>
         <div className="flex items-center gap-1">
           {/* Toggle vista */}
           <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">

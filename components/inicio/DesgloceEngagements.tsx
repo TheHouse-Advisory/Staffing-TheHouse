@@ -214,10 +214,10 @@ export function DesgloceEngagements() {
             className="w-full text-xs border-collapse"
             style={{ minWidth: `${180 + columnas.length * 80}px` }}
           >
-            <thead>
+            <thead className="sticky top-0 bg-white z-20">
               <tr>
                 <th
-                  className="text-left pr-3 pb-2 text-gray-400 font-semibold sticky left-0 bg-white z-10"
+                  className="text-left pr-3 pb-2 text-gray-400 font-semibold sticky left-0 bg-white z-30"
                   style={{ minWidth: 160 }}
                 >
                   Engagement

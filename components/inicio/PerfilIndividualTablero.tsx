@@ -160,9 +160,9 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
   return (
     <div className="overflow-auto h-full">
       <table className="w-full text-xs border-collapse" style={{ minWidth: 520 }}>
-        <thead>
+        <thead className="sticky top-0 bg-white z-20">
           <tr>
-            <th className="text-left pr-3 pb-2 text-gray-400 font-semibold w-36 sticky left-0 bg-white z-10">
+            <th className="text-left pr-3 pb-2 text-gray-400 font-semibold w-36 sticky left-0 bg-white z-30">
               Persona
             </th>
             {columnasMostradas.map((col, i) => {

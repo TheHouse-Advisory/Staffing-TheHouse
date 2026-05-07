@@ -1,64 +1,46 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { X, ChevronLeft, ChevronRight, Bell } from "lucide-react";
-import { startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths, format, isSameDay, parseISO } from "date-fns";
+import {
+  startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths,
+  format, isSameDay, parseISO,
+} from "date-fns";
 import { es } from "date-fns/locale";
+import { X, ChevronLeft, ChevronRight, Bell } from "lucide-react";
 import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
 import { GanttAusencias } from "@/components/inicio/GanttAusencias";
-import { TablonOcupacion } from "@/components/tablero/TablonOcupacion";
 import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTablero";
-import { DisponiblesTablero } from "@/components/inicio/DisponiblesTablero";
 import { DesgloceEngagements } from "@/components/inicio/DesgloceEngagements";
 import type { Persona } from "@/lib/types/database";
 
 const JERARQUIA_CARGOS = [
-  "Socio",
-  "Director de Proyectos",
-  "Director",
-  "Gerente de Proyectos",
-  "Gerente",
-  "Asociado",
-  "Consultor Senior",
-  "Consultor de Proyectos",
-  "Consultor Proyecto",
-  "Consultor",
-  "Consultor Analista",
-  "Analista Senior",
-  "Consultor Trainee",
-  "Analista",
-  "Practicante",
+  "Socio", "Director de Proyectos", "Director", "Gerente de Proyectos", "Gerente",
+  "Asociado", "Consultor Senior", "Consultor de Proyectos", "Consultor Proyecto",
+  "Consultor", "Consultor Analista", "Analista Senior", "Consultor Trainee", "Analista", "Practicante",
 ];
 
 const COLORES: Record<string, string> = {
-  "Socio":                  "#1a1a2e",
-  "Director de Proyectos":  "#4a90e2",
-  "Director":               "#4a90e2",
-  "Gerente de Proyectos":   "#7c5cbf",
-  "Gerente":                "#7c5cbf",
-  "Asociado":               "#e2884a",
-  "Consultor Senior":       "#4ab89a",
-  "Consultor de Proyectos": "#e24a6a",
-  "Consultor Analista":     "#a0b84a",
-  "Consultor Trainee":      "#c07c4a",
+  "Socio": "#1a1a2e", "Director de Proyectos": "#4a90e2", "Director": "#4a90e2",
+  "Gerente de Proyectos": "#7c5cbf", "Gerente": "#7c5cbf", "Asociado": "#e2884a",
+  "Consultor Senior": "#4ab89a", "Consultor de Proyectos": "#e24a6a",
+  "Consultor Analista": "#a0b84a", "Consultor Trainee": "#c07c4a",
 };
 const COLOR_DEFAULT = "#94a3b8";
 
 const TALENTO_CONFIG = {
-  talento:        { label: "Talento",        bg: "#f0fdf4", color: "#16a34a" },
-  en_desarrollo:  { label: "En desarrollo",  bg: "#fefce8", color: "#ca8a04" },
-  no_talento:     { label: "No talento",     bg: "#fef2f2", color: "#dc2626" },
+  talento:       { label: "Talento",       bg: "#f0fdf4", color: "#16a34a" },
+  en_desarrollo: { label: "En desarrollo", bg: "#fefce8", color: "#ca8a04" },
+  no_talento:    { label: "No talento",    bg: "#fef2f2", color: "#dc2626" },
 };
 
 function iniciales(nombre: string, apellido: string) {
   return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
 }
 
-function ordenarCargos(cargos: string[]): string[] {
+function ordenarCargos(cargos: string[]) {
   return [...cargos].sort((a, b) => {
-    const ia = JERARQUIA_CARGOS.indexOf(a);
-    const ib = JERARQUIA_CARGOS.indexOf(b);
+    const ia = JERARQUIA_CARGOS.indexOf(a), ib = JERARQUIA_CARGOS.indexOf(b);
     if (ia === -1 && ib === -1) return a.localeCompare(b);
     if (ia === -1) return 1;
     if (ib === -1) return -1;
@@ -66,46 +48,48 @@ function ordenarCargos(cargos: string[]): string[] {
   });
 }
 
+/** Color del indicador de ocupación: rojo ≥90%, amarillo ≥60%, verde <60% */
+function ocupColor(pct: number) {
+  if (pct >= 90) return { bg: "#fef2f2", text: "#dc2626" };
+  if (pct >= 60) return { bg: "#fefce8", text: "#ca8a04" };
+  return { bg: "#f0fdf4", text: "#16a34a" };
+}
+
 interface ResumenPersona {
-  ocupacion: number;
-  totalProyectos: number;
-  industrias: string[];
-  capacidades: string[];
-  tematicas: string[];
-  vacacionesDias: number;
-  mentorNombre: string | null;
-  mentoreados: string[];
+  ocupacion: number; totalProyectos: number; industrias: string[];
+  capacidades: string[]; tematicas: string[]; vacacionesDias: number;
+  mentorNombre: string | null; mentoreados: string[];
 }
 
 export default function InicioPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
+  const [ocupacionMap, setOcupacionMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [alertasHoy, setAlertasHoy] = useState(0);
 
-  // Tablero (cuadrante 2)
-  const [semanaInicio, setSemanaInicio] = useState<Date>(() => startOfISOWeek(new Date()));
-  const [vistaTablero, setVistaTablero] = useState<"persona" | "proyecto" | "perfil" | "desgloce">("persona");
-  const [periodoTablero, setPeriodoTablero] = useState<"dia" | "semana" | "mes">("dia");
+  // RESÚMEN quadrant
+  const [vistaResumen, setVistaResumen] = useState<"gantt" | "perfil">("gantt");
+  const [semanaResumen, setSemanaResumen] = useState(() => startOfISOWeek(new Date()));
+  const [periodoResumen, setPeriodoResumen] = useState<"dia" | "semana" | "mes">("dia");
 
+  function navResumenPrev() {
+    if (periodoResumen === "semana") setSemanaResumen((s) => subWeeks(s, 5));
+    else if (periodoResumen === "mes") setSemanaResumen((s) => subMonths(s, 4));
+    else setSemanaResumen((s) => subWeeks(s, 1));
+  }
+  function navResumenNext() {
+    if (periodoResumen === "semana") setSemanaResumen((s) => addWeeks(s, 5));
+    else if (periodoResumen === "mes") setSemanaResumen((s) => addMonths(s, 4));
+    else setSemanaResumen((s) => addWeeks(s, 1));
+  }
   const periodoLabel =
-    periodoTablero === "semana"
-      ? `${format(semanaInicio, "d MMM", { locale: es })} – ${format(addWeeks(semanaInicio, 5), "d MMM yyyy", { locale: es })}`
-      : periodoTablero === "mes"
-      ? `${format(semanaInicio, "MMM", { locale: es })} – ${format(addMonths(semanaInicio, 4), "MMM yyyy", { locale: es })}`
-      : `${format(semanaInicio, "d MMM", { locale: es })} – ${format(addWeeks(semanaInicio, 1), "d MMM yyyy", { locale: es })}`;
+    periodoResumen === "semana"
+      ? `${format(semanaResumen, "d MMM", { locale: es })} – ${format(addWeeks(semanaResumen, 5), "d MMM yyyy", { locale: es })}`
+      : periodoResumen === "mes"
+      ? `${format(semanaResumen, "MMM", { locale: es })} – ${format(addMonths(semanaResumen, 4), "MMM yyyy", { locale: es })}`
+      : `${format(semanaResumen, "d MMM", { locale: es })} – ${format(addWeeks(semanaResumen, 1), "d MMM yyyy", { locale: es })}`;
 
-  function handlePrevPeriodo() {
-    if (periodoTablero === "semana") setSemanaInicio((s) => subWeeks(s, 5));
-    else if (periodoTablero === "mes") setSemanaInicio((s) => subMonths(s, 4));
-    else setSemanaInicio((s) => subWeeks(s, 1));
-  }
-  function handleNextPeriodo() {
-    if (periodoTablero === "semana") setSemanaInicio((s) => addWeeks(s, 5));
-    else if (periodoTablero === "mes") setSemanaInicio((s) => addMonths(s, 4));
-    else setSemanaInicio((s) => addWeeks(s, 1));
-  }
-
-  // Popup
+  // Popup persona
   const [seleccionada, setSeleccionada] = useState<Persona | null>(null);
   const [resumen, setResumen] = useState<ResumenPersona | null>(null);
   const [loadingResumen, setLoadingResumen] = useState(false);
@@ -114,34 +98,45 @@ export default function InicioPage() {
   useEffect(() => {
     async function load() {
       const sb = createAnyClient();
-      const [persRes] = await Promise.all([
+      const hoy = format(new Date(), "yyyy-MM-dd");
+
+      const [persRes, asigRes] = await Promise.all([
         sb.from("persona").select("*").eq("activo", true).order("cargo_actual").order("apellido"),
+        sb.from("asignacion")
+          .select("persona_id, pct_dedicacion")
+          .eq("estado", "activa")
+          .lte("fecha_inicio", hoy)
+          .gte("fecha_fin", hoy),
       ]);
 
-      setPersonas(persRes.data ?? []);
+      const pers = (persRes.data ?? []) as Persona[];
+      setPersonas(pers);
 
-      // Contar aniversarios de hoy
-      const hoy = new Date();
-      const conAniv = ((persRes.data ?? []) as Persona[]).filter((p) => {
+      // Mapa ocupación hoy
+      const map: Record<string, number> = {};
+      for (const a of (asigRes.data ?? []) as { persona_id: string; pct_dedicacion: number }[]) {
+        map[a.persona_id] = (map[a.persona_id] ?? 0) + Number(a.pct_dedicacion);
+      }
+      setOcupacionMap(map);
+
+      // Aniversarios hoy
+      const hoyDate = new Date();
+      const conAniv = pers.filter((p) => {
         if (!p.fecha_ingreso) return false;
         const ingreso = parseISO(p.fecha_ingreso);
-        const aniv = new Date(hoy.getFullYear(), ingreso.getMonth(), ingreso.getDate());
-        const años = hoy.getFullYear() - ingreso.getFullYear();
-        return isSameDay(aniv, hoy) && años > 0;
+        const aniv = new Date(hoyDate.getFullYear(), ingreso.getMonth(), ingreso.getDate());
+        return isSameDay(aniv, hoyDate) && hoyDate.getFullYear() - ingreso.getFullYear() > 0;
       });
       setAlertasHoy(conAniv.length);
-
       setLoading(false);
     }
     load();
   }, []);
 
-  // Cerrar popup al hacer clic fuera
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
-        setSeleccionada(null);
-        setResumen(null);
+        setSeleccionada(null); setResumen(null);
       }
     }
     if (seleccionada) document.addEventListener("mousedown", handleClick);
@@ -149,90 +144,43 @@ export default function InicioPage() {
   }, [seleccionada]);
 
   async function abrirResumen(p: Persona) {
-    setSeleccionada(p);
-    setResumen(null);
-    setLoadingResumen(true);
+    setSeleccionada(p); setResumen(null); setLoadingResumen(true);
     const sb = createAnyClient();
-
     const añoActual = new Date().getFullYear();
 
     const [asigRes, histRes, vacRes, mentorRes, indRes, capRes, temRes, mentoreRes] = await Promise.all([
-      // Ocupación actual
-      sb.from("asignacion")
-        .select("pct_dedicacion")
-        .eq("persona_id", p.id)
-        .eq("estado", "activa"),
-
-      // Total de proyectos históricos
-      sb.from("asignacion")
-        .select("engagement_id")
-        .eq("persona_id", p.id),
-
-      // Total de ausencias del año en curso
-      sb.from("ausencia")
-        .select("id", { count: "exact", head: true })
-        .eq("persona_id", p.id)
-        .gte("fecha_inicio", `${añoActual}-01-01`)
-        .lte("fecha_fin",   `${añoActual}-12-31`),
-
-      // Nombre del mentor
+      sb.from("asignacion").select("pct_dedicacion").eq("persona_id", p.id).eq("estado", "activa"),
+      sb.from("asignacion").select("engagement_id").eq("persona_id", p.id),
+      sb.from("ausencia").select("id", { count: "exact", head: true }).eq("persona_id", p.id)
+        .gte("fecha_inicio", `${añoActual}-01-01`).lte("fecha_fin", `${añoActual}-12-31`),
       p.mentor_id
         ? sb.from("persona").select("nombre, apellido").eq("id", p.mentor_id).single()
         : Promise.resolve({ data: null }),
-
-      // Industrias
-      sb.from("persona_industria")
-        .select("cat_industria(nombre)")
-        .eq("persona_id", p.id),
-
-      // Capacidades
-      sb.from("persona_capacidad")
-        .select("cat_capacidad(nombre)")
-        .eq("persona_id", p.id),
-
-      // Temáticas
-      sb.from("persona_tematica")
-        .select("cat_tematica(nombre)")
-        .eq("persona_id", p.id),
-
-      // Personas que esta persona mentora
-      sb.from("persona")
-        .select("nombre, apellido")
-        .eq("mentor_id", p.id)
-        .eq("activo", true),
+      sb.from("persona_industria").select("cat_industria(nombre)").eq("persona_id", p.id),
+      sb.from("persona_capacidad").select("cat_capacidad(nombre)").eq("persona_id", p.id),
+      sb.from("persona_tematica").select("cat_tematica(nombre)").eq("persona_id", p.id),
+      sb.from("persona").select("nombre, apellido").eq("mentor_id", p.id).eq("activo", true),
     ]);
 
-    const ocupacion = (asigRes.data ?? []).reduce(
-      (sum: number, a: any) => sum + Number(a.pct_dedicacion), 0
-    );
-
-    const engagementsUnicos = new Set(
-      (histRes.data ?? []).map((a: any) => a.engagement_id)
-    );
-
-    const industriasLista = (indRes.data ?? []).map((r: any) => r.cat_industria?.nombre).filter(Boolean) as string[];
-    const capacidadesLista = (capRes.data ?? []).map((r: any) => r.cat_capacidad?.nombre).filter(Boolean) as string[];
-    const tematicasLista = (temRes.data ?? []).map((r: any) => r.cat_tematica?.nombre).filter(Boolean) as string[];
-
-    const vacDias = vacRes.count ?? 0;
-
-    const mentorData = mentorRes.data as { nombre: string; apellido: string } | null;
-
+    const ocupacion = (asigRes.data ?? []).reduce((s: number, a: any) => s + Number(a.pct_dedicacion), 0);
+    const engUnicos = new Set((histRes.data ?? []).map((a: any) => a.engagement_id));
     setResumen({
       ocupacion,
-      totalProyectos: engagementsUnicos.size,
-      industrias: industriasLista,
-      capacidades: capacidadesLista,
-      tematicas: tematicasLista,
-      vacacionesDias: vacDias,
-      mentorNombre: mentorData ? `${mentorData.nombre} ${mentorData.apellido}` : null,
+      totalProyectos: engUnicos.size,
+      industrias:  (indRes.data ?? []).map((r: any) => r.cat_industria?.nombre).filter(Boolean) as string[],
+      capacidades: (capRes.data ?? []).map((r: any) => r.cat_capacidad?.nombre).filter(Boolean) as string[],
+      tematicas:   (temRes.data ?? []).map((r: any) => r.cat_tematica?.nombre).filter(Boolean) as string[],
+      vacacionesDias: vacRes.count ?? 0,
+      mentorNombre: mentorRes.data
+        ? `${(mentorRes.data as any).nombre} ${(mentorRes.data as any).apellido}`
+        : null,
       mentoreados: ((mentoreRes.data ?? []) as { nombre: string; apellido: string }[])
         .map((m) => `${m.nombre} ${m.apellido}`),
     });
     setLoadingResumen(false);
   }
 
-  // Agrupar por cargo
+  // Agrupar personas por cargo
   const grupos: Record<string, Persona[]> = {};
   for (const p of personas) {
     const cargo = p.cargo_actual ?? "Sin cargo";
@@ -240,14 +188,14 @@ export default function InicioPage() {
     grupos[cargo].push(p);
   }
   const cargos = ordenarCargos(Object.keys(grupos));
-
   const colorSeleccionada = seleccionada
     ? (COLORES[seleccionada.cargo_actual ?? ""] ?? COLOR_DEFAULT)
     : COLOR_DEFAULT;
 
   return (
     <div className="flex flex-col h-full p-6 gap-4">
-      <div className="flex items-start justify-between">
+      {/* Top bar */}
+      <div className="flex items-start justify-between flex-shrink-0">
         <div>
           <h1 className="text-[22px] font-bold text-[#1a1a2e]">Menú Principal</h1>
           <p className="text-sm text-gray-400 mt-0.5">Resumen general del equipo</p>
@@ -266,37 +214,48 @@ export default function InicioPage() {
         </Link>
       </div>
 
-      <div className="grid gap-4 flex-1 min-h-0" style={{ gridTemplateColumns: "1fr 2fr", gridTemplateRows: "2fr 1fr" }}>
+      {/* Grid 3 cuadrantes: EQUIPO | TABLERO | RESÚMEN */}
+      <div className="grid gap-4 flex-1 min-h-0" style={{ gridTemplateColumns: "200px 2fr 1.5fr" }}>
 
-        {/* ── Cuadrante 1: Equipo por cargo ── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden relative">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
-            Equipo
-          </p>
+        {/* ── Cuadrante 1: EQUIPO con % ocupación ── */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col overflow-hidden relative">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 flex-shrink-0">Equipo</p>
 
           {loading ? (
             <p className="text-sm text-gray-300">Cargando...</p>
           ) : (
-            <div className="flex-1 overflow-y-auto space-y-4 pr-1">
+            <div className="flex-1 overflow-y-auto space-y-3 pr-1">
               {cargos.map((cargo) => {
                 const color = COLORES[cargo] ?? COLOR_DEFAULT;
                 return (
                   <div key={cargo}>
-                    <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
-                      {cargo}
-                    </p>
+                    <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">{cargo}</p>
                     <div className="flex flex-wrap gap-2">
-                      {grupos[cargo].map((p) => (
-                        <button
-                          key={p.id}
-                          onClick={() => abrirResumen(p)}
-                          title={`${p.nombre} ${p.apellido}`}
-                          className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[13px] font-bold flex-shrink-0 hover:scale-110 hover:shadow-md transition-transform"
-                          style={{ backgroundColor: color }}
-                        >
-                          {iniciales(p.nombre, p.apellido)}
-                        </button>
-                      ))}
+                      {grupos[cargo].map((p) => {
+                        const pct = Math.round(ocupacionMap[p.id] ?? 0);
+                        const oc = ocupColor(pct);
+                        return (
+                          <button
+                            key={p.id}
+                            onClick={() => abrirResumen(p)}
+                            title={`${p.nombre} ${p.apellido} — ${pct}% ocupado`}
+                            className="flex flex-col items-center gap-0.5 hover:scale-110 transition-transform"
+                          >
+                            <div
+                              className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[12px] font-bold shadow-sm"
+                              style={{ backgroundColor: color }}
+                            >
+                              {iniciales(p.nombre, p.apellido)}
+                            </div>
+                            <span
+                              className="text-[9px] font-bold px-1 py-0.5 rounded-full leading-none"
+                              style={{ background: oc.bg, color: oc.text }}
+                            >
+                              {pct}%
+                            </span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -304,213 +263,188 @@ export default function InicioPage() {
             </div>
           )}
 
-          {/* ── Popup de resumen ── */}
+          {/* Popup resumen persona */}
           {seleccionada && (
-            <div className="absolute inset-0 bg-black/10 rounded-xl z-10 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-black/10 rounded-xl z-10 flex items-center justify-center p-3">
               <div
                 ref={popupRef}
-                className="bg-white rounded-xl shadow-xl border border-gray-100 w-full max-w-xs relative flex flex-col"
-                style={{ maxHeight: "85%" }}
+                className="bg-white rounded-xl shadow-xl border border-gray-100 w-full relative flex flex-col"
+                style={{ maxHeight: "92%" }}
               >
-                {/* Header fijo */}
-                <div className="p-5 pb-3 flex-shrink-0">
+                <div className="p-4 pb-2 flex-shrink-0">
                   <button
                     onClick={() => { setSeleccionada(null); setResumen(null); }}
                     className="absolute top-3 right-3 text-gray-300 hover:text-gray-500"
                   >
                     <X className="w-4 h-4" />
                   </button>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2">
                     <div
-                      className="w-12 h-12 rounded-full flex items-center justify-center text-white text-lg font-bold flex-shrink-0"
+                      className="w-10 h-10 rounded-full flex items-center justify-center text-white text-base font-bold flex-shrink-0"
                       style={{ backgroundColor: colorSeleccionada }}
                     >
                       {iniciales(seleccionada.nombre, seleccionada.apellido)}
                     </div>
                     <div>
-                      <p className="font-bold text-[#1a1a2e]">
-                        {seleccionada.nombre} {seleccionada.apellido}
-                      </p>
-                      <p className="text-xs text-gray-400">{seleccionada.cargo_actual ?? "Sin cargo"}</p>
+                      <p className="font-bold text-[#1a1a2e] text-sm">{seleccionada.nombre} {seleccionada.apellido}</p>
+                      <p className="text-[11px] text-gray-400">{seleccionada.cargo_actual ?? "Sin cargo"}</p>
                     </div>
                   </div>
                 </div>
 
-                {/* Contenido scrolleable */}
-                <div className="overflow-y-auto px-5 pb-5 flex-1">
-                {loadingResumen ? (
-                  <p className="text-sm text-gray-300 text-center py-4">Cargando...</p>
-                ) : resumen && (
-                  <div className="space-y-3 text-sm">
-
-                    {/* Disponibilidad */}
-                    <div className="flex justify-between items-center">
-                      <span className="text-gray-400">Disponibilidad</span>
-                      <span
-                        className="font-semibold px-2 py-0.5 rounded-full text-xs"
-                        style={
-                          resumen.ocupacion >= 100
-                            ? { background: "#fef2f2", color: "#dc2626" }
-                            : resumen.ocupacion >= 80
-                            ? { background: "#fefce8", color: "#ca8a04" }
-                            : { background: "#f0fdf4", color: "#16a34a" }
-                        }
-                      >
-                        {Math.max(0, 100 - resumen.ocupacion)}% libre
-                      </span>
-                    </div>
-
-                    {/* Historial proyectos */}
-                    <div className="flex justify-between items-center">
-                      <span className="text-gray-400">Nº proyectos</span>
-                      <span className="font-medium text-[#1a1a2e]">{resumen.totalProyectos}</span>
-                    </div>
-
-                    {/* Industrias */}
-                    <div>
-                      <p className="text-gray-400 mb-1">Industrias</p>
-                      {resumen.industrias.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {resumen.industrias.map((i) => (
-                            <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-[#eaf4ff] text-[#1a5276]">{i}</span>
-                          ))}
-                        </div>
-                      ) : <p className="text-xs text-gray-300 italic">Sin industrias</p>}
-                    </div>
-
-                    {/* Capacidades */}
-                    <div>
-                      <p className="text-gray-400 mb-1">Capacidades</p>
-                      {resumen.capacidades.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {resumen.capacidades.map((c) => (
-                            <span key={c} className="text-xs px-2 py-0.5 rounded-full bg-[#f0f9f4] text-[#1e7e45]">{c}</span>
-                          ))}
-                        </div>
-                      ) : <p className="text-xs text-gray-300 italic">Sin capacidades</p>}
-                    </div>
-
-                    {/* Temáticas */}
-                    <div>
-                      <p className="text-gray-400 mb-1">Temáticas</p>
-                      {resumen.tematicas.length > 0 ? (
-                        <div className="flex flex-wrap gap-1">
-                          {resumen.tematicas.map((t) => (
-                            <span key={t} className="text-xs px-2 py-0.5 rounded-full bg-[#fdf4ff] text-[#6b21a8]">{t}</span>
-                          ))}
-                        </div>
-                      ) : <p className="text-xs text-gray-300 italic">Sin temáticas</p>}
-                    </div>
-
-                    {/* Ausencias */}
-                    <div className="flex justify-between items-center">
-                      <span className="text-gray-400">Ausencias</span>
-                      <span className="font-medium text-[#1a1a2e]">
-                        {resumen.vacacionesDias}
-                      </span>
-                    </div>
-
-                    {/* Talento */}
-                    <div className="flex justify-between items-center">
-                      <span className="text-gray-400">Talento</span>
-                      {seleccionada.talento ? (
+                <div className="overflow-y-auto px-4 pb-4 flex-1">
+                  {loadingResumen ? (
+                    <p className="text-sm text-gray-300 text-center py-4">Cargando...</p>
+                  ) : resumen && (
+                    <div className="space-y-2.5 text-sm">
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-400 text-xs">Disponibilidad</span>
                         <span
-                          className="text-xs font-semibold px-2.5 py-0.5 rounded-full"
-                          style={{
-                            background: TALENTO_CONFIG[seleccionada.talento].bg,
-                            color:      TALENTO_CONFIG[seleccionada.talento].color,
-                          }}
+                          className="font-semibold px-2 py-0.5 rounded-full text-xs"
+                          style={
+                            resumen.ocupacion >= 100
+                              ? { background: "#fef2f2", color: "#dc2626" }
+                              : resumen.ocupacion >= 80
+                              ? { background: "#fefce8", color: "#ca8a04" }
+                              : { background: "#f0fdf4", color: "#16a34a" }
+                          }
                         >
-                          {TALENTO_CONFIG[seleccionada.talento].label}
+                          {Math.max(0, 100 - resumen.ocupacion)}% libre
                         </span>
-                      ) : (
-                        <span className="text-gray-300 text-xs">Sin asignar</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-400 text-xs">Nº proyectos</span>
+                        <span className="font-medium text-[#1a1a2e] text-xs">{resumen.totalProyectos}</span>
+                      </div>
+                      {resumen.industrias.length > 0 && (
+                        <div>
+                          <p className="text-gray-400 mb-1 text-xs">Industrias</p>
+                          <div className="flex flex-wrap gap-1">
+                            {resumen.industrias.map((i) => (
+                              <span key={i} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#eaf4ff] text-[#1a5276]">{i}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {resumen.capacidades.length > 0 && (
+                        <div>
+                          <p className="text-gray-400 mb-1 text-xs">Capacidades</p>
+                          <div className="flex flex-wrap gap-1">
+                            {resumen.capacidades.map((c) => (
+                              <span key={c} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#f0f9f4] text-[#1e7e45]">{c}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {resumen.tematicas.length > 0 && (
+                        <div>
+                          <p className="text-gray-400 mb-1 text-xs">Temáticas</p>
+                          <div className="flex flex-wrap gap-1">
+                            {resumen.tematicas.map((t) => (
+                              <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#fdf4ff] text-[#6b21a8]">{t}</span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-400 text-xs">Ausencias</span>
+                        <span className="font-medium text-[#1a1a2e] text-xs">{resumen.vacacionesDias}</span>
+                      </div>
+                      {seleccionada.talento && (
+                        <div className="flex justify-between items-center">
+                          <span className="text-gray-400 text-xs">Talento</span>
+                          <span
+                            className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                            style={{
+                              background: TALENTO_CONFIG[seleccionada.talento].bg,
+                              color: TALENTO_CONFIG[seleccionada.talento].color,
+                            }}
+                          >
+                            {TALENTO_CONFIG[seleccionada.talento].label}
+                          </span>
+                        </div>
+                      )}
+                      <div className="flex justify-between items-center">
+                        <span className="text-gray-400 text-xs">Mentor</span>
+                        <span className="font-medium text-[#1a1a2e] text-xs">
+                          {resumen.mentorNombre ?? <span className="text-gray-300">Sin mentor</span>}
+                        </span>
+                      </div>
+                      {resumen.mentoreados.length > 0 && (
+                        <div>
+                          <p className="text-gray-400 mb-1 text-xs">Es mentor de</p>
+                          <div className="flex flex-wrap gap-1">
+                            {resumen.mentoreados.map((m) => (
+                              <span key={m} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#f0f9f4] text-[#1e7e45] font-medium">{m}</span>
+                            ))}
+                          </div>
+                        </div>
                       )}
                     </div>
-
-                    {/* Mentor */}
-                    <div className="flex justify-between items-center">
-                      <span className="text-gray-400">Mentor</span>
-                      <span className="font-medium text-[#1a1a2e]">
-                        {resumen.mentorNombre ?? <span className="text-gray-300 text-xs">Sin mentor</span>}
-                      </span>
-                    </div>
-
-                    {/* Es mentor de */}
-                    {resumen.mentoreados.length > 0 && (
-                      <div>
-                        <p className="text-gray-400 mb-1">Es mentor de</p>
-                        <div className="flex flex-wrap gap-1">
-                          {resumen.mentoreados.map((m) => (
-                            <span key={m} className="text-xs px-2 py-0.5 rounded-full bg-[#f0f9f4] text-[#1e7e45] font-medium">
-                              {m}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-
-                  </div>
-                )}
+                  )}
                 </div>
               </div>
             </div>
           )}
         </div>
 
-        {/* ── Cuadrante 2: Tablero ── */}
+        {/* ── Cuadrante 2: TABLERO (solo DesgloceEngagements) ── */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden">
-          {/* Header */}
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 flex-shrink-0">Tablero</p>
+          <div className="flex-1 overflow-auto min-h-0">
+            <DesgloceEngagements />
+          </div>
+        </div>
+
+        {/* ── Cuadrante 3: RESÚMEN (toggle Gantt / Perfil individual) ── */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden">
           <div className="flex items-center justify-between mb-3 flex-shrink-0">
-            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Tablero</p>
-            <div className="flex items-center gap-2 flex-wrap justify-end">
-              {/* Toggle vistas */}
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Resúmen</p>
+            <div className="flex items-center gap-1 flex-wrap justify-end">
+              {/* Toggle Gantt / Perfil */}
               <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
-                {([
-                  { value: "persona", label: "Por persona" },
-                  { value: "proyecto", label: "Por proyecto" },
-                  { value: "perfil",    label: "Perfil individual" },
-                  { value: "desgloce", label: "Desglose engagements" },
-                ] as const).map(({ value, label }) => (
-                  <button
-                    key={value}
-                    onClick={() => setVistaTablero(value)}
-                    className="px-2.5 py-1 transition-colors"
-                    style={
-                      vistaTablero === value
-                        ? { background: "#4a90e2", color: "#fff" }
-                        : { background: "#f9f9f9", color: "#888" }
-                    }
-                  >
-                    {label}
-                  </button>
-                ))}
+                <button
+                  onClick={() => setVistaResumen("gantt")}
+                  className="px-2.5 py-1 transition-colors"
+                  style={vistaResumen === "gantt"
+                    ? { background: "#4a90e2", color: "#fff" }
+                    : { background: "#f9f9f9", color: "#888" }}
+                >
+                  Ausencias
+                </button>
+                <button
+                  onClick={() => setVistaResumen("perfil")}
+                  className="px-2.5 py-1 transition-colors"
+                  style={vistaResumen === "perfil"
+                    ? { background: "#4a90e2", color: "#fff" }
+                    : { background: "#f9f9f9", color: "#888" }}
+                >
+                  Perfil individual
+                </button>
               </div>
 
-              {/* Toggle Día/Semana/Mes — oculto en desglose (tiene su propia navegación) */}
-              {vistaTablero !== "desgloce" && (
+              {/* Navegación temporal — solo visible en vista perfil */}
+              {vistaResumen === "perfil" && (
                 <>
                   <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
                     {(["dia", "semana", "mes"] as const).map((pv) => (
                       <button
                         key={pv}
-                        onClick={() => setPeriodoTablero(pv)}
-                        className="px-2.5 py-1 transition-colors"
-                        style={
-                          periodoTablero === pv
-                            ? { background: "#1a1a1a", color: "#fff" }
-                            : { background: "#f9f9f9", color: "#888" }
-                        }
+                        onClick={() => setPeriodoResumen(pv)}
+                        className="px-2 py-1 transition-colors"
+                        style={periodoResumen === pv
+                          ? { background: "#1a1a1a", color: "#fff" }
+                          : { background: "#f9f9f9", color: "#888" }}
                       >
                         {pv === "dia" ? "Día" : pv === "semana" ? "Semana" : "Mes"}
                       </button>
                     ))}
                   </div>
-                  <button onClick={handlePrevPeriodo} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                  <button onClick={navResumenPrev} className="p-1 rounded hover:bg-gray-100 text-gray-400">
                     <ChevronLeft className="w-3.5 h-3.5" />
                   </button>
                   <span className="text-[11px] text-gray-400 whitespace-nowrap">{periodoLabel}</span>
-                  <button onClick={handleNextPeriodo} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                  <button onClick={navResumenNext} className="p-1 rounded hover:bg-gray-100 text-gray-400">
                     <ChevronRight className="w-3.5 h-3.5" />
                   </button>
                 </>
@@ -518,34 +452,12 @@ export default function InicioPage() {
             </div>
           </div>
 
-          {/* Contenido según vista */}
           <div className="flex-1 overflow-auto min-h-0">
-            {vistaTablero === "desgloce" ? (
-              <DesgloceEngagements />
-            ) : vistaTablero === "perfil" ? (
-              <PerfilIndividualTablero semanaInicio={semanaInicio} periodoVista={periodoTablero} />
-            ) : (
-              <TablonOcupacion
-                semanaInicio={semanaInicio}
-                planId={null}
-                vista={vistaTablero}
-                periodoVista={periodoTablero}
-              />
-            )}
+            {vistaResumen === "gantt"
+              ? <GanttAusencias onVerPersona={abrirResumen} />
+              : <PerfilIndividualTablero semanaInicio={semanaResumen} periodoVista={periodoResumen} />
+            }
           </div>
-        </div>
-
-        {/* ── Cuadrante 3: Disponibles ── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-4">
-            Disponibles hoy
-          </p>
-          <DisponiblesTablero onVerPersona={abrirResumen} />
-        </div>
-
-        {/* ── Cuadrante 4: Gantt Ausencias ── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 overflow-hidden">
-          <GanttAusencias onVerPersona={abrirResumen} />
         </div>
 
       </div>
