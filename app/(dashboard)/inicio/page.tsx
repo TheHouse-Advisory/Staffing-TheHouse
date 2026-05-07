@@ -11,7 +11,8 @@ import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
 import { GanttAusencias } from "@/components/inicio/GanttAusencias";
 import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTablero";
-import { DesgloceEngagements } from "@/components/inicio/DesgloceEngagements";
+import { DesgloceEngagements, type PanelInfo } from "@/components/inicio/DesgloceEngagements";
+import { PanelFitAsignacion } from "@/components/engagements/PanelFitAsignacion";
 import type { Persona } from "@/lib/types/database";
 
 const JERARQUIA_CARGOS = [
@@ -66,6 +67,10 @@ export default function InicioPage() {
   const [ocupacionMap, setOcupacionMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [alertasHoy, setAlertasHoy] = useState(0);
+
+  // Panel lateral de recomendaciones
+  const [panelReq, setPanelReq] = useState<PanelInfo | null>(null);
+  const [tableroReloadKey, setTableroReloadKey] = useState(0);
 
   // Control expansión columna derecha
   const [activeQuadrant, setActiveQuadrant] = useState<"both" | "tablero" | "resumen">("both");
@@ -233,11 +238,11 @@ export default function InicioPage() {
         </Link>
       </div>
 
-      {/* Grid 2 columnas: EQUIPO | [TABLERO encima / RESÚMEN abajo] */}
-      <div className="grid gap-4 flex-1 min-h-0" style={{ gridTemplateColumns: "200px 1fr" }}>
+      {/* Layout 3 columnas: EQUIPO | TABLERO+RESUMEN | RECOMENDACIONES */}
+      <div className="flex gap-4 flex-1 min-h-0">
 
         {/* ── Cuadrante 1: EQUIPO con % ocupación ── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col overflow-hidden relative">
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col overflow-hidden relative flex-shrink-0" style={{ width: 200 }}>
           <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 flex-shrink-0">Equipo</p>
 
           {loading ? (
@@ -414,8 +419,8 @@ export default function InicioPage() {
           )}
         </div>
 
-        {/* ── Columna derecha: TABLERO arriba + RESÚMEN abajo ── */}
-        <div className="flex flex-col gap-4 min-h-0 overflow-hidden">
+        {/* ── Columna central: TABLERO arriba + RESÚMEN abajo ── */}
+        <div className="flex-1 min-w-0 flex flex-col gap-4 min-h-0 overflow-hidden">
 
         {/* Cuadrante 2: TABLERO */}
         <div
@@ -437,7 +442,11 @@ export default function InicioPage() {
             </button>
           </div>
           <div className="flex-1 overflow-auto min-h-0">
-            <DesgloceEngagements onAsignacionChange={refreshOcupacion} />
+            <DesgloceEngagements
+              onAsignacionChange={refreshOcupacion}
+              onOpenPanel={setPanelReq}
+              externalReloadKey={tableroReloadKey}
+            />
           </div>
         </div>
 
@@ -522,7 +531,30 @@ export default function InicioPage() {
           </div>
         </div>
 
-        </div>{/* fin columna derecha */}
+        </div>{/* fin columna central */}
+
+        {/* ── Columna 3: Panel lateral RECOMENDACIONES ── */}
+        <div
+          className="flex-shrink-0 overflow-hidden transition-all duration-300 ease-in-out"
+          style={{ width: panelReq ? 380 : 0 }}
+        >
+          {panelReq && (
+            <div className="w-[380px] h-full rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+              <PanelFitAsignacion
+                reqId={panelReq.reqId}
+                engagementId={panelReq.engId}
+                engagementNombre={panelReq.engNombre}
+                engagementCliente={panelReq.engCliente}
+                onClose={() => setPanelReq(null)}
+                onAsignado={() => {
+                  setPanelReq(null);
+                  refreshOcupacion();
+                  setTableroReloadKey((k) => k + 1);
+                }}
+              />
+            </div>
+          )}
+        </div>
 
       </div>
     </div>

@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { createPortal } from "react-dom";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import {
@@ -506,21 +505,11 @@ export function PanelFitAsignacion({
     }, 900);
   }
 
-  const content = (
-    /* Contenedor full-screen: resuelve el problema de transform en ancestros */
-    <div style={{ position: "fixed", inset: 0, zIndex: 9998 }}>
-      {/* Overlay */}
-      <div
-        style={{ position: "absolute", inset: 0, background: "rgba(0,0,0,0.2)" }}
-        onClick={onClose}
-      />
+  return (
+    <div className="h-full bg-white flex flex-col relative overflow-hidden">
 
-      {/* Panel */}
-      <div style={{ position: "absolute", right: 0, top: 0, height: "100%", width: 440 }}
-        className="bg-white shadow-2xl flex flex-col relative">
-
-        {/* Header */}
-        <div className="px-5 py-4 border-b border-[#e8e8e8] bg-[#f9f9f9] flex-shrink-0">
+      {/* Header */}
+      <div className="px-5 py-4 border-b border-[#e8e8e8] bg-[#f9f9f9] flex-shrink-0">
           <div className="flex items-start justify-between gap-2">
             <div className="flex-1 min-w-0">
               <p className="text-[10px] text-[#aaa] mb-0.5 truncate">
@@ -699,19 +688,16 @@ export function PanelFitAsignacion({
           </p>
         </div>
 
-        {/* Popup de perfil (overlay sobre el panel) */}
-        {perfilAbierto && (
-          <PopupPerfil
-            persona={perfilAbierto}
-            resumen={resumenPerfil}
-            loading={loadingPerfil}
-            popupRef={popupRef}
-            onClose={() => { setPerfilAbierto(null); setResumenPerfil(null); }}
-          />
-        )}
-      </div>
+      {/* Popup de perfil (overlay sobre el panel) */}
+      {perfilAbierto && (
+        <PopupPerfil
+          persona={perfilAbierto}
+          resumen={resumenPerfil}
+          loading={loadingPerfil}
+          popupRef={popupRef}
+          onClose={() => { setPerfilAbierto(null); setResumenPerfil(null); }}
+        />
+      )}
     </div>
   );
-
-  return createPortal(content, document.body);
 }

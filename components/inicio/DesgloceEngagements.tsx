@@ -9,7 +9,6 @@ import { es } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, Plus, Pencil } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
-import { PanelFitAsignacion } from "@/components/engagements/PanelFitAsignacion";
 import type { Engagement } from "@/lib/types/database";
 
 // ── Cargos Asociado y Consultor Senior son la misma categoría visual ──
@@ -96,11 +95,17 @@ interface EngRow {
   raw: Engagement;
 }
 
-interface Props {
-  onAsignacionChange?: () => void;
+export interface PanelInfo {
+  reqId: string; engId: string; engNombre: string; engCliente: string;
 }
 
-export function DesgloceEngagements({ onAsignacionChange }: Props) {
+interface Props {
+  onAsignacionChange?: () => void;
+  onOpenPanel?: (info: PanelInfo | null) => void;
+  externalReloadKey?: number;
+}
+
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey }: Props) {
   const [vista, setVista] = useState<Vista>("semana");
   const [base, setBase] = useState<Date>(new Date());
   const [engs, setEngs] = useState<EngRow[]>([]);
@@ -111,11 +116,6 @@ export function DesgloceEngagements({ onAsignacionChange }: Props) {
   // Form crear/editar engagement
   const [formOpen, setFormOpen] = useState(false);
   const [engToEdit, setEngToEdit] = useState<Engagement | undefined>();
-
-  // Panel fit/asignación (click en círculo vacío)
-  const [panelReq, setPanelReq] = useState<{
-    reqId: string; engId: string; engNombre: string; engCliente: string;
-  } | null>(null);
 
   // Drag & Drop
   const [dragOverReqId, setDragOverReqId] = useState<string | null>(null);
@@ -210,7 +210,7 @@ export function DesgloceEngagements({ onAsignacionChange }: Props) {
       setLoading(false);
     }
     load();
-  }, [inicioStr, finStr, reloadKey]);
+  }, [inicioStr, finStr, reloadKey, externalReloadKey]);
 
   function navAnterior() {
     if (vista === "dia")    setBase((b) => addDays(startOfISOWeek(b), -7));
@@ -248,6 +248,7 @@ export function DesgloceEngagements({ onAsignacionChange }: Props) {
       estado: "activa",
     });
     refresh();
+    onOpenPanel?.(null); // cierra panel lateral al llenar el slot por drag & drop
   }
 
   // Eliminar asignación (botón X en avatar)
@@ -453,7 +454,7 @@ export function DesgloceEngagements({ onAsignacionChange }: Props) {
                                     <div
                                       key={`vacio-${req.id}`}
                                       title="Clic para asignar · Arrastra una persona aquí"
-                                      onClick={() => setPanelReq({
+                                      onClick={() => onOpenPanel?.({
                                         reqId: req.id,
                                         engId: eng.id,
                                         engNombre: eng.nombre,
@@ -535,17 +536,6 @@ export function DesgloceEngagements({ onAsignacionChange }: Props) {
         engagement={engToEdit}
       />
 
-      {/* Panel fit — abre al clicar círculo vacío */}
-      {panelReq && (
-        <PanelFitAsignacion
-          reqId={panelReq.reqId}
-          engagementId={panelReq.engId}
-          engagementNombre={panelReq.engNombre}
-          engagementCliente={panelReq.engCliente}
-          onClose={() => setPanelReq(null)}
-          onAsignado={() => { setPanelReq(null); refresh(); }}
-        />
-      )}
     </div>
   );
 }
