@@ -68,6 +68,9 @@ export default function InicioPage() {
   const [loading, setLoading] = useState(true);
   const [alertasHoy, setAlertasHoy] = useState(0);
 
+  // Colapso cuadrante EQUIPO
+  const [equipoColapsado, setEquipoColapsado] = useState(false);
+
   // Panel lateral de recomendaciones
   const [panelReq, setPanelReq] = useState<PanelInfo | null>(null);
   const [panelColapsado, setPanelColapsado] = useState(false);
@@ -248,8 +251,39 @@ export default function InicioPage() {
       <div className="flex gap-4 flex-1 min-h-0">
 
         {/* ── Cuadrante 1: EQUIPO con % ocupación ── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col overflow-hidden relative flex-shrink-0" style={{ width: 200 }}>
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 flex-shrink-0">Equipo</p>
+        <div
+          className="flex-shrink-0 overflow-hidden transition-all duration-500 ease-in-out"
+          style={{ width: equipoColapsado ? 40 : 200 }}
+        >
+        {equipoColapsado ? (
+          /* Strip colapsado */
+          <div className="w-10 h-full rounded-xl border border-gray-100 shadow-sm bg-white flex flex-col items-center py-3 gap-3">
+            <button
+              onClick={() => setEquipoColapsado(false)}
+              title="Expandir equipo"
+              className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
+            >
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+            <span
+              className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex-1 flex items-center"
+              style={{ writingMode: "vertical-rl", textOrientation: "mixed" }}
+            >
+              Equipo
+            </span>
+          </div>
+        ) : (
+        <div className="w-[200px] h-full bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col overflow-hidden relative">
+          <div className="flex items-center justify-between mb-3 flex-shrink-0">
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Equipo</p>
+            <button
+              onClick={() => setEquipoColapsado(true)}
+              title="Colapsar equipo"
+              className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
+            >
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+          </div>
 
           {loading ? (
             <p className="text-sm text-gray-300">Cargando...</p>
@@ -300,7 +334,7 @@ export default function InicioPage() {
             </div>
           )}
 
-          {/* Popup resumen persona */}
+          {/* Popup resumen persona — sólo visible cuando equipo está expandido */}
           {seleccionada && (
             <div className="absolute inset-0 bg-black/10 rounded-xl z-10 flex items-center justify-center p-3">
               <div
@@ -424,6 +458,8 @@ export default function InicioPage() {
             </div>
           )}
         </div>
+        )}{/* fin ternario equipo expandido */}
+        </div>{/* fin wrapper transición EQUIPO */}
 
         {/* ── Columna central: TABLERO arriba + RESÚMEN abajo ── */}
         <div className="flex-1 min-w-0 flex flex-col gap-4 min-h-0 overflow-hidden">
