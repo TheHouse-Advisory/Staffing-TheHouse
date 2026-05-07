@@ -6,6 +6,7 @@ import { createAnyClient } from "@/lib/supabase/client";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { getDetailedPersonAbsences, type DetalleAusenciasPersona, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
+import { ProyectosPersonaDetalle } from "./ProyectosPersonaDetalle";
 import { Button } from "@/components/ui/Button";
 import { PersonaForm } from "./PersonaForm";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
@@ -289,46 +290,23 @@ export function PersonaProfile({ id }: Props) {
           </dl>
         </div>
 
-        {/* ── Asignaciones activas ───────────────────────────── */}
+        {/* ── Proyectos activos y futuros ───────────────────── */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
-          <h3 className="font-semibold mb-4">Asignaciones activas</h3>
-          {asignaciones.length === 0 ? (
-            <p className="text-sm text-[#888]">Sin asignaciones activas.</p>
-          ) : (
-            <div className="space-y-2">
-              {asignaciones.map((a) => {
-                const { bg, text } = colorOcupacion(a.pct_dedicacion);
-                return (
-                  <div
-                    key={a.id}
-                    className="flex items-center justify-between gap-4 p-3 rounded-lg bg-[#f9f9f9] border border-[#f0f0f0]"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="font-medium text-sm truncate">{a.engagement_nombre}</p>
-                      <p className="text-xs text-[#888] mt-0.5">
-                        {format(new Date(a.fecha_inicio + "T00:00:00"), "d MMM yy", { locale: es })}
-                        {" → "}
-                        {a.fecha_fin
-                          ? format(new Date(a.fecha_fin + "T00:00:00"), "d MMM yy", { locale: es })
-                          : "indefinido"}
-                      </p>
-                    </div>
-                    <span
-                      className="flex-shrink-0 text-xs font-semibold px-2.5 py-1 rounded-full"
-                      style={{ background: bg, color: text }}
-                    >
-                      {a.pct_dedicacion}%
-                    </span>
-                  </div>
-                );
-              })}
-              {asignaciones.length > 1 && (
-                <p className="text-xs text-[#aaa] text-right pt-1">
-                  Total: {pctTotal}% de capacidad comprometida
-                </p>
-              )}
-            </div>
-          )}
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold">Proyectos activos y futuros</h3>
+            {pctTotal > 0 && (() => {
+              const { bg, text } = colorOcupacion(pctTotal);
+              return (
+                <span
+                  className="text-xs font-semibold px-2.5 py-1 rounded-full"
+                  style={{ background: bg, color: text }}
+                >
+                  {pctTotal}% ocupado
+                </span>
+              );
+            })()}
+          </div>
+          <ProyectosPersonaDetalle personaId={id} />
         </div>
 
         {/* ── Historial de Ausencias ───────────────────────── */}

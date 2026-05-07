@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, AlertTriangle, CheckCircle, User,
-  Pencil, Trash2, Plus, X, Flame,
+  Pencil, Trash2, Plus, X, Flame, Users,
 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -18,6 +18,7 @@ import { ConfirmDialog } from "@/components/ui/Modal";
 import { Drawer } from "@/components/ui/Drawer";
 import { FieldWrapper, Input, Select } from "@/components/ui/FormField";
 import { EngagementForm } from "./EngagementForm";
+import { ExtenderProyecto } from "./ExtenderProyecto";
 import { PanelFitAsignacion } from "./PanelFitAsignacion";
 import { ESTADO_ENGAGEMENT, CARGOS } from "@/lib/constants";
 import type { Engagement, CoberturaEngagement } from "@/lib/types/database";
@@ -631,6 +632,16 @@ export function EngagementDetail({ id }: Props) {
             </div>
           </div>
         )}
+        {/* ── Extender Proyecto ─────────────────────────────────── */}
+        <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
+          <div className="px-5 py-3 bg-[#f0f9ff] border-b border-[#dbeafe] flex items-center gap-2">
+            <Users className="w-4 h-4 text-[#4a90e2] flex-shrink-0" />
+            <p className="font-semibold text-sm text-[#1a1a1a]">Extender Proyecto</p>
+          </div>
+          <div className="p-5">
+            <ExtenderProyecto engagementId={id} onExtended={load} />
+          </div>
+        </div>
       </div>
 
       {/* ── Drawer: crear / editar requerimiento ─────────────── */}

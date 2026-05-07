@@ -14,6 +14,7 @@ import { GanttAusencias } from "@/components/inicio/GanttAusencias";
 import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTablero";
 import { DesgloceEngagements, type PanelInfo } from "@/components/inicio/DesgloceEngagements";
 import { PanelFitAsignacion } from "@/components/engagements/PanelFitAsignacion";
+import { ProyectosPersonaDetalle } from "@/components/personas/ProyectosPersonaDetalle";
 import type { Persona } from "@/lib/types/database";
 
 const JERARQUIA_CARGOS = [
@@ -71,8 +72,8 @@ export default function InicioPage() {
   const [loading, setLoading] = useState(true);
   const [alertasHoy, setAlertasHoy] = useState(0);
 
-  // Colapso cuadrante EQUIPO
-  const [equipoColapsado, setEquipoColapsado] = useState(false);
+  // Estado cuadrante EQUIPO: colapsado strip | normal 200px | expandido flex-1
+  const [equipoEstado, setEquipoEstado] = useState<"normal" | "colapsado" | "expandido">("normal");
 
   // Panel lateral de recomendaciones
   const [panelReq, setPanelReq] = useState<PanelInfo | null>(null);
@@ -255,14 +256,20 @@ export default function InicioPage() {
 
         {/* ── Cuadrante 1: EQUIPO con % ocupación ── */}
         <div
-          className="flex-shrink-0 overflow-hidden transition-all duration-500 ease-in-out"
-          style={{ width: equipoColapsado ? 40 : 200 }}
+          className="overflow-hidden transition-all duration-500 ease-in-out"
+          style={
+            equipoEstado === "colapsado"
+              ? { flexGrow: 0, flexShrink: 0, flexBasis: 40 }
+              : equipoEstado === "normal"
+              ? { flexGrow: 0, flexShrink: 0, flexBasis: 200 }
+              : { flexGrow: 1, flexShrink: 1, flexBasis: "0%", minWidth: 0 }
+          }
         >
-        {equipoColapsado ? (
+        {equipoEstado === "colapsado" ? (
           /* Strip colapsado */
           <div className="w-10 h-full rounded-xl border border-gray-100 shadow-sm bg-white flex flex-col items-center py-3 gap-3">
             <button
-              onClick={() => setEquipoColapsado(false)}
+              onClick={() => setEquipoEstado("normal")}
               title="Expandir equipo"
               className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
             >
@@ -276,16 +283,39 @@ export default function InicioPage() {
             </span>
           </div>
         ) : (
-        <div className="w-[200px] h-full bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col overflow-hidden relative">
+        <div className="w-full h-full bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col overflow-hidden relative">
           <div className="flex items-center justify-between mb-3 flex-shrink-0">
             <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Equipo</p>
-            <button
-              onClick={() => setEquipoColapsado(true)}
-              title="Colapsar equipo"
-              className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
-            >
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
+            <div className="flex items-center gap-0.5">
+              {equipoEstado === "expandido" ? (
+                /* Expandido: un solo botón vuelve a normal */
+                <button
+                  onClick={() => setEquipoEstado("normal")}
+                  title="Reducir equipo"
+                  className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
+                >
+                  <ChevronLeft className="w-3.5 h-3.5" />
+                </button>
+              ) : (
+                /* Normal: colapsar al strip | expandir */
+                <>
+                  <button
+                    onClick={() => setEquipoEstado("colapsado")}
+                    title="Colapsar equipo"
+                    className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
+                  >
+                    <ChevronLeft className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    onClick={() => setEquipoEstado("expandido")}
+                    title="Ampliar equipo"
+                    className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
+                  >
+                    <ChevronRight className="w-3.5 h-3.5" />
+                  </button>
+                </>
+              )}
+            </div>
           </div>
 
           {loading ? (
@@ -389,6 +419,11 @@ export default function InicioPage() {
                       <div className="flex justify-between items-center">
                         <span className="text-gray-400 text-xs">Nº proyectos</span>
                         <span className="font-medium text-[#1a1a2e] text-xs">{resumen.totalProyectos}</span>
+                      </div>
+                      {/* Proyectos actuales con días acumulados */}
+                      <div>
+                        <p className="text-gray-400 text-xs mb-1.5">Proyectos actuales</p>
+                        <ProyectosPersonaDetalle personaId={seleccionada.id} compact />
                       </div>
                       {resumen.industrias.length > 0 && (
                         <div>

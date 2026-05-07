@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Plus, Trash2 } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronUp, Users } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
@@ -9,6 +9,7 @@ import { FieldWrapper, Input, Select, Textarea } from "@/components/ui/FormField
 import { MultiSelect } from "@/components/ui/MultiSelect";
 import { CARGOS_OPTIONS } from "@/lib/constants";
 import type { Engagement, RequerimientoEngagement } from "@/lib/types/database";
+import { ExtenderProyecto } from "./ExtenderProyecto";
 
 interface ReqRow {
   id?: string;
@@ -49,9 +50,12 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
   const [capacidadesOpts, setCapacidadesOpts] = useState<{ value: string; label: string }[]>([]);
   const [tematicasOpts, setTematicasOpts] = useState<{ value: string; label: string }[]>([]);
 
+  const [extOpen, setExtOpen] = useState(false);
+
   useEffect(() => {
     if (!open) {
       setForm({ ...EMPTY_ENG }); setReqs([]); setErrors({}); setServerError(null);
+      setExtOpen(false);
       return;
     }
     async function load() {
@@ -367,6 +371,33 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
             ))}
           </div>
         </div>
+
+        {/* ── Extender Proyecto (solo en modo edición) ── */}
+        {engagement && (
+          <div className="border-t border-[#f0f0f0] pt-5">
+            <button
+              type="button"
+              onClick={() => setExtOpen((o) => !o)}
+              className="w-full flex items-center justify-between group"
+            >
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 rounded-md bg-[#f0f9ff] flex items-center justify-center">
+                  <Users className="w-3.5 h-3.5 text-[#4a90e2]" />
+                </div>
+                <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">Extender Proyecto</p>
+              </div>
+              {extOpen
+                ? <ChevronUp className="w-4 h-4 text-[#aaa] group-hover:text-[#666] transition-colors" />
+                : <ChevronDown className="w-4 h-4 text-[#aaa] group-hover:text-[#666] transition-colors" />
+              }
+            </button>
+            {extOpen && (
+              <div className="mt-4">
+                <ExtenderProyecto engagementId={engagement.id} onExtended={onSuccess} />
+              </div>
+            )}
+          </div>
+        )}
       </div>
     </Drawer>
   );

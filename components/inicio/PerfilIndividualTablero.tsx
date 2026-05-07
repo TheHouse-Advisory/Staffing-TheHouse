@@ -5,6 +5,7 @@ import { addDays, addMonths, format, isWeekend, startOfMonth } from "date-fns";
 import { es } from "date-fns/locale";
 import { createAnyClient } from "@/lib/supabase/client";
 import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
+import { expandirRango } from "@/lib/queries/ausencias";
 
 const JERARQUIA: Record<string, number> = {
   "Socio": 1, "Director de Proyectos": 2, "Director": 2,
@@ -75,6 +76,16 @@ function getColumnas(semanaInicio: Date, pv: string): Columna[] {
 
 function overlapsColumna(inicio: string, fin: string, col: Columna): boolean {
   return inicio <= col.finStr && fin >= col.inicioStr;
+}
+
+function calcDiasEngagement(inicio: string, fin: string | null) {
+  const hoy = new Date().toISOString().split("T")[0];
+  if (inicio > hoy) {
+    const d = expandirRango(hoy, inicio).length - 1;
+    return { dias: d, esFuturo: true };
+  }
+  const finClamp = fin && fin < hoy ? fin : hoy;
+  return { dias: expandirRango(inicio, finClamp).length, esFuturo: false };
 }
 
 export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
@@ -227,13 +238,25 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
                   </tr>
                 );
 
-                const filasProyectos = persona.proyectos.map((proy) => (
+                const filasProyectos = persona.proyectos.map((proy) => {
+                  const { dias, esFuturo } = calcDiasEngagement(proy.inicio, proy.fin);
+                  return (
                   <tr key={`proy-${persona.id}-${proy.id}`}>
                     <td className="pr-3 py-0.5 sticky left-0 bg-white z-10">
-                      <p className="text-gray-500 truncate max-w-[130px] pl-2">
-                        {proy.nombre}
-                        {proy.cliente && <span className="text-gray-300 ml-1">· {proy.cliente}</span>}
-                      </p>
+                      <div className="flex items-center justify-between gap-1 pl-2 max-w-[130px]">
+                        <p className="text-gray-500 truncate text-xs min-w-0">
+                          {proy.nombre}
+                          {proy.cliente && <span className="text-gray-300 ml-1">· {proy.cliente}</span>}
+                        </p>
+                        <span
+                          className="flex-shrink-0 text-[9px] font-bold px-1 py-0.5 rounded leading-none"
+                          style={esFuturo
+                            ? { background: "#f0fdf4", color: "#15803d" }
+                            : { background: "#dbeafe", color: "#1d4ed8" }}
+                        >
+                          {esFuturo ? `En ${dias}d` : `${dias}d`}
+                        </span>
+                      </div>
                     </td>
                     {columnasMostradas.map((col, i) => {
                       const activo = overlapsColumna(proy.inicio, proy.fin, col);
@@ -254,7 +277,8 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
                       );
                     })}
                   </tr>
-                ));
+                  );
+                });
 
                 const filaAusencia = persona.ausencias.length > 0 ? (
                   <tr key={`aus-${persona.id}`}>
