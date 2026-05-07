@@ -9,20 +9,38 @@ import { es } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, Plus, Pencil } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
+import { PanelFitAsignacion } from "@/components/engagements/PanelFitAsignacion";
 import type { Engagement } from "@/lib/types/database";
+
+// ── Cargos Asociado y Consultor Senior son la misma categoría visual ──
+const GRUPO_SENIOR = ["Asociado", "Consultor Senior", "Asociado / Consultor Senior"];
+const LABEL_SENIOR = "Asociado / Consultor Senior";
+
+function normalizeCargoDisplay(cargo: string): string {
+  return GRUPO_SENIOR.includes(cargo) ? LABEL_SENIOR : cargo;
+}
+function matchesCargo(reqCargo: string | null, rowCargo: string): boolean {
+  if (!reqCargo) return false;
+  if (normalizeCargoDisplay(reqCargo) === rowCargo) return true;
+  return false;
+}
 
 const JERARQUIA: Record<string, number> = {
   "Socio": 1, "Director de Proyectos": 2, "Director": 2,
-  "Gerente de Proyectos": 3, "Gerente": 3, "Asociado": 4,
-  "Consultor Senior": 5, "Consultor de Proyectos": 6, "Consultor Proyecto": 6,
-  "Consultor": 6, "Consultor Analista": 7, "Analista Senior": 7,
-  "Consultor Trainee": 8, "Analista": 8, "Practicante": 9,
+  "Gerente de Proyectos": 3, "Gerente": 3,
+  "Asociado / Consultor Senior": 4,
+  "Asociado": 4, "Consultor Senior": 4,
+  "Consultor de Proyectos": 5, "Consultor Proyecto": 5,
+  "Consultor": 5, "Consultor Analista": 6, "Analista Senior": 6,
+  "Consultor Trainee": 7, "Analista": 7, "Practicante": 8,
 };
 
 const COLORES: Record<string, string> = {
   "Socio": "#1a1a2e", "Director de Proyectos": "#4a90e2", "Director": "#4a90e2",
-  "Gerente de Proyectos": "#7c5cbf", "Gerente": "#7c5cbf", "Asociado": "#e2884a",
-  "Consultor Senior": "#4ab89a", "Consultor de Proyectos": "#e24a6a",
+  "Gerente de Proyectos": "#7c5cbf", "Gerente": "#7c5cbf",
+  "Asociado / Consultor Senior": "#e2884a",
+  "Asociado": "#e2884a", "Consultor Senior": "#4ab89a",
+  "Consultor de Proyectos": "#e24a6a",
   "Consultor Analista": "#a0b84a", "Consultor Trainee": "#c07c4a",
 };
 const COLOR_DEFAULT = "#94a3b8";
@@ -37,7 +55,6 @@ function columnasDia(base: Date): Columna[] {
     return { label: format(d, "EEE", { locale: es }), sublabel: format(d, "d MMM", { locale: es }), inicio: d, fin: d };
   });
 }
-
 function columnasSemana(base: Date): Columna[] {
   const inicio = startOfISOWeek(base);
   return Array.from({ length: 5 }, (_, i) => {
@@ -46,38 +63,31 @@ function columnasSemana(base: Date): Columna[] {
     return { label: format(s, "d MMM", { locale: es }), sublabel: format(fin, "d MMM", { locale: es }), inicio: s, fin };
   });
 }
-
 function columnasMes(base: Date): Columna[] {
   return Array.from({ length: 4 }, (_, i) => {
     const m = addMonths(base, i);
-    return {
-      label: format(m, "MMM", { locale: es }),
-      sublabel: format(m, "yyyy"),
-      inicio: startOfMonth(m),
-      fin: endOfMonth(m),
-    };
+    return { label: format(m, "MMM", { locale: es }), sublabel: format(m, "yyyy"), inicio: startOfMonth(m), fin: endOfMonth(m) };
   });
 }
-
 function rangoSolapan(aIni: string, aFin: string | null, cIni: Date, cFin: Date) {
   if (!aFin) return new Date(aIni) <= cFin;
   return new Date(aIni) <= cFin && new Date(aFin) >= cIni;
 }
-
 function iniciales(nombre: string, apellido: string) {
   return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
 }
 
 interface PersonaAsig {
   id: string; nombre: string; apellido: string;
-  cargo: string | null; pct: number; fecha_inicio: string; fecha_fin: string;
+  cargo: string | null; pct: number;
+  fecha_inicio: string; fecha_fin: string;
+  asignacionId: string;
 }
-
 interface ReqData {
   id: string; cargo_requerido: string | null;
   fecha_inicio: string; fecha_fin: string;
+  pct_dedicacion: number;
 }
-
 interface EngRow {
   id: string; nombre: string; cliente: string | null; tipo: string;
   fecha_inicio: string; fecha_fin: string | null;
@@ -86,7 +96,11 @@ interface EngRow {
   raw: Engagement;
 }
 
-export function DesgloceEngagements() {
+interface Props {
+  onAsignacionChange?: () => void;
+}
+
+export function DesgloceEngagements({ onAsignacionChange }: Props) {
   const [vista, setVista] = useState<Vista>("semana");
   const [base, setBase] = useState<Date>(new Date());
   const [engs, setEngs] = useState<EngRow[]>([]);
@@ -94,9 +108,18 @@ export function DesgloceEngagements() {
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
 
-  // Form crear/editar
+  // Form crear/editar engagement
   const [formOpen, setFormOpen] = useState(false);
   const [engToEdit, setEngToEdit] = useState<Engagement | undefined>();
+
+  // Panel fit/asignación (click en círculo vacío)
+  const [panelReq, setPanelReq] = useState<{
+    reqId: string; engId: string; engNombre: string; engCliente: string;
+  } | null>(null);
+
+  // Drag & Drop
+  const [dragOverReqId, setDragOverReqId] = useState<string | null>(null);
+  const [desasignando, setDesasignando] = useState<string | null>(null);
 
   const columnas: Columna[] =
     vista === "dia" ? columnasDia(base) :
@@ -119,7 +142,7 @@ export function DesgloceEngagements() {
           .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null`),
 
         sb.from("asignacion")
-          .select("engagement_id, persona_id, pct_dedicacion, fecha_inicio, fecha_fin, persona:persona_id(nombre, apellido, cargo_actual)" as any)
+          .select("id, engagement_id, persona_id, pct_dedicacion, fecha_inicio, fecha_fin, persona:persona_id(nombre, apellido, cargo_actual)" as any)
           .eq("estado", "activa")
           .lte("fecha_inicio", finStr)
           .gte("fecha_fin", inicioStr),
@@ -137,8 +160,7 @@ export function DesgloceEngagements() {
           tipo: e.tipo ?? "proyecto",
           fecha_inicio: e.fecha_inicio,
           fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? null,
-          personas: [], reqs: [],
-          raw: e as Engagement,
+          personas: [], reqs: [], raw: e as Engagement,
         });
       }
 
@@ -153,10 +175,10 @@ export function DesgloceEngagements() {
           pct: Number(a.pct_dedicacion),
           fecha_inicio: a.fecha_inicio,
           fecha_fin: a.fecha_fin,
+          asignacionId: a.id,
         });
       }
 
-      // Ordenar personas por jerarquía
       for (const eng of engMap.values()) {
         eng.personas.sort((a, b) => {
           const ia = JERARQUIA[a.cargo ?? ""] ?? 99;
@@ -165,11 +187,11 @@ export function DesgloceEngagements() {
         });
       }
 
-      // Fetch requerimientos para mostrar slots vacíos
+      // Requerimientos (para círculos vacíos)
       const engIds = [...engMap.keys()];
       if (engIds.length > 0) {
         const { data: reqData } = await sb.from("requerimiento_engagement")
-          .select("id, engagement_id, cargo_requerido, fecha_inicio, fecha_fin")
+          .select("id, engagement_id, cargo_requerido, fecha_inicio, fecha_fin, pct_dedicacion")
           .in("engagement_id", engIds);
         for (const r of (reqData ?? []) as any[]) {
           const eng = engMap.get(r.engagement_id);
@@ -178,6 +200,7 @@ export function DesgloceEngagements() {
             cargo_requerido: r.cargo_requerido,
             fecha_inicio: r.fecha_inicio,
             fecha_fin: r.fecha_fin,
+            pct_dedicacion: Number(r.pct_dedicacion),
           });
         }
       }
@@ -200,19 +223,40 @@ export function DesgloceEngagements() {
     if (vista === "mes")    setBase((b) => addMonths(b, 4));
   }
 
-  function abrirNuevo() {
-    setEngToEdit(undefined);
-    setFormOpen(true);
-  }
-
-  function abrirEditar(eng: EngRow) {
-    setEngToEdit(eng.raw);
-    setFormOpen(true);
-  }
-
-  function handleFormSuccess() {
-    setFormOpen(false);
+  function refresh() {
     setReloadKey((k) => k + 1);
+    onAsignacionChange?.();
+  }
+
+  // Drop de persona desde cuadrante EQUIPO sobre un slot vacío
+  async function handleDrop(e: React.DragEvent, eng: EngRow, req: ReqData) {
+    e.preventDefault();
+    setDragOverReqId(null);
+    let data: { personaId: string; nombre: string; apellido: string; cargo_actual: string } | null = null;
+    try { data = JSON.parse(e.dataTransfer.getData("persona")); } catch { return; }
+    if (!data?.personaId) return;
+
+    const sb = createAnyClient();
+    await (sb as any).from("asignacion").insert({
+      engagement_id: eng.id,
+      requerimiento_id: req.id,
+      persona_id: data.personaId,
+      cargo_al_momento: data.cargo_actual,
+      pct_dedicacion: req.pct_dedicacion,
+      fecha_inicio: req.fecha_inicio,
+      fecha_fin: req.fecha_fin,
+      estado: "activa",
+    });
+    refresh();
+  }
+
+  // Eliminar asignación (botón X en avatar)
+  async function handleDesasignar(asignacionId: string) {
+    setDesasignando(asignacionId);
+    const sb = createAnyClient();
+    await sb.from("asignacion").delete().eq("id", asignacionId);
+    setDesasignando(null);
+    refresh();
   }
 
   const hoy = new Date();
@@ -221,26 +265,20 @@ export function DesgloceEngagements() {
     <div className="flex flex-col h-full">
       {/* Barra de controles */}
       <div className="flex items-center justify-between mb-3 flex-shrink-0">
-        {/* Botón nuevo engagement */}
         <button
-          onClick={abrirNuevo}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white transition-colors"
+          onClick={() => { setEngToEdit(undefined); setFormOpen(true); }}
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white transition-colors hover:opacity-90"
           style={{ background: "#4a90e2" }}
         >
           <Plus className="w-3 h-3" />
           Nuevo Engagement
         </button>
-
-        {/* Navegación temporal */}
         <div className="flex items-center gap-1">
           <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
             {(["dia", "semana", "mes"] as Vista[]).map((v) => (
-              <button
-                key={v}
-                onClick={() => setVista(v)}
+              <button key={v} onClick={() => setVista(v)}
                 className="px-2.5 py-1 transition-colors"
-                style={vista === v ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}
-              >
+                style={vista === v ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
                 {v === "dia" ? "Día" : v === "semana" ? "Semana" : "Mes"}
               </button>
             ))}
@@ -260,26 +298,18 @@ export function DesgloceEngagements() {
         <p className="text-sm text-gray-300 italic">Sin engagements activos en este período.</p>
       ) : (
         <div className="flex-1 overflow-auto">
-          <table
-            className="w-full text-xs border-collapse"
-            style={{ minWidth: `${180 + columnas.length * 80}px` }}
-          >
+          <table className="w-full text-xs border-collapse"
+            style={{ minWidth: `${180 + columnas.length * 80}px` }}>
             <thead className="sticky top-0 bg-white z-20">
               <tr>
-                <th
-                  className="text-left pr-3 pb-2 text-gray-400 font-semibold sticky left-0 bg-white z-30"
-                  style={{ minWidth: 160 }}
-                >
+                <th className="text-left pr-3 pb-2 text-gray-400 font-semibold sticky left-0 bg-white z-30" style={{ minWidth: 160 }}>
                   Engagement
                 </th>
                 {columnas.map((col, i) => {
                   const esHoy = col.inicio <= hoy && hoy <= col.fin;
                   return (
-                    <th
-                      key={i}
-                      className="text-center pb-2 font-semibold"
-                      style={{ minWidth: 76, color: esHoy ? "#4a90e2" : "#aaa" }}
-                    >
+                    <th key={i} className="text-center pb-2 font-semibold"
+                      style={{ minWidth: 76, color: esHoy ? "#4a90e2" : "#aaa" }}>
                       <div className="capitalize">{col.label}</div>
                       <div className="font-normal text-[10px]">{col.sublabel}</div>
                     </th>
@@ -287,7 +317,6 @@ export function DesgloceEngagements() {
                 })}
               </tr>
             </thead>
-
             <tbody>
               {[
                 { tipo: "proyecto",      label: "Proyectos",              color: "#4a90e2" },
@@ -302,9 +331,7 @@ export function DesgloceEngagements() {
                     <td colSpan={columnas.length + 1} className="pt-4 pb-1">
                       <div className="flex items-center gap-2">
                         <div className="w-1 h-4 rounded-full flex-shrink-0" style={{ background: secColor }} />
-                        <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: secColor }}>
-                          {label}
-                        </span>
+                        <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: secColor }}>{label}</span>
                         <span className="text-[10px] text-gray-300">{lista.length}</span>
                         <div className="flex-1 h-0.5 rounded-full" style={{ background: secColor, opacity: 0.35 }} />
                       </div>
@@ -313,11 +340,11 @@ export function DesgloceEngagements() {
                 );
 
                 const filasEngs = lista.flatMap((eng, ei) => {
-                  // Cargos únicos: union de asignados + requeridos (con cargo específico)
-                  const cargosDePersonas = eng.personas.map((p) => p.cargo ?? "Sin cargo");
+                  // Cargos únicos normalizados (Asociado + Consultor Senior → un solo row)
+                  const cargosDePersonas = eng.personas.map((p) => normalizeCargoDisplay(p.cargo ?? "Sin cargo"));
                   const cargosDeReqs = eng.reqs
                     .filter((r) => r.cargo_requerido)
-                    .map((r) => r.cargo_requerido!);
+                    .map((r) => normalizeCargoDisplay(r.cargo_requerido!));
                   const cargosUnicos = Array.from(new Set([...cargosDePersonas, ...cargosDeReqs]))
                     .sort((a, b) => (JERARQUIA[a] ?? 99) - (JERARQUIA[b] ?? 99));
 
@@ -331,22 +358,17 @@ export function DesgloceEngagements() {
                     </tr>
                   ) : null;
 
-                  // Fila cabecera con botón editar
                   const filaHdr = (
                     <tr key={`hdr-${eng.id}`}>
                       <td className="pr-3 pt-2 pb-1 sticky left-0 bg-white z-10">
                         <div className="flex items-center gap-1 group">
                           <div className="flex-1 min-w-0">
                             <p className="font-bold text-[#1a1a2e] truncate max-w-[130px] text-[12px]">{eng.nombre}</p>
-                            {eng.cliente && (
-                              <p className="text-[10px] text-gray-400 truncate max-w-[130px]">{eng.cliente}</p>
-                            )}
+                            {eng.cliente && <p className="text-[10px] text-gray-400 truncate max-w-[130px]">{eng.cliente}</p>}
                           </div>
-                          <button
-                            onClick={() => abrirEditar(eng)}
+                          <button onClick={() => { setEngToEdit(eng.raw); setFormOpen(true); }}
                             title="Editar engagement"
-                            className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-100 text-gray-400 transition-opacity flex-shrink-0"
-                          >
+                            className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-100 text-gray-400 transition-opacity flex-shrink-0">
                             <Pencil className="w-3 h-3" />
                           </button>
                         </div>
@@ -356,10 +378,8 @@ export function DesgloceEngagements() {
                         const activo = rangoSolapan(eng.fecha_inicio, eng.fecha_fin, col.inicio, col.fin);
                         return (
                           <td key={i} className="py-1 px-1">
-                            {activo && (
-                              <div className="h-1.5 rounded-full"
-                                style={{ background: esHoy ? "#bfdbfe" : "#e0e7ff" }} />
-                            )}
+                            {activo && <div className="h-1.5 rounded-full"
+                              style={{ background: esHoy ? "#bfdbfe" : "#e0e7ff" }} />}
                           </td>
                         );
                       })}
@@ -367,7 +387,10 @@ export function DesgloceEngagements() {
                   );
 
                   const filasCargo = cargosUnicos.map((cargo) => {
-                    const personas = eng.personas.filter((p) => (p.cargo ?? "Sin cargo") === cargo);
+                    // Personas que coinciden con este row (normalizado)
+                    const personas = eng.personas.filter((p) =>
+                      normalizeCargoDisplay(p.cargo ?? "Sin cargo") === cargo
+                    );
                     const cargoColor = COLORES[cargo] ?? COLOR_DEFAULT;
 
                     return (
@@ -377,36 +400,42 @@ export function DesgloceEngagements() {
                         </td>
                         {columnas.map((col, i) => {
                           const esHoy = col.inicio <= hoy && hoy <= col.fin;
-
-                          // Personas asignadas activas en esta columna
                           const activos = personas.filter((p) =>
                             rangoSolapan(p.fecha_inicio, p.fecha_fin, col.inicio, col.fin)
                           );
-
-                          // Requerimientos de este cargo activos en esta columna
+                          // Requerimientos de este cargo en este periodo (sin cubrir)
                           const reqsEnCol = eng.reqs.filter((r) =>
-                            r.cargo_requerido === cargo &&
+                            matchesCargo(r.cargo_requerido, cargo) &&
                             rangoSolapan(r.fecha_inicio, r.fecha_fin, col.inicio, col.fin)
                           );
-                          // Slots vacíos = reqs sin persona que los cubra
-                          const vacios = Math.max(0, reqsEnCol.length - activos.length);
+                          const unfilledReqs = reqsEnCol.slice(activos.length);
 
                           return (
                             <td key={i} className="py-0.5 px-1">
                               <div className="flex flex-wrap gap-1 justify-center min-h-[36px] items-center">
-                                {/* Personas asignadas */}
+                                {/* Personas asignadas con botón X */}
                                 {activos.map((p) => (
-                                  <div key={p.id} title={`${p.nombre} ${p.apellido} · ${p.pct}%`}
-                                    className="flex flex-col items-center gap-0.5">
-                                    <div className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-sm"
+                                  <div key={p.asignacionId}
+                                    title={`${p.nombre} ${p.apellido} · ${p.pct}%`}
+                                    className="flex flex-col items-center gap-0.5 relative group/persona">
+                                    <div
+                                      className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-sm"
                                       style={{
                                         backgroundColor: cargoColor,
-                                        opacity: esHoy ? 1 : 0.75,
+                                        opacity: desasignando === p.asignacionId ? 0.4 : esHoy ? 1 : 0.75,
                                         outline: esHoy ? `2px solid ${cargoColor}` : "none",
                                         outlineOffset: "2px",
                                       }}>
                                       {iniciales(p.nombre, p.apellido)}
                                     </div>
+                                    {/* X para desasignar */}
+                                    <button
+                                      onClick={() => handleDesasignar(p.asignacionId)}
+                                      title="Desasignar"
+                                      className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 text-white opacity-0 group-hover/persona:opacity-100 flex items-center justify-center transition-opacity z-10 hover:bg-red-600"
+                                    >
+                                      <span className="text-[9px] leading-none font-bold">×</span>
+                                    </button>
                                     <span className="text-[9px] font-bold px-1 rounded-full leading-tight"
                                       style={{
                                         background: esHoy ? "#dbeafe" : "#f1f5f9",
@@ -417,18 +446,34 @@ export function DesgloceEngagements() {
                                   </div>
                                 ))}
 
-                                {/* Slots vacíos — círculo con borde punteado del color del cargo */}
-                                {Array.from({ length: vacios }).map((_, vi) => (
-                                  <div key={`vacio-${vi}`}
-                                    title={`Requerimiento sin asignar: ${cargo}`}
-                                    className="w-7 h-7 rounded-full flex items-center justify-center"
-                                    style={{
-                                      border: `2px dashed ${cargoColor}`,
-                                      opacity: 0.6,
-                                    }}>
-                                    <span className="text-[8px] font-bold" style={{ color: cargoColor }}>?</span>
-                                  </div>
-                                ))}
+                                {/* Slots vacíos — clicables y drop targets */}
+                                {unfilledReqs.map((req) => {
+                                  const isDragOver = dragOverReqId === req.id;
+                                  return (
+                                    <div
+                                      key={`vacio-${req.id}`}
+                                      title="Clic para asignar · Arrastra una persona aquí"
+                                      onClick={() => setPanelReq({
+                                        reqId: req.id,
+                                        engId: eng.id,
+                                        engNombre: eng.nombre,
+                                        engCliente: eng.cliente ?? "",
+                                      })}
+                                      onDragOver={(e) => { e.preventDefault(); setDragOverReqId(req.id); }}
+                                      onDragLeave={() => setDragOverReqId(null)}
+                                      onDrop={(e) => handleDrop(e, eng, req)}
+                                      className="w-7 h-7 rounded-full flex items-center justify-center cursor-pointer transition-all duration-150"
+                                      style={{
+                                        border: `2px dashed ${cargoColor}`,
+                                        opacity: isDragOver ? 1 : 0.6,
+                                        background: isDragOver ? `${cargoColor}22` : "transparent",
+                                        transform: isDragOver ? "scale(1.15)" : "scale(1)",
+                                      }}
+                                    >
+                                      <span className="text-[10px] font-bold" style={{ color: cargoColor }}>+</span>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </td>
                           );
@@ -486,9 +531,21 @@ export function DesgloceEngagements() {
       <EngagementForm
         open={formOpen}
         onClose={() => setFormOpen(false)}
-        onSuccess={handleFormSuccess}
+        onSuccess={() => { setFormOpen(false); refresh(); }}
         engagement={engToEdit}
       />
+
+      {/* Panel fit — abre al clicar círculo vacío */}
+      {panelReq && (
+        <PanelFitAsignacion
+          reqId={panelReq.reqId}
+          engagementId={panelReq.engId}
+          engagementNombre={panelReq.engNombre}
+          engagementCliente={panelReq.engCliente}
+          onClose={() => setPanelReq(null)}
+          onAsignado={() => { setPanelReq(null); refresh(); }}
+        />
+      )}
     </div>
   );
 }

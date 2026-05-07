@@ -136,6 +136,22 @@ export default function InicioPage() {
     load();
   }, []);
 
+  /** Re-fetch ocupación tras una asignación nueva o eliminada */
+  async function refreshOcupacion() {
+    const sb = createAnyClient();
+    const hoy = format(new Date(), "yyyy-MM-dd");
+    const { data } = await sb.from("asignacion")
+      .select("persona_id, pct_dedicacion")
+      .eq("estado", "activa")
+      .lte("fecha_inicio", hoy)
+      .gte("fecha_fin", hoy);
+    const map: Record<string, number> = {};
+    for (const a of (data ?? []) as { persona_id: string; pct_dedicacion: number }[]) {
+      map[a.persona_id] = (map[a.persona_id] ?? 0) + Number(a.pct_dedicacion);
+    }
+    setOcupacionMap(map);
+  }
+
   useEffect(() => {
     function handleClick(e: MouseEvent) {
       if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
@@ -240,9 +256,16 @@ export default function InicioPage() {
                         return (
                           <button
                             key={p.id}
+                            draggable
+                            onDragStart={(e) => e.dataTransfer.setData("persona", JSON.stringify({
+                              personaId: p.id,
+                              nombre: p.nombre,
+                              apellido: p.apellido,
+                              cargo_actual: p.cargo_actual,
+                            }))}
                             onClick={() => abrirResumen(p)}
                             title={`${p.nombre} ${p.apellido} — ${pct}% ocupado`}
-                            className="flex flex-col items-center gap-0.5 hover:scale-110 transition-transform"
+                            className="flex flex-col items-center gap-0.5 hover:scale-110 transition-transform cursor-grab active:cursor-grabbing"
                           >
                             <div
                               className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[12px] font-bold shadow-sm"
@@ -414,7 +437,7 @@ export default function InicioPage() {
             </button>
           </div>
           <div className="flex-1 overflow-auto min-h-0">
-            <DesgloceEngagements />
+            <DesgloceEngagements onAsignacionChange={refreshOcupacion} />
           </div>
         </div>
 

@@ -317,7 +317,13 @@ export async function fetchPersonasFit(
     .order("apellido");
 
   if (req.cargo_requerido) {
-    query = query.eq("cargo_actual", req.cargo_requerido);
+    // Asociado y Consultor Senior son la misma categoría de búsqueda
+    const GRUPO_SENIOR = ["Asociado", "Consultor Senior", "Asociado / Consultor Senior"];
+    if (GRUPO_SENIOR.includes(req.cargo_requerido)) {
+      query = query.in("cargo_actual", ["Asociado", "Consultor Senior"]);
+    } else {
+      query = query.eq("cargo_actual", req.cargo_requerido);
+    }
   }
 
   const { data: personasRaw, error: pErr } = await query;
