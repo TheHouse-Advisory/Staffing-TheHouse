@@ -6,8 +6,10 @@ import {
   subWeeks, subMonths, format, startOfMonth, endOfMonth,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, Pencil } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
+import { EngagementForm } from "@/components/engagements/EngagementForm";
+import type { Engagement } from "@/lib/types/database";
 
 const JERARQUIA: Record<string, number> = {
   "Socio": 1, "Director de Proyectos": 2, "Director": 2,
@@ -67,23 +69,21 @@ function iniciales(nombre: string, apellido: string) {
 }
 
 interface PersonaAsig {
-  id: string;
-  nombre: string;
-  apellido: string;
-  cargo: string | null;
-  pct: number;
-  fecha_inicio: string;
-  fecha_fin: string;
+  id: string; nombre: string; apellido: string;
+  cargo: string | null; pct: number; fecha_inicio: string; fecha_fin: string;
+}
+
+interface ReqData {
+  id: string; cargo_requerido: string | null;
+  fecha_inicio: string; fecha_fin: string;
 }
 
 interface EngRow {
-  id: string;
-  nombre: string;
-  cliente: string | null;
-  tipo: string;
-  fecha_inicio: string;
-  fecha_fin: string | null;
+  id: string; nombre: string; cliente: string | null; tipo: string;
+  fecha_inicio: string; fecha_fin: string | null;
   personas: PersonaAsig[];
+  reqs: ReqData[];
+  raw: Engagement;
 }
 
 export function DesgloceEngagements() {
@@ -92,6 +92,11 @@ export function DesgloceEngagements() {
   const [engs, setEngs] = useState<EngRow[]>([]);
   const [ausencias, setAusencias] = useState<{ persona_id: string; fecha_inicio: string; fecha_fin: string }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  // Form crear/editar
+  const [formOpen, setFormOpen] = useState(false);
+  const [engToEdit, setEngToEdit] = useState<Engagement | undefined>();
 
   const columnas: Columna[] =
     vista === "dia" ? columnasDia(base) :
@@ -108,7 +113,7 @@ export function DesgloceEngagements() {
 
       const [engRes, asigRes, ausRes] = await Promise.all([
         sb.from("engagement")
-          .select("id, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
+          .select("id, nombre, cliente, tipo, estado, descripcion, fecha_inicio, fecha_fin_estimada, fecha_fin_real, industria_id")
           .eq("estado", "activo")
           .lte("fecha_inicio", finStr)
           .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null`),
@@ -128,13 +133,12 @@ export function DesgloceEngagements() {
       const engMap = new Map<string, EngRow>();
       for (const e of (engRes.data ?? []) as any[]) {
         engMap.set(e.id, {
-          id: e.id,
-          nombre: e.nombre,
-          cliente: e.cliente,
+          id: e.id, nombre: e.nombre, cliente: e.cliente,
           tipo: e.tipo ?? "proyecto",
           fecha_inicio: e.fecha_inicio,
           fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? null,
-          personas: [],
+          personas: [], reqs: [],
+          raw: e as Engagement,
         });
       }
 
@@ -152,6 +156,7 @@ export function DesgloceEngagements() {
         });
       }
 
+      // Ordenar personas por jerarquía
       for (const eng of engMap.values()) {
         eng.personas.sort((a, b) => {
           const ia = JERARQUIA[a.cargo ?? ""] ?? 99;
@@ -160,12 +165,29 @@ export function DesgloceEngagements() {
         });
       }
 
+      // Fetch requerimientos para mostrar slots vacíos
+      const engIds = [...engMap.keys()];
+      if (engIds.length > 0) {
+        const { data: reqData } = await sb.from("requerimiento_engagement")
+          .select("id, engagement_id, cargo_requerido, fecha_inicio, fecha_fin")
+          .in("engagement_id", engIds);
+        for (const r of (reqData ?? []) as any[]) {
+          const eng = engMap.get(r.engagement_id);
+          if (eng) eng.reqs.push({
+            id: r.id,
+            cargo_requerido: r.cargo_requerido,
+            fecha_inicio: r.fecha_inicio,
+            fecha_fin: r.fecha_fin,
+          });
+        }
+      }
+
       setEngs([...engMap.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, "es")));
       setAusencias((ausRes.data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string }[]);
       setLoading(false);
     }
     load();
-  }, [inicioStr, finStr]);
+  }, [inicioStr, finStr, reloadKey]);
 
   function navAnterior() {
     if (vista === "dia")    setBase((b) => addDays(startOfISOWeek(b), -7));
@@ -178,30 +200,58 @@ export function DesgloceEngagements() {
     if (vista === "mes")    setBase((b) => addMonths(b, 4));
   }
 
+  function abrirNuevo() {
+    setEngToEdit(undefined);
+    setFormOpen(true);
+  }
+
+  function abrirEditar(eng: EngRow) {
+    setEngToEdit(eng.raw);
+    setFormOpen(true);
+  }
+
+  function handleFormSuccess() {
+    setFormOpen(false);
+    setReloadKey((k) => k + 1);
+  }
+
   const hoy = new Date();
 
   return (
     <div className="flex flex-col h-full">
-      {/* Controles */}
-      <div className="flex items-center gap-1 mb-3 flex-shrink-0 self-end">
-        <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
-          {(["dia", "semana", "mes"] as Vista[]).map((v) => (
-            <button
-              key={v}
-              onClick={() => setVista(v)}
-              className="px-2.5 py-1 transition-colors"
-              style={vista === v ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}
-            >
-              {v === "dia" ? "Día" : v === "semana" ? "Semana" : "Mes"}
-            </button>
-          ))}
+      {/* Barra de controles */}
+      <div className="flex items-center justify-between mb-3 flex-shrink-0">
+        {/* Botón nuevo engagement */}
+        <button
+          onClick={abrirNuevo}
+          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white transition-colors"
+          style={{ background: "#4a90e2" }}
+        >
+          <Plus className="w-3 h-3" />
+          Nuevo Engagement
+        </button>
+
+        {/* Navegación temporal */}
+        <div className="flex items-center gap-1">
+          <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
+            {(["dia", "semana", "mes"] as Vista[]).map((v) => (
+              <button
+                key={v}
+                onClick={() => setVista(v)}
+                className="px-2.5 py-1 transition-colors"
+                style={vista === v ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}
+              >
+                {v === "dia" ? "Día" : v === "semana" ? "Semana" : "Mes"}
+              </button>
+            ))}
+          </div>
+          <button onClick={navAnterior} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+            <ChevronLeft className="w-3.5 h-3.5" />
+          </button>
+          <button onClick={navSiguiente} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+            <ChevronRight className="w-3.5 h-3.5" />
+          </button>
         </div>
-        <button onClick={navAnterior} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-          <ChevronLeft className="w-3.5 h-3.5" />
-        </button>
-        <button onClick={navSiguiente} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-          <ChevronRight className="w-3.5 h-3.5" />
-        </button>
       </div>
 
       {loading ? (
@@ -263,9 +313,13 @@ export function DesgloceEngagements() {
                 );
 
                 const filasEngs = lista.flatMap((eng, ei) => {
-                  const cargosUnicos = Array.from(
-                    new Set(eng.personas.map((p) => p.cargo ?? "Sin cargo"))
-                  ).sort((a, b) => (JERARQUIA[a] ?? 99) - (JERARQUIA[b] ?? 99));
+                  // Cargos únicos: union de asignados + requeridos (con cargo específico)
+                  const cargosDePersonas = eng.personas.map((p) => p.cargo ?? "Sin cargo");
+                  const cargosDeReqs = eng.reqs
+                    .filter((r) => r.cargo_requerido)
+                    .map((r) => r.cargo_requerido!);
+                  const cargosUnicos = Array.from(new Set([...cargosDePersonas, ...cargosDeReqs]))
+                    .sort((a, b) => (JERARQUIA[a] ?? 99) - (JERARQUIA[b] ?? 99));
 
                   const personaIdsEng = new Set(eng.personas.map((p) => p.id));
 
@@ -277,13 +331,25 @@ export function DesgloceEngagements() {
                     </tr>
                   ) : null;
 
+                  // Fila cabecera con botón editar
                   const filaHdr = (
                     <tr key={`hdr-${eng.id}`}>
                       <td className="pr-3 pt-2 pb-1 sticky left-0 bg-white z-10">
-                        <p className="font-bold text-[#1a1a2e] truncate max-w-[150px] text-[12px]">{eng.nombre}</p>
-                        {eng.cliente && (
-                          <p className="text-[10px] text-gray-400 truncate max-w-[150px]">{eng.cliente}</p>
-                        )}
+                        <div className="flex items-center gap-1 group">
+                          <div className="flex-1 min-w-0">
+                            <p className="font-bold text-[#1a1a2e] truncate max-w-[130px] text-[12px]">{eng.nombre}</p>
+                            {eng.cliente && (
+                              <p className="text-[10px] text-gray-400 truncate max-w-[130px]">{eng.cliente}</p>
+                            )}
+                          </div>
+                          <button
+                            onClick={() => abrirEditar(eng)}
+                            title="Editar engagement"
+                            className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-100 text-gray-400 transition-opacity flex-shrink-0"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
+                        </div>
                       </td>
                       {columnas.map((col, i) => {
                         const esHoy = col.inicio <= hoy && hoy <= col.fin;
@@ -303,6 +369,7 @@ export function DesgloceEngagements() {
                   const filasCargo = cargosUnicos.map((cargo) => {
                     const personas = eng.personas.filter((p) => (p.cargo ?? "Sin cargo") === cargo);
                     const cargoColor = COLORES[cargo] ?? COLOR_DEFAULT;
+
                     return (
                       <tr key={`cargo-${eng.id}-${cargo}`}>
                         <td className="pr-3 py-0.5 sticky left-0 bg-white z-10">
@@ -310,12 +377,24 @@ export function DesgloceEngagements() {
                         </td>
                         {columnas.map((col, i) => {
                           const esHoy = col.inicio <= hoy && hoy <= col.fin;
+
+                          // Personas asignadas activas en esta columna
                           const activos = personas.filter((p) =>
                             rangoSolapan(p.fecha_inicio, p.fecha_fin, col.inicio, col.fin)
                           );
+
+                          // Requerimientos de este cargo activos en esta columna
+                          const reqsEnCol = eng.reqs.filter((r) =>
+                            r.cargo_requerido === cargo &&
+                            rangoSolapan(r.fecha_inicio, r.fecha_fin, col.inicio, col.fin)
+                          );
+                          // Slots vacíos = reqs sin persona que los cubra
+                          const vacios = Math.max(0, reqsEnCol.length - activos.length);
+
                           return (
                             <td key={i} className="py-0.5 px-1">
                               <div className="flex flex-wrap gap-1 justify-center min-h-[36px] items-center">
+                                {/* Personas asignadas */}
                                 {activos.map((p) => (
                                   <div key={p.id} title={`${p.nombre} ${p.apellido} · ${p.pct}%`}
                                     className="flex flex-col items-center gap-0.5">
@@ -335,6 +414,19 @@ export function DesgloceEngagements() {
                                       }}>
                                       {p.pct}%
                                     </span>
+                                  </div>
+                                ))}
+
+                                {/* Slots vacíos — círculo con borde punteado del color del cargo */}
+                                {Array.from({ length: vacios }).map((_, vi) => (
+                                  <div key={`vacio-${vi}`}
+                                    title={`Requerimiento sin asignar: ${cargo}`}
+                                    className="w-7 h-7 rounded-full flex items-center justify-center"
+                                    style={{
+                                      border: `2px dashed ${cargoColor}`,
+                                      opacity: 0.6,
+                                    }}>
+                                    <span className="text-[8px] font-bold" style={{ color: cargoColor }}>?</span>
                                   </div>
                                 ))}
                               </div>
@@ -389,6 +481,14 @@ export function DesgloceEngagements() {
           </table>
         </div>
       )}
+
+      {/* Modal crear / editar engagement */}
+      <EngagementForm
+        open={formOpen}
+        onClose={() => setFormOpen(false)}
+        onSuccess={handleFormSuccess}
+        engagement={engToEdit}
+      />
     </div>
   );
 }
