@@ -6,7 +6,7 @@ import {
   format, isSameDay, parseISO,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { X, ChevronLeft, ChevronRight, Bell } from "lucide-react";
+import { X, ChevronLeft, ChevronRight, Bell, ChevronUp, ChevronDown } from "lucide-react";
 import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
 import { GanttAusencias } from "@/components/inicio/GanttAusencias";
@@ -66,6 +66,9 @@ export default function InicioPage() {
   const [ocupacionMap, setOcupacionMap] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [alertasHoy, setAlertasHoy] = useState(0);
+
+  // Control expansión columna derecha
+  const [activeQuadrant, setActiveQuadrant] = useState<"both" | "tablero" | "resumen">("both");
 
   // RESÚMEN quadrant
   const [vistaResumen, setVistaResumen] = useState<"gantt" | "perfil">("gantt");
@@ -392,19 +395,51 @@ export default function InicioPage() {
         <div className="flex flex-col gap-4 min-h-0 overflow-hidden">
 
         {/* Cuadrante 2: TABLERO */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden flex-1">
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 flex-shrink-0">Tablero</p>
+        <div
+          className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden transition-all duration-300 ease-in-out"
+          style={
+            activeQuadrant === "resumen"
+              ? { flexGrow: 0, flexShrink: 0, flexBasis: "44px" }
+              : { flexGrow: 1, flexShrink: 1, flexBasis: "0%" }
+          }
+        >
+          <div className="flex items-center justify-between mb-3 flex-shrink-0">
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Tablero</p>
+            <button
+              onClick={() => setActiveQuadrant((q) => q === "tablero" ? "both" : "tablero")}
+              className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
+              title={activeQuadrant === "tablero" ? "Restaurar" : "Expandir tablero"}
+            >
+              {activeQuadrant === "tablero" ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+            </button>
+          </div>
           <div className="flex-1 overflow-auto min-h-0">
             <DesgloceEngagements />
           </div>
         </div>
 
         {/* Cuadrante 3: RESÚMEN */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden flex-1">
+        <div
+          className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden transition-all duration-300 ease-in-out"
+          style={
+            activeQuadrant === "tablero"
+              ? { flexGrow: 0, flexShrink: 0, flexBasis: "44px" }
+              : { flexGrow: 1, flexShrink: 1, flexBasis: "0%" }
+          }
+        >
           <div className="flex items-center justify-between mb-3 flex-shrink-0">
             <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Resúmen</p>
             <div className="flex items-center gap-1 flex-wrap justify-end">
-              {/* Toggle Gantt / Perfil */}
+              {/* Botón expandir/colapsar */}
+              <button
+                onClick={() => setActiveQuadrant((q) => q === "resumen" ? "both" : "resumen")}
+                className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
+                title={activeQuadrant === "resumen" ? "Restaurar" : "Expandir resúmen"}
+              >
+                {activeQuadrant === "resumen" ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+              {/* Toggle Gantt / Perfil — oculto cuando está colapsado */}
+              {activeQuadrant !== "tablero" && <>
               <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
                 <button
                   onClick={() => setVistaResumen("gantt")}
@@ -452,6 +487,7 @@ export default function InicioPage() {
                   </button>
                 </>
               )}
+              </>}
             </div>
           </div>
 
