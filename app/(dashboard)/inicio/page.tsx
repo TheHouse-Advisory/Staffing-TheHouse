@@ -214,8 +214,8 @@ export default function InicioPage() {
         </Link>
       </div>
 
-      {/* Grid 3 cuadrantes: EQUIPO | TABLERO | RESÚMEN */}
-      <div className="grid gap-4 flex-1 min-h-0" style={{ gridTemplateColumns: "200px 2fr 1.5fr" }}>
+      {/* Grid 2 columnas: EQUIPO | [TABLERO encima / RESÚMEN abajo] */}
+      <div className="grid gap-4 flex-1 min-h-0" style={{ gridTemplateColumns: "200px 1fr" }}>
 
         {/* ── Cuadrante 1: EQUIPO con % ocupación ── */}
         <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col overflow-hidden relative">
@@ -388,16 +388,19 @@ export default function InicioPage() {
           )}
         </div>
 
-        {/* ── Cuadrante 2: TABLERO (solo DesgloceEngagements) ── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden">
+        {/* ── Columna derecha: TABLERO arriba + RESÚMEN abajo ── */}
+        <div className="flex flex-col gap-4 min-h-0 overflow-hidden">
+
+        {/* Cuadrante 2: TABLERO */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden flex-1">
           <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-3 flex-shrink-0">Tablero</p>
           <div className="flex-1 overflow-auto min-h-0">
             <DesgloceEngagements />
           </div>
         </div>
 
-        {/* ── Cuadrante 3: RESÚMEN (toggle Gantt / Perfil individual) ── */}
-        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden">
+        {/* Cuadrante 3: RESÚMEN */}
+        <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5 flex flex-col overflow-hidden flex-1">
           <div className="flex items-center justify-between mb-3 flex-shrink-0">
             <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Resúmen</p>
             <div className="flex items-center gap-1 flex-wrap justify-end">
@@ -459,6 +462,8 @@ export default function InicioPage() {
             }
           </div>
         </div>
+
+        </div>{/* fin columna derecha */}
 
       </div>
     </div>
