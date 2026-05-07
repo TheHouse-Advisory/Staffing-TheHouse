@@ -9,6 +9,7 @@ import { es } from "date-fns/locale";
 import { X, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell } from "lucide-react";
 import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
+import { getDetailedPersonAbsences, COLOR_AUSENCIA, type AusenciaDetalle } from "@/lib/queries/ausencias";
 import { GanttAusencias } from "@/components/inicio/GanttAusencias";
 import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTablero";
 import { DesgloceEngagements, type PanelInfo } from "@/components/inicio/DesgloceEngagements";
@@ -58,7 +59,9 @@ function ocupColor(pct: number) {
 
 interface ResumenPersona {
   ocupacion: number; totalProyectos: number; industrias: string[];
-  capacidades: string[]; tematicas: string[]; vacacionesDias: number;
+  capacidades: string[]; tematicas: string[];
+  totalDiasAnioActual: number;
+  ausenciasFuturas: Pick<AusenciaDetalle, "fechaInicio" | "fechaFin" | "numDias" | "tipoLabel">[];
   mentorNombre: string | null; mentoreados: string[];
 }
 
@@ -110,6 +113,7 @@ export default function InicioPage() {
   const [seleccionada, setSeleccionada] = useState<Persona | null>(null);
   const [resumen, setResumen] = useState<ResumenPersona | null>(null);
   const [loadingResumen, setLoadingResumen] = useState(false);
+  const [showAusencias, setShowAusencias] = useState(false);
   const popupRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -177,15 +181,12 @@ export default function InicioPage() {
   }, [seleccionada]);
 
   async function abrirResumen(p: Persona) {
-    setSeleccionada(p); setResumen(null); setLoadingResumen(true);
+    setSeleccionada(p); setResumen(null); setLoadingResumen(true); setShowAusencias(false);
     const sb = createAnyClient();
-    const añoActual = new Date().getFullYear();
 
-    const [asigRes, histRes, vacRes, mentorRes, indRes, capRes, temRes, mentoreRes] = await Promise.all([
+    const [asigRes, histRes, mentorRes, indRes, capRes, temRes, mentoreRes, ausDetalle] = await Promise.all([
       sb.from("asignacion").select("pct_dedicacion").eq("persona_id", p.id).eq("estado", "activa"),
       sb.from("asignacion").select("engagement_id").eq("persona_id", p.id),
-      sb.from("ausencia").select("id", { count: "exact", head: true }).eq("persona_id", p.id)
-        .gte("fecha_inicio", `${añoActual}-01-01`).lte("fecha_fin", `${añoActual}-12-31`),
       p.mentor_id
         ? sb.from("persona").select("nombre, apellido").eq("id", p.mentor_id).single()
         : Promise.resolve({ data: null }),
@@ -193,6 +194,7 @@ export default function InicioPage() {
       sb.from("persona_capacidad").select("cat_capacidad(nombre)").eq("persona_id", p.id),
       sb.from("persona_tematica").select("cat_tematica(nombre)").eq("persona_id", p.id),
       sb.from("persona").select("nombre, apellido").eq("mentor_id", p.id).eq("activo", true),
+      getDetailedPersonAbsences(sb, p.id),
     ]);
 
     const ocupacion = (asigRes.data ?? []).reduce((s: number, a: any) => s + Number(a.pct_dedicacion), 0);
@@ -203,7 +205,8 @@ export default function InicioPage() {
       industrias:  (indRes.data ?? []).map((r: any) => r.cat_industria?.nombre).filter(Boolean) as string[],
       capacidades: (capRes.data ?? []).map((r: any) => r.cat_capacidad?.nombre).filter(Boolean) as string[],
       tematicas:   (temRes.data ?? []).map((r: any) => r.cat_tematica?.nombre).filter(Boolean) as string[],
-      vacacionesDias: vacRes.count ?? 0,
+      totalDiasAnioActual: ausDetalle.totalDiasAnioActual,
+      ausenciasFuturas: ausDetalle.ausenciasFuturas,
       mentorNombre: mentorRes.data
         ? `${(mentorRes.data as any).nombre} ${(mentorRes.data as any).apellido}`
         : null,
@@ -417,9 +420,38 @@ export default function InicioPage() {
                           </div>
                         </div>
                       )}
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-400 text-xs">Ausencias</span>
-                        <span className="font-medium text-[#1a1a2e] text-xs">{resumen.vacacionesDias}</span>
+                      {/* Ausencias — expandible */}
+                      <div>
+                        <button
+                          onClick={() => setShowAusencias((s) => !s)}
+                          className="w-full flex justify-between items-center hover:bg-gray-50 rounded px-0.5 py-0.5 -mx-0.5 transition-colors"
+                        >
+                          <span className="text-gray-400 text-xs">Ausencias año</span>
+                          <div className="flex items-center gap-1">
+                            <span className="font-semibold text-[#1a1a2e] text-xs">{resumen.totalDiasAnioActual}d</span>
+                            <ChevronDown className="w-3 h-3 text-gray-300" style={{ transform: showAusencias ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
+                          </div>
+                        </button>
+                        {showAusencias && (
+                          <div className="mt-1.5 pl-1 space-y-1">
+                            {resumen.ausenciasFuturas.length === 0 ? (
+                              <p className="text-[10px] text-gray-300 italic">Sin ausencias futuras</p>
+                            ) : (
+                              <>
+                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Próximas</p>
+                                {resumen.ausenciasFuturas.map((a, i) => (
+                                  <div key={i} className="flex justify-between items-start gap-1">
+                                    <span className="text-[10px] text-gray-500 leading-tight truncate max-w-[100px]">{a.tipoLabel}</span>
+                                    <div className="text-right flex-shrink-0">
+                                      <p className="text-[10px] text-gray-400">{format(new Date(a.fechaInicio + "T00:00:00"), "d MMM", { locale: es })}</p>
+                                      <p className="text-[10px] font-semibold text-[#1a1a2e]">{a.numDias}d</p>
+                                    </div>
+                                  </div>
+                                ))}
+                              </>
+                            )}
+                          </div>
+                        )}
                       </div>
                       {seleccionada.talento && (
                         <div className="flex justify-between items-center">

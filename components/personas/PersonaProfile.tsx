@@ -5,6 +5,7 @@ import { Pencil } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { getDetailedPersonAbsences, type DetalleAusenciasPersona, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 import { Button } from "@/components/ui/Button";
 import { PersonaForm } from "./PersonaForm";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
@@ -54,6 +55,7 @@ export function PersonaProfile({ id }: Props) {
   const [mentoreados, setMentoreados] = useState<Persona[]>([]);
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(false);
+  const [ausenciasDetalle, setAusenciasDetalle] = useState<DetalleAusenciasPersona | null>(null);
 
   const load = async () => {
     const supabase = createAnyClient();
@@ -148,6 +150,8 @@ export function PersonaProfile({ id }: Props) {
     );
 
     setMentoreados((mentoreRes.data ?? []) as Persona[]);
+    const ausencias = await getDetailedPersonAbsences(supabase, id);
+    setAusenciasDetalle(ausencias);
     setLoading(false);
   };
 
@@ -326,6 +330,89 @@ export function PersonaProfile({ id }: Props) {
             </div>
           )}
         </div>
+
+        {/* ── Historial de Ausencias ───────────────────────── */}
+        {ausenciasDetalle && (
+          <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="font-semibold">Ausencias</h3>
+              <div className="text-right">
+                <span className="text-3xl font-bold text-[#1a1a2e]">{ausenciasDetalle.totalDiasAnioActual}</span>
+                <p className="text-xs text-[#888] mt-0.5">días utilizados {new Date().getFullYear()}</p>
+              </div>
+            </div>
+
+            {ausenciasDetalle.ausenciasFuturas.length === 0 && ausenciasDetalle.ausenciasPasadasAnioActual.length === 0 ? (
+              <p className="text-sm text-[#ccc] italic">Sin ausencias registradas este año.</p>
+            ) : (
+              <div className="space-y-5">
+                {/* Próximas ausencias */}
+                {ausenciasDetalle.ausenciasFuturas.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-[#888] uppercase tracking-widest mb-2">
+                      Próximas ausencias
+                    </p>
+                    <div className="space-y-2">
+                      {ausenciasDetalle.ausenciasFuturas.map((a) => {
+                        const color = COLOR_AUSENCIA[a.tipo]?.bg ?? "#9ca3af";
+                        return (
+                          <div key={a.id}
+                            className="flex items-center justify-between p-3 rounded-lg border"
+                            style={{ background: color + "18", borderColor: color + "44" }}
+                          >
+                            <div>
+                              <p className="text-sm font-medium text-[#1a1a2e]">{a.tipoLabel}</p>
+                              <p className="text-xs text-[#888] mt-0.5">
+                                {format(new Date(a.fechaInicio + "T00:00:00"), "d MMM", { locale: es })}
+                                {" → "}
+                                {format(new Date(a.fechaFin + "T00:00:00"), "d MMM yyyy", { locale: es })}
+                              </p>
+                              {a.descripcion && (
+                                <p className="text-xs text-[#aaa] mt-0.5 italic">{a.descripcion}</p>
+                              )}
+                            </div>
+                            <span
+                              className="flex-shrink-0 text-xs font-bold px-2.5 py-1 rounded-full text-white ml-3"
+                              style={{ background: color }}
+                            >
+                              {a.numDias}d
+                            </span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+
+                {/* Registro histórico del año */}
+                {ausenciasDetalle.ausenciasPasadasAnioActual.length > 0 && (
+                  <div>
+                    <p className="text-xs font-semibold text-[#888] uppercase tracking-widest mb-2">
+                      Registro histórico {new Date().getFullYear()}
+                    </p>
+                    <div className="space-y-1.5">
+                      {ausenciasDetalle.ausenciasPasadasAnioActual.map((a) => (
+                        <div key={a.id}
+                          className="flex items-center justify-between p-2.5 rounded-lg bg-[#f9f9f9] border border-[#f0f0f0]"
+                        >
+                          <div>
+                            <p className="text-sm text-[#555] font-medium">{a.tipoLabel}</p>
+                            <p className="text-xs text-[#888] mt-0.5">
+                              {format(new Date(a.fechaInicio + "T00:00:00"), "d MMM", { locale: es })}
+                              {" → "}
+                              {format(new Date(a.fechaFin + "T00:00:00"), "d MMM", { locale: es })}
+                            </p>
+                          </div>
+                          <span className="text-xs text-[#888] flex-shrink-0 ml-3">{a.numDias} días</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Preferencias y experiencia ─────────────────────── */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">

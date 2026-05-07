@@ -15,6 +15,8 @@ import {
   type FitNivel,
   type AsignacionDetalle,
 } from "@/lib/queries/planificacion";
+import { expandirRango, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
+import type { TipoAusencia } from "@/lib/types/database";
 
 // ─────────────────────────────────────────────────────────────
 //  Helpers visuales
@@ -332,6 +334,11 @@ function PopupPerfil({ persona, resumen, loading, popupRef, onClose }: PopupPerf
 //  Panel principal
 // ─────────────────────────────────────────────────────────────
 
+interface AusRow {
+  tipo: TipoAusencia; tipoLabel: string;
+  fechaInicio: string; fechaFin: string; numDias: number;
+}
+
 interface Props {
   reqId: string;
   engagementId: string;
@@ -348,6 +355,7 @@ export function PanelFitAsignacion({
   const [req, setReq] = useState<ReqConEstado | null>(null);
   const [personas, setPersonas] = useState<PersonaFit[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ausenciasMap, setAusenciasMap] = useState<Map<string, AusRow[]>>(new Map());
   const [asignando, setAsignando] = useState<string | null>(null);
   const [exito, setExito] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
@@ -470,6 +478,33 @@ export function PanelFitAsignacion({
 
       const { personas: pFit } = await fetchPersonasFit(sb, reqEstado, [], []);
       setPersonas(pFit);
+
+      // Batch load ausencias futuras para todas las personas recomendadas
+      if (pFit.length > 0) {
+        const hoyStr = today();
+        const ids = pFit.map((p) => p.persona_id);
+        const { data: ausData } = await (sb as any)
+          .from("ausencia")
+          .select("persona_id, tipo, fecha_inicio, fecha_fin")
+          .in("persona_id", ids)
+          .gte("fecha_fin", hoyStr)
+          .order("fecha_inicio");
+        const map = new Map<string, AusRow[]>();
+        for (const a of (ausData ?? []) as any[]) {
+          const tipo = a.tipo as TipoAusencia;
+          const entry: AusRow = {
+            tipo,
+            tipoLabel: COLOR_AUSENCIA[tipo]?.label ?? a.tipo,
+            fechaInicio: a.fecha_inicio,
+            fechaFin: a.fecha_fin,
+            numDias: expandirRango(a.fecha_inicio, a.fecha_fin).length,
+          };
+          if (!map.has(a.persona_id)) map.set(a.persona_id, []);
+          map.get(a.persona_id)!.push(entry);
+        }
+        setAusenciasMap(map);
+      }
+
       setLoading(false);
     }
     load();
@@ -684,6 +719,26 @@ export function PanelFitAsignacion({
                         ))}
                       </div>
                     )}
+
+                    {/* Ausencias futuras con alerta de conflicto */}
+                    {(ausenciasMap.get(p.persona_id) ?? []).map((a, i) => {
+                      const conflicto = req
+                        ? a.fechaInicio <= req.fecha_fin && a.fechaFin >= req.fecha_inicio
+                        : false;
+                      return (
+                        <div key={i} className={`mt-1.5 flex items-start gap-1.5 text-[10px] rounded px-1.5 py-1 ${conflicto ? "bg-red-50 text-red-700" : "bg-[#f9f9f9] text-[#777]"}`}>
+                          {conflicto
+                            ? <AlertTriangle className="w-3 h-3 text-red-500 flex-shrink-0 mt-px" />
+                            : <CalendarX className="w-3 h-3 text-amber-400 flex-shrink-0 mt-px" />
+                          }
+                          <span className="leading-tight">
+                            {conflicto && <strong className="font-semibold">Conflicto fechas · </strong>}
+                            {a.tipoLabel} · {formatFecha(a.fechaInicio)} → {formatFecha(a.fechaFin)}{" "}
+                            <span className="font-semibold">({a.numDias}d)</span>
+                          </span>
+                        </div>
+                      );
+                    })}
 
                     {/* Mini-Gantt */}
                     {req && <MiniGantt req={req} asignaciones={p.asignaciones} />}
