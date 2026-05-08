@@ -6,9 +6,10 @@ import {
   subWeeks, subMonths, format, startOfMonth, endOfMonth,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2 } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
+import { ConfirmDialog } from "@/components/ui/Modal";
 import type { Engagement } from "@/lib/types/database";
 
 // ── Cargos Asociado y Consultor Senior son la misma categoría visual ──
@@ -103,11 +104,18 @@ interface Props {
   onAsignacionChange?: () => void;
   onOpenPanel?: (info: PanelInfo | null) => void;
   externalReloadKey?: number;
+  // Props de control externo: cuando se pasan, oculta los controles internos de fecha
+  vistaExterna?: Vista;
+  baseExterna?: Date;
 }
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey }: Props) {
-  const [vista, setVista] = useState<Vista>("semana");
-  const [base, setBase] = useState<Date>(new Date());
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna }: Props) {
+  const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
+  const [baseInterna, setBaseInterna] = useState<Date>(new Date());
+
+  // Si vienen props externas las usamos; si no, usamos estado interno
+  const vista = vistaExterna ?? vistaInterna;
+  const base = baseExterna ?? baseInterna;
   const [engs, setEngs] = useState<EngRow[]>([]);
   const [ausencias, setAusencias] = useState<{ persona_id: string; fecha_inicio: string; fecha_fin: string }[]>([]);
   const [loading, setLoading] = useState(true);
@@ -126,6 +134,28 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const [dragOverReqId, setDragOverReqId] = useState<string | null>(null);
   const [desasignando, setDesasignando] = useState<string | null>(null);
 
+  // Papelera
+  const [confirmPapeleraDesg, setConfirmPapeleraDesg] = useState<{ id: string; nombre: string } | null>(null);
+
+  // Intensidad por engagement (dias_criticos)
+  type DcEntry = { fecha: string; fecha_fin: string | null; intensidad: string };
+  const [diasCriticosMap, setDiasCriticosMap] = useState<Map<string, DcEntry[]>>(new Map());
+  const [quickEdit, setQuickEdit] = useState<{ engId: string; fecha: string; fecha_fin: string; x: number; y: number } | null>(null);
+  const instanceId = useRef(Math.random().toString(36).slice(2));
+  const INTENSIDAD_COLOR: Record<string, string> = { rojo: "#ef4444", amarillo: "#f59e0b", verde: "#22c55e" };
+
+  // Colapso por engagement
+  const [colapsados, setColapsados] = useState<Set<string>>(new Set());
+  function toggleColapso(id: string) {
+    setColapsados((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }
+  function colapsarTodos() { setColapsados(new Set(engs.map((e) => e.id))); }
+  function expandirTodos()  { setColapsados(new Set()); }
+
   const columnas: Columna[] =
     vista === "dia" ? columnasDia(base) :
     vista === "semana" ? columnasSemana(base) :
@@ -138,13 +168,17 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     async function load() {
       setLoading(true);
       const sb = createAnyClient();
+      const cutoff = (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split("T")[0]; })();
+      const filtroCutoff = [`fecha_fin_real.gte.${cutoff}`, `and(fecha_fin_real.is.null,fecha_fin_estimada.gte.${cutoff})`, `and(fecha_fin_real.is.null,fecha_fin_estimada.is.null)`].join(",");
 
       const [engRes, asigRes, ausRes] = await Promise.all([
         sb.from("engagement")
           .select("id, nombre, cliente, tipo, estado, descripcion, fecha_inicio, fecha_fin_estimada, fecha_fin_real, industria_id")
           .eq("estado", "activo")
+          .eq("is_deleted", false)
           .lte("fecha_inicio", finStr)
-          .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null`),
+          .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null`)
+          .or(filtroCutoff),
 
         sb.from("asignacion")
           .select("id, engagement_id, persona_id, pct_dedicacion, fecha_inicio, fecha_fin, persona:persona_id(nombre, apellido, cargo_actual)" as any)
@@ -192,22 +226,36 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         });
       }
 
-      // Requerimientos (para círculos vacíos)
+      // Requerimientos + días críticos en paralelo
       const engIds = [...engMap.keys()];
       if (engIds.length > 0) {
-        const { data: reqData } = await sb.from("requerimiento_engagement")
-          .select("id, engagement_id, cargo_requerido, fecha_inicio, fecha_fin, pct_dedicacion")
-          .in("engagement_id", engIds);
+        const [{ data: reqData }, { data: dcData }] = await Promise.all([
+          sb.from("requerimiento_engagement")
+            .select("id, engagement_id, cargo_requerido, fecha_inicio, fecha_fin, pct_dedicacion")
+            .in("engagement_id", engIds),
+          sb.from("dia_critico")
+            .select("engagement_id, fecha, fecha_fin, intensidad")
+            .in("engagement_id", engIds)
+            .order("created_at", { ascending: false }),
+        ]);
         for (const r of (reqData ?? []) as any[]) {
           const eng = engMap.get(r.engagement_id);
           if (eng) eng.reqs.push({
-            id: r.id,
-            cargo_requerido: r.cargo_requerido,
-            fecha_inicio: r.fecha_inicio,
-            fecha_fin: r.fecha_fin,
+            id: r.id, cargo_requerido: r.cargo_requerido,
+            fecha_inicio: r.fecha_inicio, fecha_fin: r.fecha_fin,
             pct_dedicacion: Number(r.pct_dedicacion),
           });
         }
+        const dcMap = new Map<string, DcEntry[]>();
+        const seen = new Set<string>(); // deduplicar por engagement+fecha (ya ordenado desc → primero = más reciente)
+        for (const dc of (dcData ?? []) as any[]) {
+          const key = `${dc.engagement_id}|${dc.fecha}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          if (!dcMap.has(dc.engagement_id)) dcMap.set(dc.engagement_id, []);
+          dcMap.get(dc.engagement_id)!.push({ fecha: dc.fecha, fecha_fin: dc.fecha_fin ?? null, intensidad: dc.intensidad ?? "rojo" });
+        }
+        setDiasCriticosMap(dcMap);
       }
 
       setEngs([...engMap.values()].sort((a, b) => a.nombre.localeCompare(b.nombre, "es")));
@@ -238,14 +286,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   }, [engModal]);
 
   function navAnterior() {
-    if (vista === "dia")    setBase((b) => addDays(startOfISOWeek(b), -7));
-    if (vista === "semana") setBase((b) => subWeeks(b, 5));
-    if (vista === "mes")    setBase((b) => subMonths(b, 4));
+    if (vista === "dia")    setBaseInterna((b) => addDays(startOfISOWeek(b), -7));
+    if (vista === "semana") setBaseInterna((b) => subWeeks(b, 5));
+    if (vista === "mes")    setBaseInterna((b) => subMonths(b, 4));
   }
   function navSiguiente() {
-    if (vista === "dia")    setBase((b) => addDays(startOfISOWeek(b), 7));
-    if (vista === "semana") setBase((b) => addWeeks(b, 5));
-    if (vista === "mes")    setBase((b) => addMonths(b, 4));
+    if (vista === "dia")    setBaseInterna((b) => addDays(startOfISOWeek(b), 7));
+    if (vista === "semana") setBaseInterna((b) => addWeeks(b, 5));
+    if (vista === "mes")    setBaseInterna((b) => addMonths(b, 4));
   }
 
   function refresh() {
@@ -285,37 +333,121 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     refresh();
   }
 
+  // Mover engagement a papelera
+  async function moverAPapelera(id: string) {
+    const sb2 = createAnyClient();
+    await sb2.from("engagement").update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq("id", id);
+    setConfirmPapeleraDesg(null);
+    refresh();
+  }
+
+  // Cierra quick-edit al clicar fuera
+  useEffect(() => {
+    if (!quickEdit) return;
+    const handler = () => setQuickEdit(null);
+    document.addEventListener("click", handler);
+    return () => document.removeEventListener("click", handler);
+  }, [quickEdit]);
+
+  // Sincroniza diasCriticosMap desde otras instancias sin reload completo
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { engId, fecha, fecha_fin, intensidad, sourceId } = (e as CustomEvent).detail;
+      if (sourceId === instanceId.current) return; // ignorar eventos propios
+      setDiasCriticosMap((prev) => {
+        const next = new Map(prev);
+        const existing = (next.get(engId) ?? []).filter(
+          (dc) => !(dc.fecha === fecha && (dc.fecha_fin ?? dc.fecha) === fecha_fin)
+        );
+        next.set(engId, [...existing, { fecha, fecha_fin, intensidad }]);
+        return next;
+      });
+    };
+    window.addEventListener("diaCriticoChanged", handler);
+    return () => window.removeEventListener("diaCriticoChanged", handler);
+  }, []);
+
+  function resolverIntensidad(eng: EngRow, col: Columna): string {
+    const dcs = diasCriticosMap.get(eng.id) ?? [];
+    const match = dcs.find((dc) => {
+      const ini = new Date(dc.fecha + "T00:00:00");
+      const fin = dc.fecha_fin ? new Date(dc.fecha_fin + "T00:00:00") : ini;
+      return ini <= col.fin && fin >= col.inicio;
+    });
+    if (match) return match.intensidad;
+    // Auto-verde: últimos 7 días del engagement
+    if (eng.fecha_fin) {
+      const finDate = new Date(eng.fecha_fin + "T00:00:00");
+      if (col.inicio >= addDays(finDate, -7)) return "verde";
+    }
+    return "amarillo"; // default
+  }
+
+  async function aplicarIntensidad(fecha: string, fecha_fin: string, engId: string, intensidad: string) {
+    // Actualización optimista: el color cambia de inmediato en esta instancia
+    setDiasCriticosMap((prev) => {
+      const next = new Map(prev);
+      const existing = (next.get(engId) ?? []).filter(
+        (dc) => !(dc.fecha === fecha && (dc.fecha_fin ?? fecha) === fecha_fin)
+      );
+      next.set(engId, [...existing, { fecha, fecha_fin, intensidad }]);
+      return next;
+    });
+    setQuickEdit(null);
+    // Persiste en DB: reemplaza cualquier registro previo para ese engagement+fecha
+    const sb2 = createAnyClient();
+    const { error: delErr } = await sb2.from("dia_critico").delete().eq("engagement_id", engId).eq("fecha", fecha);
+    if (delErr) console.error("[dia_critico] delete error:", delErr);
+    const { error: insErr } = await sb2.from("dia_critico").insert({ engagement_id: engId, fecha, fecha_fin, intensidad });
+    if (insErr) console.error("[dia_critico] insert error:", insErr);
+    // Notifica a otras instancias (no a esta — el optimistic update ya se aplicó arriba)
+    window.dispatchEvent(new CustomEvent("diaCriticoChanged", { detail: { engId, fecha, fecha_fin, intensidad, sourceId: instanceId.current } }));
+  }
+
   const hoy = new Date();
 
   return (
     <div className="flex flex-col h-full relative">
-      {/* Barra de controles */}
+      {/* Barra de controles — se oculta cuando la navegación es controlada externamente */}
       <div className="flex items-center justify-between mb-3 flex-shrink-0">
-        <button
-          onClick={() => { setEngToEdit(undefined); setFormOpen(true); }}
-          className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white transition-colors hover:opacity-90"
-          style={{ background: "#4a90e2" }}
-        >
-          <Plus className="w-3 h-3" />
-          Nuevo Engagement
-        </button>
-        <div className="flex items-center gap-1">
-          <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
-            {(["dia", "semana", "mes"] as Vista[]).map((v) => (
-              <button key={v} onClick={() => setVista(v)}
-                className="px-2.5 py-1 transition-colors"
-                style={vista === v ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
-                {v === "dia" ? "Día" : v === "semana" ? "Semana" : "Mes"}
-              </button>
-            ))}
-          </div>
-          <button onClick={navAnterior} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-            <ChevronLeft className="w-3.5 h-3.5" />
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => { setEngToEdit(undefined); setFormOpen(true); }}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white transition-colors hover:opacity-90"
+            style={{ background: "#4a90e2" }}
+          >
+            <Plus className="w-3 h-3" />
+            Nuevo Engagement
           </button>
-          <button onClick={navSiguiente} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
+          {engs.length > 0 && (
+            <button
+              onClick={colapsados.size === engs.length ? expandirTodos : colapsarTodos}
+              className="text-[11px] px-2.5 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
+            >
+              {colapsados.size === engs.length ? "Expandir todos" : "Colapsar todos"}
+            </button>
+          )}
         </div>
+        {/* Controles internos: solo visibles cuando no hay control externo */}
+        {!vistaExterna && (
+          <div className="flex items-center gap-1">
+            <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
+              {(["dia", "semana", "mes"] as Vista[]).map((v) => (
+                <button key={v} onClick={() => setVistaInterna(v)}
+                  className="px-2.5 py-1 transition-colors"
+                  style={vistaInterna === v ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
+                  {v === "dia" ? "Día" : v === "semana" ? "Semana" : "Mes"}
+                </button>
+              ))}
+            </div>
+            <button onClick={navAnterior} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+              <ChevronLeft className="w-3.5 h-3.5" />
+            </button>
+            <button onClick={navSiguiente} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+              <ChevronRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -366,6 +498,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 );
 
                 const filasEngs = lista.flatMap((eng, ei) => {
+                  const estaColapsado = colapsados.has(eng.id);
+
                   // Cargos únicos normalizados (Asociado + Consultor Senior → un solo row)
                   const cargosDePersonas = eng.personas.map((p) => normalizeCargoDisplay(p.cargo ?? "Sin cargo"));
                   const cargosDeReqs = eng.reqs
@@ -388,30 +522,85 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                     <tr key={`hdr-${eng.id}`}>
                       <td className="pr-3 pt-2 pb-1 sticky left-0 bg-white z-10">
                         <div className="flex items-center gap-1 group">
+                          {/* Chevron colapso */}
+                          <button
+                            onClick={() => toggleColapso(eng.id)}
+                            title={estaColapsado ? "Expandir" : "Colapsar"}
+                            className="p-0.5 rounded text-gray-300 hover:text-gray-500 transition-colors flex-shrink-0"
+                          >
+                            {estaColapsado
+                              ? <ChevronRight className="w-3 h-3" />
+                              : <ChevronDown className="w-3 h-3" />}
+                          </button>
                           <div className="flex-1 min-w-0">
                             <button
                               onClick={() => abrirDetalleEng(eng)}
-                              className="font-bold text-[#1a1a2e] truncate max-w-[130px] text-[12px] text-left hover:text-[#4a90e2] hover:underline transition-colors"
+                              className="font-bold text-[#1a1a2e] truncate max-w-[120px] text-[12px] text-left hover:text-[#4a90e2] hover:underline transition-colors"
                               title="Ver detalle del engagement"
                             >
                               {eng.nombre}
                             </button>
-                            {eng.cliente && <p className="text-[10px] text-gray-400 truncate max-w-[130px]">{eng.cliente}</p>}
+                            {eng.cliente && <p className="text-[10px] text-gray-400 truncate max-w-[120px]">{eng.cliente}</p>}
                           </div>
                           <button onClick={() => { setEngToEdit(eng.raw); setFormOpen(true); }}
                             title="Editar engagement"
                             className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-gray-100 text-gray-400 transition-opacity flex-shrink-0">
                             <Pencil className="w-3 h-3" />
                           </button>
+                          <button
+                            onClick={() => setConfirmPapeleraDesg({ id: eng.id, nombre: eng.nombre })}
+                            title="Mover a la papelera"
+                            className="opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 transition-opacity flex-shrink-0">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
                         </div>
                       </td>
                       {columnas.map((col, i) => {
                         const esHoy = col.inicio <= hoy && hoy <= col.fin;
                         const activo = rangoSolapan(eng.fecha_inicio, eng.fecha_fin, col.inicio, col.fin);
+                        if (!activo) return <td key={i} className="py-1 px-1" />;
+
+                        // Barra de intensidad (tanto expandido como colapsado)
+                        const intensidad = resolverIntensidad(eng, col);
+                        const barColor = INTENSIDAD_COLOR[intensidad] ?? "#f59e0b";
+
+                        if (!estaColapsado) {
+                          return (
+                            <td key={i} className="py-1 px-1">
+                              <div
+                                className="h-1.5 rounded-full cursor-pointer hover:h-2.5 transition-all"
+                                style={{ background: barColor, opacity: esHoy ? 1 : 0.5 }}
+                                title={`${intensidad.charAt(0).toUpperCase() + intensidad.slice(1)} · Clic para cambiar`}
+                                onClick={(ev) => {
+                                  ev.stopPropagation();
+                                  setQuickEdit({
+                                    engId: eng.id,
+                                    fecha: format(col.inicio, "yyyy-MM-dd"),
+                                    fecha_fin: format(col.fin, "yyyy-MM-dd"),
+                                    x: ev.clientX, y: ev.clientY,
+                                  });
+                                }}
+                              />
+                            </td>
+                          );
+                        }
+
                         return (
-                          <td key={i} className="py-1 px-1">
-                            {activo && <div className="h-1.5 rounded-full"
-                              style={{ background: esHoy ? "#bfdbfe" : "#e0e7ff" }} />}
+                          <td key={i} className="py-1 px-0.5">
+                            <div
+                              className="h-5 rounded-full cursor-pointer hover:opacity-100 transition-opacity"
+                              style={{ background: barColor, opacity: esHoy ? 1 : 0.75 }}
+                              title={`${intensidad.charAt(0).toUpperCase() + intensidad.slice(1)} · Clic para cambiar`}
+                              onClick={(ev) => {
+                                ev.stopPropagation();
+                                setQuickEdit({
+                                  engId: eng.id,
+                                  fecha: format(col.inicio, "yyyy-MM-dd"),
+                                  fecha_fin: format(col.fin, "yyyy-MM-dd"),
+                                  x: ev.clientX, y: ev.clientY,
+                                });
+                              }}
+                            />
                           </td>
                         );
                       })}
@@ -549,13 +738,40 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                     </tr>
                   );
 
-                  return [separador, filaHdr, ...filasCargo, filaAusentes].filter(Boolean);
+                  return [
+                    separador,
+                    filaHdr,
+                    ...(estaColapsado ? [] : [...filasCargo, filaAusentes]),
+                  ].filter(Boolean);
                 });
 
                 return [filaSeccion, ...filasEngs];
               })}
             </tbody>
           </table>
+        </div>
+      )}
+
+      {/* ── Quick-edit intensidad ── */}
+      {quickEdit && (
+        <div
+          className="fixed z-50 bg-white rounded-xl shadow-2xl border border-gray-100 px-3 py-2 flex items-center gap-2"
+          style={{ left: quickEdit.x, top: quickEdit.y, transform: "translate(-50%, 8px)" }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <span className="text-[10px] text-gray-400 font-medium">Intensidad:</span>
+          {(["rojo", "amarillo", "verde"] as const).map((int) => (
+            <button
+              key={int}
+              onClick={() => aplicarIntensidad(quickEdit.fecha, quickEdit.fecha_fin, quickEdit.engId, int)}
+              className="w-6 h-6 rounded-full hover:scale-110 transition-transform shadow-sm border-2 border-white"
+              style={{ background: INTENSIDAD_COLOR[int] }}
+              title={int.charAt(0).toUpperCase() + int.slice(1)}
+            />
+          ))}
+          <button onClick={() => setQuickEdit(null)} className="ml-1 text-gray-300 hover:text-gray-500">
+            <X className="w-3 h-3" />
+          </button>
         </div>
       )}
 
@@ -710,6 +926,15 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         onClose={() => setFormOpen(false)}
         onSuccess={() => { setFormOpen(false); refresh(); }}
         engagement={engToEdit}
+      />
+
+      <ConfirmDialog
+        open={!!confirmPapeleraDesg}
+        onClose={() => setConfirmPapeleraDesg(null)}
+        onConfirm={() => confirmPapeleraDesg && moverAPapelera(confirmPapeleraDesg.id)}
+        title="Mover a la papelera"
+        message={`¿Estás seguro de que quieres mover "${confirmPapeleraDesg?.nombre}" a la papelera? Podrás recuperarlo durante los próximos 30 días.`}
+        confirmLabel="Mover a papelera"
       />
 
     </div>

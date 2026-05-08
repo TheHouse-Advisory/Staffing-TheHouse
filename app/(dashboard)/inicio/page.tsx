@@ -342,14 +342,22 @@ export default function InicioPage() {
                               cargo_actual: p.cargo_actual,
                             }))}
                             onClick={() => abrirResumen(p)}
-                            title={`${p.nombre} ${p.apellido} — ${pct}% ocupado`}
+                            title={`${p.nombre} ${p.apellido} — ${pct}% ocupado${p.is_leverager ? " · Apalancador" : ""}`}
                             className="flex flex-col items-center gap-0.5 hover:scale-110 transition-transform cursor-grab active:cursor-grabbing"
                           >
-                            <div
-                              className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[12px] font-bold shadow-sm"
-                              style={{ backgroundColor: color }}
-                            >
-                              {iniciales(p.nombre, p.apellido)}
+                            <div className="relative">
+                              <div
+                                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[12px] font-bold shadow-sm"
+                                style={{ backgroundColor: color }}
+                              >
+                                {iniciales(p.nombre, p.apellido)}
+                              </div>
+                              {/* Indicador Apalancador */}
+                              {p.is_leverager && (
+                                <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#3b5bdb] border-2 border-white flex items-center justify-center text-white font-bold leading-none" style={{ fontSize: 7 }}>
+                                  A
+                                </span>
+                              )}
                             </div>
                             <span
                               className="text-[9px] font-bold px-1 py-0.5 rounded-full leading-none"
@@ -401,6 +409,15 @@ export default function InicioPage() {
                     <p className="text-sm text-gray-300 text-center py-4">Cargando...</p>
                   ) : resumen && (
                     <div className="space-y-2.5 text-sm">
+                      {/* Badge Apalancador */}
+                      {seleccionada.is_leverager && (
+                        <div className="flex items-center gap-1.5 pb-1 border-b border-gray-100">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#3b5bdb] flex-shrink-0" />
+                          <span className="text-[10px] font-bold uppercase tracking-widest text-[#3b5bdb]">
+                            Apalancador
+                          </span>
+                        </div>
+                      )}
                       <div className="flex justify-between items-center">
                         <span className="text-gray-400 text-xs">Disponibilidad</span>
                         <span

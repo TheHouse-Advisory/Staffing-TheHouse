@@ -88,6 +88,10 @@ export interface Persona {
   mentor_id: string | null;
   talento: "talento" | "en_desarrollo" | "no_talento" | null;
   fecha_nacimiento: string | null;
+  is_leverager: boolean;
+  is_ex_houser: boolean;
+  is_deleted: boolean;
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -150,6 +154,8 @@ export interface Engagement {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  is_deleted: boolean;
+  deleted_at: string | null;
 }
 
 /**

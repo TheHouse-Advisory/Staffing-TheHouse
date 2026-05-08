@@ -169,7 +169,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
     : columnas;
 
   return (
-    <div className="overflow-auto h-full">
+    <div className="overflow-auto">
       <table className="w-full text-xs border-collapse" style={{ minWidth: 520 }}>
         <thead className="sticky top-0 bg-white z-20">
           <tr>
@@ -260,13 +260,18 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
                     </td>
                     {columnasMostradas.map((col, i) => {
                       const activo = overlapsColumna(proy.inicio, proy.fin, col);
-                      const esHoy = col.inicioStr <= hoy && hoy <= col.finStr;
+                      // semáforo: <50% verde, 50-90% naranja, >90% rojo
+                      const semColor = proy.pct < 50
+                        ? "#16a34a"
+                        : proy.pct <= 90
+                        ? "#f59e0b"
+                        : "#dc2626";
                       return (
                         <td key={i} className="py-0.5 px-0.5">
                           {activo ? (
                             <div
-                              className="h-5 rounded text-center leading-5 font-semibold text-[10px]"
-                              style={{ background: esHoy ? "#bfdbfe" : "#dbeafe", color: "#1d4ed8" }}
+                              className="h-5 rounded flex items-center justify-center text-[10px] font-semibold text-white"
+                              style={{ background: semColor }}
                             >
                               {proy.pct}%
                             </div>

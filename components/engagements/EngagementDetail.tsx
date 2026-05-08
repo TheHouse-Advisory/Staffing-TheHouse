@@ -90,9 +90,12 @@ export function EngagementDetail({ id }: Props) {
   const [quitarAsigLoading, setQuitarAsigLoading] = useState(false);
 
   // Días críticos
-  type DiaCritico = { id: string; fecha: string; descripcion: string | null };
+  type DiaCritico = { id: string; fecha: string; fecha_fin: string | null; intensidad: string; descripcion: string | null };
+  const INTENSIDAD_COLOR: Record<string, string> = { rojo: "#ef4444", amarillo: "#f59e0b", verde: "#22c55e" };
   const [diasCriticos, setDiasCriticos] = useState<DiaCritico[]>([]);
   const [nuevoDia, setNuevoDia] = useState("");
+  const [nuevoDiaFin, setNuevoDiaFin] = useState("");
+  const [nuevoDiaIntensidad, setNuevoDiaIntensidad] = useState<"rojo" | "amarillo" | "verde">("rojo");
   const [nuevoDiaDesc, setNuevoDiaDesc] = useState("");
   const [diasCriticosGuardando, setDiasCriticosGuardando] = useState(false);
 
@@ -121,7 +124,7 @@ export function EngagementDetail({ id }: Props) {
         .eq("engagement_id", id)
         .eq("estado", "activa")
         .order("fecha_inicio"),
-      sb.from("dia_critico").select("id, fecha, descripcion").eq("engagement_id", id).order("fecha"),
+      sb.from("dia_critico").select("id, fecha, fecha_fin, intensidad, descripcion").eq("engagement_id", id).order("fecha"),
     ]);
 
     if (engErr || !eng) {
@@ -172,11 +175,15 @@ export function EngagementDetail({ id }: Props) {
     await sb.from("dia_critico").insert({
       engagement_id: id,
       fecha: nuevoDia,
+      fecha_fin: nuevoDiaFin || null,
+      intensidad: nuevoDiaIntensidad,
       descripcion: nuevoDiaDesc.trim() || null,
     });
-    const { data } = await sb.from("dia_critico").select("id, fecha, descripcion").eq("engagement_id", id).order("fecha");
+    const { data } = await sb.from("dia_critico").select("id, fecha, fecha_fin, intensidad, descripcion").eq("engagement_id", id).order("fecha");
     setDiasCriticos((data ?? []) as DiaCritico[]);
     setNuevoDia("");
+    setNuevoDiaFin("");
+    setNuevoDiaIntensidad("rojo");
     setNuevoDiaDesc("");
     setDiasCriticosGuardando(false);
   };
@@ -539,63 +546,76 @@ export function EngagementDetail({ id }: Props) {
             {/* Lista de días marcados */}
             {diasCriticos.length > 0 ? (
               <div className="flex flex-wrap gap-2">
-                {diasCriticos.map((dc) => (
-                  <div key={dc.id}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-orange-50 border border-orange-200 text-sm"
-                  >
-                    <Flame className="w-3 h-3 text-orange-500 flex-shrink-0" />
-                    <span className="font-medium text-orange-800">
-                      {format(fLocal(dc.fecha), "d MMM yyyy", { locale: es })}
-                    </span>
-                    {dc.descripcion && (
-                      <span className="text-orange-600 text-xs">· {dc.descripcion}</span>
-                    )}
-                    <button
-                      type="button"
-                      onClick={() => eliminarDiaCritico(dc.id)}
-                      className="ml-1 text-orange-400 hover:text-orange-700 transition-colors"
-                      title="Quitar día crítico"
+                {diasCriticos.map((dc) => {
+                  const color = INTENSIDAD_COLOR[dc.intensidad] ?? "#ef4444";
+                  const fechaLabel = dc.fecha_fin && dc.fecha_fin !== dc.fecha
+                    ? `${format(fLocal(dc.fecha), "d MMM", { locale: es })} → ${format(fLocal(dc.fecha_fin), "d MMM yyyy", { locale: es })}`
+                    : format(fLocal(dc.fecha), "d MMM yyyy", { locale: es });
+                  return (
+                    <div key={dc.id}
+                      className="flex items-center gap-1.5 px-3 py-1.5 rounded-full border text-sm"
+                      style={{ background: `${color}15`, borderColor: `${color}40` }}
                     >
-                      <X className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
+                      <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
+                      <span className="font-medium text-[#1a1a1a]">{fechaLabel}</span>
+                      {dc.descripcion && <span className="text-[#888] text-xs">· {dc.descripcion}</span>}
+                      <button type="button" onClick={() => eliminarDiaCritico(dc.id)}
+                        className="ml-1 text-[#ccc] hover:text-red-400 transition-colors" title="Quitar">
+                        <X className="w-3 h-3" />
+                      </button>
+                    </div>
+                  );
+                })}
               </div>
             ) : (
               <p className="text-xs text-[#aaa] italic">Sin días críticos marcados.</p>
             )}
 
-            {/* Agregar nuevo día crítico */}
-            <div className="flex items-end gap-2 pt-2 border-t border-[#f5f5f5]">
-              <div className="flex flex-col gap-1">
-                <label className="text-xs text-[#888] font-medium">Fecha</label>
-                <input
-                  type="date"
-                  value={nuevoDia}
-                  min={engagement?.fecha_inicio ?? undefined}
-                  onChange={(e) => setNuevoDia(e.target.value)}
-                  className="px-3 py-2 rounded-lg border border-[#e0e0e0] text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 focus:border-orange-400 transition-colors"
-                />
+            {/* Agregar nuevo período de intensidad */}
+            <div className="pt-2 border-t border-[#f5f5f5] space-y-2">
+              <div className="flex items-end gap-2 flex-wrap">
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-[#888] font-medium">Fecha inicio</label>
+                  <input type="date" value={nuevoDia} min={engagement?.fecha_inicio ?? undefined}
+                    onChange={(e) => setNuevoDia(e.target.value)}
+                    className="px-3 py-2 rounded-lg border border-[#e0e0e0] text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 transition-colors" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-[#888] font-medium">Fecha fin (opcional)</label>
+                  <input type="date" value={nuevoDiaFin} min={nuevoDia || engagement?.fecha_inicio || undefined}
+                    onChange={(e) => setNuevoDiaFin(e.target.value)}
+                    className="px-3 py-2 rounded-lg border border-[#e0e0e0] text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 transition-colors" />
+                </div>
+                <div className="flex flex-col gap-1">
+                  <label className="text-xs text-[#888] font-medium">Intensidad</label>
+                  <div className="flex gap-1.5 h-[38px] items-center">
+                    {(["rojo", "amarillo", "verde"] as const).map((int) => (
+                      <button key={int} type="button" onClick={() => setNuevoDiaIntensidad(int)}
+                        className="w-7 h-7 rounded-full transition-all border-2"
+                        style={{
+                          background: INTENSIDAD_COLOR[int],
+                          borderColor: nuevoDiaIntensidad === int ? "#1a1a1a" : "transparent",
+                          transform: nuevoDiaIntensidad === int ? "scale(1.2)" : "scale(1)",
+                        }}
+                        title={int.charAt(0).toUpperCase() + int.slice(1)}
+                      />
+                    ))}
+                  </div>
+                </div>
               </div>
-              <div className="flex flex-col gap-1 flex-1">
-                <label className="text-xs text-[#888] font-medium">Descripción (opcional)</label>
-                <input
-                  type="text"
-                  value={nuevoDiaDesc}
-                  onChange={(e) => setNuevoDiaDesc(e.target.value)}
-                  placeholder="ej. Presentación cliente, Cierre de hito..."
-                  className="px-3 py-2 rounded-lg border border-[#e0e0e0] text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 focus:border-orange-400 transition-colors"
-                />
+              <div className="flex items-end gap-2">
+                <div className="flex flex-col gap-1 flex-1">
+                  <label className="text-xs text-[#888] font-medium">Descripción (opcional)</label>
+                  <input type="text" value={nuevoDiaDesc} onChange={(e) => setNuevoDiaDesc(e.target.value)}
+                    placeholder="ej. Presentación cliente, Cierre de hito..."
+                    className="px-3 py-2 rounded-lg border border-[#e0e0e0] text-sm focus:outline-none focus:ring-2 focus:ring-orange-300 transition-colors" />
+                </div>
+                <button type="button" onClick={agregarDiaCritico} disabled={!nuevoDia || diasCriticosGuardando}
+                  className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 disabled:bg-[#e0e0e0] disabled:text-[#aaa] text-white text-sm font-medium transition-colors">
+                  <Plus className="w-3.5 h-3.5" />
+                  Agregar
+                </button>
               </div>
-              <button
-                type="button"
-                onClick={agregarDiaCritico}
-                disabled={!nuevoDia || diasCriticosGuardando}
-                className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-orange-500 hover:bg-orange-600 disabled:bg-[#e0e0e0] disabled:text-[#aaa] text-white text-sm font-medium transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Agregar
-              </button>
             </div>
           </div>
         </div>

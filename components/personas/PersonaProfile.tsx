@@ -209,6 +209,11 @@ export function PersonaProfile({ id }: Props) {
                 )}
               </div>
               <div className="flex gap-2 mt-1.5 flex-wrap">
+                {persona.is_leverager && (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-[#f0f4ff] text-[#3b5bdb] border border-[#c5d0fa]">
+                    Apalancador
+                  </span>
+                )}
                 {persona.rol_sistema && (
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#eaf4ff] text-[#1a5276] font-medium">
                     {persona.rol_sistema}

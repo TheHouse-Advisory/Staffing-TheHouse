@@ -15,6 +15,9 @@ interface PersonaFormProps {
   persona?: Persona; // undefined = crear, definido = editar
 }
 
+// Cargos que pueden ser apalancadores
+const CARGOS_LEVERAGER = ["Consultor Senior", "Consultor de Proyectos", "Consultor Proyecto", "Consultor Analista"];
+
 interface FormState {
   nombre: string;
   apellido: string;
@@ -25,6 +28,7 @@ interface FormState {
   fecha_nacimiento: string;
   mentor_id: string;
   talento: string;
+  is_leverager: boolean;
   industrias: string[];
   capacidades: string[];
   tematicas: string[];
@@ -40,6 +44,7 @@ const EMPTY: FormState = {
   fecha_nacimiento: "",
   mentor_id: "",
   talento: "",
+  is_leverager: false,
   industrias: [],
   capacidades: [],
   tematicas: [],
@@ -106,6 +111,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
         fecha_nacimiento: persona!.fecha_nacimiento ?? "",
         mentor_id: persona!.mentor_id ?? "",
         talento: persona!.talento ?? "",
+        is_leverager: persona!.is_leverager ?? false,
         industrias: (pi.data ?? []).map((r: any) => r.industria_id),
         capacidades: (pc.data ?? []).map((r: any) => r.capacidad_id),
         tematicas: (pt.data ?? []).map((r: any) => r.tematica_id),
@@ -144,6 +150,8 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
       fecha_nacimiento: form.fecha_nacimiento || null,
       mentor_id: form.mentor_id || null,
       talento: form.talento || null,
+      // Si el cargo ya no es elegible, forzar false al guardar
+      is_leverager: CARGOS_LEVERAGER.includes(form.cargo_actual) ? form.is_leverager : false,
     };
 
     let personaId: string;
@@ -311,6 +319,29 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
             ))}
           </div>
         </FieldWrapper>
+
+        {/* Toggle Apalancador — solo para cargos elegibles */}
+        {CARGOS_LEVERAGER.includes(form.cargo_actual) && (
+          <div className="flex items-center justify-between p-3 rounded-lg border border-[#e8e8e8] bg-[#fafafa]">
+            <div>
+              <p className="text-sm font-semibold text-[#1a1a2e]">¿Es Apalancador?</p>
+              <p className="text-xs text-[#888] mt-0.5">
+                Consultor que trabaja bajo la supervisión directa de un Socio o Director.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, is_leverager: !f.is_leverager }))}
+              className="relative w-10 h-6 rounded-full transition-colors flex-shrink-0"
+              style={{ background: form.is_leverager ? "#4a90e2" : "#e0e0e0" }}
+            >
+              <span
+                className="absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
+                style={{ transform: form.is_leverager ? "translateX(18px)" : "translateX(2px)" }}
+              />
+            </button>
+          </div>
+        )}
 
         {/* Preferencias de matching */}
         <div className="border-t border-[#f0f0f0] pt-5">
