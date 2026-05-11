@@ -393,7 +393,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
             </button>
             {extOpen && (
               <div className="mt-4">
-                <ExtenderProyecto engagementId={engagement.id} onExtended={onSuccess} />
+                <ExtenderProyecto engagementId={engagement.id} engagementTipo={engagement.tipo} onExtended={onSuccess} />
               </div>
             )}
           </div>

@@ -156,17 +156,19 @@ export default function AusenciasPage() {
       </header>
 
       {/* ── Contenido ──────────────────────────────────────────── */}
-      <div className="flex-1 overflow-auto">
-        {vista === "dia" ? (
-          <HeatmapAusencias
-            year={year}
-            month={month}
-            externalModalOpen={modalOpen}
-            onExternalModalClose={() => setModalOpen(false)}
-          />
-        ) : (
-          <HeatmapAusenciasMes year={year} />
-        )}
+      <div className="flex-1 overflow-hidden p-5">
+        <div className="h-full bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
+          {vista === "dia" ? (
+            <HeatmapAusencias
+              year={year}
+              month={month}
+              externalModalOpen={modalOpen}
+              onExternalModalClose={() => setModalOpen(false)}
+            />
+          ) : (
+            <HeatmapAusenciasMes year={year} />
+          )}
+        </div>
       </div>
 
       {/* ── Panel resumen vacaciones ────────────────────────────── */}

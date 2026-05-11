@@ -1,20 +1,19 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths,
   format, isSameDay, parseISO,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { X, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell } from "lucide-react";
 import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
-import { getDetailedPersonAbsences, COLOR_AUSENCIA, type AusenciaDetalle } from "@/lib/queries/ausencias";
 import { GanttAusencias } from "@/components/inicio/GanttAusencias";
 import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTablero";
 import { DesgloceEngagements, type PanelInfo } from "@/components/inicio/DesgloceEngagements";
 import { PanelFitAsignacion } from "@/components/engagements/PanelFitAsignacion";
-import { ProyectosPersonaDetalle } from "@/components/personas/ProyectosPersonaDetalle";
+import { PersonaResumenModal } from "@/components/personas/PersonaResumenModal";
 import type { Persona } from "@/lib/types/database";
 
 const JERARQUIA_CARGOS = [
@@ -30,12 +29,6 @@ const COLORES: Record<string, string> = {
   "Consultor Analista": "#a0b84a", "Consultor Trainee": "#c07c4a",
 };
 const COLOR_DEFAULT = "#94a3b8";
-
-const TALENTO_CONFIG = {
-  talento:       { label: "Talento",       bg: "#f0fdf4", color: "#16a34a" },
-  en_desarrollo: { label: "En desarrollo", bg: "#fefce8", color: "#ca8a04" },
-  no_talento:    { label: "No talento",    bg: "#fef2f2", color: "#dc2626" },
-};
 
 function iniciales(nombre: string, apellido: string) {
   return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
@@ -58,13 +51,6 @@ function ocupColor(pct: number) {
   return { bg: "#f0fdf4", text: "#16a34a" };
 }
 
-interface ResumenPersona {
-  ocupacion: number; totalProyectos: number; industrias: string[];
-  capacidades: string[]; tematicas: string[];
-  totalDiasAnioActual: number;
-  ausenciasFuturas: Pick<AusenciaDetalle, "fechaInicio" | "fechaFin" | "numDias" | "tipoLabel">[];
-  mentorNombre: string | null; mentoreados: string[];
-}
 
 export default function InicioPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
@@ -112,10 +98,6 @@ export default function InicioPage() {
 
   // Popup persona
   const [seleccionada, setSeleccionada] = useState<Persona | null>(null);
-  const [resumen, setResumen] = useState<ResumenPersona | null>(null);
-  const [loadingResumen, setLoadingResumen] = useState(false);
-  const [showAusencias, setShowAusencias] = useState(false);
-  const popupRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     async function load() {
@@ -156,7 +138,7 @@ export default function InicioPage() {
   }, []);
 
   /** Re-fetch ocupación tras una asignación nueva o eliminada */
-  async function refreshOcupacion() {
+  const refreshOcupacion = useCallback(async () => {
     const sb = createAnyClient();
     const hoy = format(new Date(), "yyyy-MM-dd");
     const { data } = await sb.from("asignacion")
@@ -169,53 +151,15 @@ export default function InicioPage() {
       map[a.persona_id] = (map[a.persona_id] ?? 0) + Number(a.pct_dedicacion);
     }
     setOcupacionMap(map);
-  }
+  }, []);
 
+  // Escucha cambios de asignación desde cualquier componente (tablero, formularios, etc.)
   useEffect(() => {
-    function handleClick(e: MouseEvent) {
-      if (popupRef.current && !popupRef.current.contains(e.target as Node)) {
-        setSeleccionada(null); setResumen(null);
-      }
-    }
-    if (seleccionada) document.addEventListener("mousedown", handleClick);
-    return () => document.removeEventListener("mousedown", handleClick);
-  }, [seleccionada]);
+    window.addEventListener("asignacionChanged", refreshOcupacion);
+    return () => window.removeEventListener("asignacionChanged", refreshOcupacion);
+  }, [refreshOcupacion]);
 
-  async function abrirResumen(p: Persona) {
-    setSeleccionada(p); setResumen(null); setLoadingResumen(true); setShowAusencias(false);
-    const sb = createAnyClient();
-
-    const [asigRes, histRes, mentorRes, indRes, capRes, temRes, mentoreRes, ausDetalle] = await Promise.all([
-      sb.from("asignacion").select("pct_dedicacion").eq("persona_id", p.id).eq("estado", "activa"),
-      sb.from("asignacion").select("engagement_id").eq("persona_id", p.id),
-      p.mentor_id
-        ? sb.from("persona").select("nombre, apellido").eq("id", p.mentor_id).single()
-        : Promise.resolve({ data: null }),
-      sb.from("persona_industria").select("cat_industria(nombre)").eq("persona_id", p.id),
-      sb.from("persona_capacidad").select("cat_capacidad(nombre)").eq("persona_id", p.id),
-      sb.from("persona_tematica").select("cat_tematica(nombre)").eq("persona_id", p.id),
-      sb.from("persona").select("nombre, apellido").eq("mentor_id", p.id).eq("activo", true),
-      getDetailedPersonAbsences(sb, p.id),
-    ]);
-
-    const ocupacion = (asigRes.data ?? []).reduce((s: number, a: any) => s + Number(a.pct_dedicacion), 0);
-    const engUnicos = new Set((histRes.data ?? []).map((a: any) => a.engagement_id));
-    setResumen({
-      ocupacion,
-      totalProyectos: engUnicos.size,
-      industrias:  (indRes.data ?? []).map((r: any) => r.cat_industria?.nombre).filter(Boolean) as string[],
-      capacidades: (capRes.data ?? []).map((r: any) => r.cat_capacidad?.nombre).filter(Boolean) as string[],
-      tematicas:   (temRes.data ?? []).map((r: any) => r.cat_tematica?.nombre).filter(Boolean) as string[],
-      totalDiasAnioActual: ausDetalle.totalDiasAnioActual,
-      ausenciasFuturas: ausDetalle.ausenciasFuturas,
-      mentorNombre: mentorRes.data
-        ? `${(mentorRes.data as any).nombre} ${(mentorRes.data as any).apellido}`
-        : null,
-      mentoreados: ((mentoreRes.data ?? []) as { nombre: string; apellido: string }[])
-        .map((m) => `${m.nombre} ${m.apellido}`),
-    });
-    setLoadingResumen(false);
-  }
+  function abrirResumen(p: Persona) { setSeleccionada(p); }
 
   // Agrupar personas por cargo
   const grupos: Record<string, Persona[]> = {};
@@ -225,9 +169,6 @@ export default function InicioPage() {
     grupos[cargo].push(p);
   }
   const cargos = ordenarCargos(Object.keys(grupos));
-  const colorSeleccionada = seleccionada
-    ? (COLORES[seleccionada.cargo_actual ?? ""] ?? COLOR_DEFAULT)
-    : COLOR_DEFAULT;
 
   return (
     <div className="flex flex-col h-full p-6 gap-4">
@@ -377,169 +318,10 @@ export default function InicioPage() {
 
           {/* Popup resumen persona — sólo visible cuando equipo está expandido */}
           {seleccionada && (
-            <div className="absolute inset-0 bg-black/10 rounded-xl z-10 flex items-center justify-center p-3">
-              <div
-                ref={popupRef}
-                className="bg-white rounded-xl shadow-xl border border-gray-100 w-full relative flex flex-col"
-                style={{ maxHeight: "92%" }}
-              >
-                <div className="p-4 pb-2 flex-shrink-0">
-                  <button
-                    onClick={() => { setSeleccionada(null); setResumen(null); }}
-                    className="absolute top-3 right-3 text-gray-300 hover:text-gray-500"
-                  >
-                    <X className="w-4 h-4" />
-                  </button>
-                  <div className="flex items-center gap-2">
-                    <div
-                      className="w-10 h-10 rounded-full flex items-center justify-center text-white text-base font-bold flex-shrink-0"
-                      style={{ backgroundColor: colorSeleccionada }}
-                    >
-                      {iniciales(seleccionada.nombre, seleccionada.apellido)}
-                    </div>
-                    <div>
-                      <p className="font-bold text-[#1a1a2e] text-sm">{seleccionada.nombre} {seleccionada.apellido}</p>
-                      <p className="text-[11px] text-gray-400">{seleccionada.cargo_actual ?? "Sin cargo"}</p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="overflow-y-auto px-4 pb-4 flex-1">
-                  {loadingResumen ? (
-                    <p className="text-sm text-gray-300 text-center py-4">Cargando...</p>
-                  ) : resumen && (
-                    <div className="space-y-2.5 text-sm">
-                      {/* Badge Apalancador */}
-                      {seleccionada.is_leverager && (
-                        <div className="flex items-center gap-1.5 pb-1 border-b border-gray-100">
-                          <span className="w-1.5 h-1.5 rounded-full bg-[#3b5bdb] flex-shrink-0" />
-                          <span className="text-[10px] font-bold uppercase tracking-widest text-[#3b5bdb]">
-                            Apalancador
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-400 text-xs">Disponibilidad</span>
-                        <span
-                          className="font-semibold px-2 py-0.5 rounded-full text-xs"
-                          style={
-                            resumen.ocupacion >= 100
-                              ? { background: "#fef2f2", color: "#dc2626" }
-                              : resumen.ocupacion >= 80
-                              ? { background: "#fefce8", color: "#ca8a04" }
-                              : { background: "#f0fdf4", color: "#16a34a" }
-                          }
-                        >
-                          {Math.max(0, 100 - resumen.ocupacion)}% libre
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-400 text-xs">Nº proyectos</span>
-                        <span className="font-medium text-[#1a1a2e] text-xs">{resumen.totalProyectos}</span>
-                      </div>
-                      {/* Proyectos actuales con días acumulados */}
-                      <div>
-                        <p className="text-gray-400 text-xs mb-1.5">Proyectos actuales</p>
-                        <ProyectosPersonaDetalle personaId={seleccionada.id} compact />
-                      </div>
-                      {resumen.industrias.length > 0 && (
-                        <div>
-                          <p className="text-gray-400 mb-1 text-xs">Industrias</p>
-                          <div className="flex flex-wrap gap-1">
-                            {resumen.industrias.map((i) => (
-                              <span key={i} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#eaf4ff] text-[#1a5276]">{i}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {resumen.capacidades.length > 0 && (
-                        <div>
-                          <p className="text-gray-400 mb-1 text-xs">Capacidades</p>
-                          <div className="flex flex-wrap gap-1">
-                            {resumen.capacidades.map((c) => (
-                              <span key={c} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#f0f9f4] text-[#1e7e45]">{c}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {resumen.tematicas.length > 0 && (
-                        <div>
-                          <p className="text-gray-400 mb-1 text-xs">Temáticas</p>
-                          <div className="flex flex-wrap gap-1">
-                            {resumen.tematicas.map((t) => (
-                              <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#fdf4ff] text-[#6b21a8]">{t}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {/* Ausencias — expandible */}
-                      <div>
-                        <button
-                          onClick={() => setShowAusencias((s) => !s)}
-                          className="w-full flex justify-between items-center hover:bg-gray-50 rounded px-0.5 py-0.5 -mx-0.5 transition-colors"
-                        >
-                          <span className="text-gray-400 text-xs">Ausencias año</span>
-                          <div className="flex items-center gap-1">
-                            <span className="font-semibold text-[#1a1a2e] text-xs">{resumen.totalDiasAnioActual}d</span>
-                            <ChevronDown className="w-3 h-3 text-gray-300" style={{ transform: showAusencias ? "rotate(180deg)" : "none", transition: "transform 0.2s" }} />
-                          </div>
-                        </button>
-                        {showAusencias && (
-                          <div className="mt-1.5 pl-1 space-y-1">
-                            {resumen.ausenciasFuturas.length === 0 ? (
-                              <p className="text-[10px] text-gray-300 italic">Sin ausencias futuras</p>
-                            ) : (
-                              <>
-                                <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide">Próximas</p>
-                                {resumen.ausenciasFuturas.map((a, i) => (
-                                  <div key={i} className="flex justify-between items-start gap-1">
-                                    <span className="text-[10px] text-gray-500 leading-tight truncate max-w-[100px]">{a.tipoLabel}</span>
-                                    <div className="text-right flex-shrink-0">
-                                      <p className="text-[10px] text-gray-400">{format(new Date(a.fechaInicio + "T00:00:00"), "d MMM", { locale: es })}</p>
-                                      <p className="text-[10px] font-semibold text-[#1a1a2e]">{a.numDias}d</p>
-                                    </div>
-                                  </div>
-                                ))}
-                              </>
-                            )}
-                          </div>
-                        )}
-                      </div>
-                      {seleccionada.talento && (
-                        <div className="flex justify-between items-center">
-                          <span className="text-gray-400 text-xs">Talento</span>
-                          <span
-                            className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
-                            style={{
-                              background: TALENTO_CONFIG[seleccionada.talento].bg,
-                              color: TALENTO_CONFIG[seleccionada.talento].color,
-                            }}
-                          >
-                            {TALENTO_CONFIG[seleccionada.talento].label}
-                          </span>
-                        </div>
-                      )}
-                      <div className="flex justify-between items-center">
-                        <span className="text-gray-400 text-xs">Mentor</span>
-                        <span className="font-medium text-[#1a1a2e] text-xs">
-                          {resumen.mentorNombre ?? <span className="text-gray-300">Sin mentor</span>}
-                        </span>
-                      </div>
-                      {resumen.mentoreados.length > 0 && (
-                        <div>
-                          <p className="text-gray-400 mb-1 text-xs">Es mentor de</p>
-                          <div className="flex flex-wrap gap-1">
-                            {resumen.mentoreados.map((m) => (
-                              <span key={m} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#f0f9f4] text-[#1e7e45] font-medium">{m}</span>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-              </div>
-            </div>
+            <PersonaResumenModal
+              personaId={seleccionada.id}
+              onClose={() => setSeleccionada(null)}
+            />
           )}
         </div>
         )}{/* fin ternario equipo expandido */}
@@ -572,6 +354,10 @@ export default function InicioPage() {
               onAsignacionChange={refreshOcupacion}
               onOpenPanel={abrirPanel}
               externalReloadKey={tableroReloadKey}
+              onPersonaClick={(id) => {
+                const p = personas.find((x) => x.id === id);
+                if (p) abrirResumen(p);
+              }}
             />
           </div>
         </div>

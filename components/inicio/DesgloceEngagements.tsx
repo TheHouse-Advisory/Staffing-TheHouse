@@ -6,10 +6,11 @@ import {
   subWeeks, subMonths, format, startOfMonth, endOfMonth,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, ChevronDown, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2 } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
 import { ConfirmDialog } from "@/components/ui/Modal";
+import { PersonaResumenModal } from "@/components/personas/PersonaResumenModal";
 import type { Engagement } from "@/lib/types/database";
 
 // ── Cargos Asociado y Consultor Senior son la misma categoría visual ──
@@ -104,12 +105,14 @@ interface Props {
   onAsignacionChange?: () => void;
   onOpenPanel?: (info: PanelInfo | null) => void;
   externalReloadKey?: number;
-  // Props de control externo: cuando se pasan, oculta los controles internos de fecha
   vistaExterna?: Vista;
   baseExterna?: Date;
+  /** Si se provee, delega el clic de avatar al padre (ej. inicio/page.tsx usa su propio modal) */
+  onPersonaClick?: (personaId: string) => void;
 }
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna }: Props) {
+
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
   const [baseInterna, setBaseInterna] = useState<Date>(new Date());
 
@@ -133,9 +136,15 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   // Drag & Drop
   const [dragOverReqId, setDragOverReqId] = useState<string | null>(null);
   const [desasignando, setDesasignando] = useState<string | null>(null);
+  // Ghost circles (extensión)
+  const [dragOverGhostKey, setDragOverGhostKey] = useState<string | null>(null);
+  const [ghostLoading, setGhostLoading] = useState<string | null>(null);
 
   // Papelera
   const [confirmPapeleraDesg, setConfirmPapeleraDesg] = useState<{ id: string; nombre: string } | null>(null);
+
+  // Popup resumen persona (PersonaResumenModal auto-contenido cuando no se provee onPersonaClick)
+  const [avatarPopup, setAvatarPopup] = useState<{ personaId: string; x: number; y: number } | null>(null);
 
   // Intensidad por engagement (dias_criticos)
   type DcEntry = { fecha: string; fecha_fin: string | null; intensidad: string };
@@ -163,6 +172,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
   const inicioStr = format(columnas[0].inicio, "yyyy-MM-dd");
   const finStr = format(columnas[columnas.length - 1].fin, "yyyy-MM-dd");
+  // Lookback para ghost circles: trae asignaciones finalizadas hasta 90 días antes de la vista
+  const lookbackStr = format(addDays(columnas[0].inicio, -90), "yyyy-MM-dd");
 
   useEffect(() => {
     async function load() {
@@ -184,7 +195,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           .select("id, engagement_id, persona_id, pct_dedicacion, fecha_inicio, fecha_fin, persona:persona_id(nombre, apellido, cargo_actual)" as any)
           .eq("estado", "activa")
           .lte("fecha_inicio", finStr)
-          .gte("fecha_fin", inicioStr),
+          .gte("fecha_fin", lookbackStr),
 
         sb.from("ausencia")
           .select("persona_id, fecha_inicio, fecha_fin")
@@ -263,7 +274,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       setLoading(false);
     }
     load();
-  }, [inicioStr, finStr, reloadKey, externalReloadKey]);
+  }, [inicioStr, finStr, lookbackStr, reloadKey, externalReloadKey]);
 
   async function abrirDetalleEng(eng: EngRow) {
     setEngModal(eng);
@@ -299,6 +310,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   function refresh() {
     setReloadKey((k) => k + 1);
     onAsignacionChange?.();
+    window.dispatchEvent(new CustomEvent("asignacionChanged"));
+  }
+
+  // Clic en avatar de persona asignada → abre PersonaResumenModal o delega al padre
+  function handleAvatarClick(e: React.MouseEvent, p: PersonaAsig) {
+    e.stopPropagation();
+    if (onPersonaClick) { onPersonaClick(p.id); return; }
+    setAvatarPopup({ personaId: p.id, x: e.clientX, y: e.clientY });
   }
 
   // Drop de persona desde cuadrante EQUIPO sobre un slot vacío
@@ -322,6 +341,70 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     });
     refresh();
     onOpenPanel?.(null); // cierra panel lateral al llenar el slot por drag & drop
+  }
+
+  // Crea requerimiento para el período de extensión y asigna a personaId
+  async function staffearEnExtension(
+    eng: EngRow,
+    cargo: string,
+    ghost: PersonaAsig,
+    personaId: string,
+    cargoAlMomento: string
+  ) {
+    const extensionStart = format(addDays(new Date(ghost.fecha_fin + "T00:00:00"), 1), "yyyy-MM-dd");
+    const extensionEnd = eng.fecha_fin ?? extensionStart;
+    if (extensionStart > extensionEnd) return;
+
+    const sb = createAnyClient();
+    const cargoRequerido = cargo !== "Sin cargo" ? cargo : null;
+
+    const { data: newReq, error: reqErr } = await (sb as any)
+      .from("requerimiento_engagement")
+      .insert({
+        engagement_id: eng.id,
+        cargo_requerido: cargoRequerido,
+        fase_nombre: null,
+        pct_dedicacion: ghost.pct,
+        fecha_inicio: extensionStart,
+        fecha_fin: extensionEnd,
+        descripcion: null,
+      })
+      .select("id")
+      .single();
+
+    if (reqErr || !newReq) return;
+
+    await (sb as any).from("asignacion").insert({
+      engagement_id: eng.id,
+      requerimiento_id: (newReq as any).id,
+      persona_id: personaId,
+      cargo_al_momento: cargoAlMomento || cargoRequerido,
+      pct_dedicacion: ghost.pct,
+      fecha_inicio: extensionStart,
+      fecha_fin: extensionEnd,
+      estado: "activa",
+    });
+
+    refresh();
+  }
+
+  // Click en ghost → extiende a la misma persona
+  async function handleGhostClick(eng: EngRow, cargo: string, ghost: PersonaAsig) {
+    const key = `${eng.id}-${cargo}-${ghost.id}`;
+    if (ghostLoading === key) return;
+    setGhostLoading(key);
+    await staffearEnExtension(eng, cargo, ghost, ghost.id, ghost.cargo ?? cargo);
+    setGhostLoading(null);
+  }
+
+  // Drop sobre ghost → extiende a la persona arrastrada
+  async function handleGhostDrop(e: React.DragEvent, eng: EngRow, cargo: string, ghost: PersonaAsig) {
+    e.preventDefault();
+    setDragOverGhostKey(null);
+    let data: { personaId: string; nombre: string; apellido: string; cargo_actual: string } | null = null;
+    try { data = JSON.parse(e.dataTransfer.getData("persona")); } catch { return; }
+    if (!data?.personaId) return;
+    await staffearEnExtension(eng, cargo, ghost, data.personaId, data.cargo_actual ?? cargo);
   }
 
   // Eliminar asignación (botón X en avatar)
@@ -621,6 +704,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                         </td>
                         {columnas.map((col, i) => {
                           const esHoy = col.inicio <= hoy && hoy <= col.fin;
+                          const colIniStr = format(col.inicio, "yyyy-MM-dd");
                           const activos = personas.filter((p) =>
                             rangoSolapan(p.fecha_inicio, p.fecha_fin, col.inicio, col.fin)
                           );
@@ -631,16 +715,32 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                           );
                           const unfilledReqs = reqsEnCol.slice(activos.length);
 
+                          // Ghost circles para ayuda_interna: último asignado cuando el
+                          // engagement sigue activo pero la asignación anterior ya venció
+                          const esColActiva = rangoSolapan(eng.fecha_inicio, eng.fecha_fin, col.inicio, col.fin);
+                          const ghostPersonas = (
+                            eng.tipo === "ayuda_interna" &&
+                            esColActiva &&
+                            activos.length === 0 &&
+                            unfilledReqs.length === 0
+                          )
+                            ? personas
+                                .filter((p) => p.fecha_fin < colIniStr)
+                                .sort((a, b) => b.fecha_fin.localeCompare(a.fecha_fin))
+                                .filter((p, i, arr) => arr.findIndex((q) => q.id === p.id) === i)
+                            : [];
+
                           return (
                             <td key={i} className="py-0.5 px-1">
                               <div className="flex flex-wrap gap-1 justify-center min-h-[36px] items-center">
                                 {/* Personas asignadas con botón X */}
                                 {activos.map((p) => (
                                   <div key={p.asignacionId}
-                                    title={`${p.nombre} ${p.apellido} · ${p.pct}%`}
+                                    title={`${p.nombre} ${p.apellido} · ${p.pct}% · Clic para ver resumen`}
                                     className="flex flex-col items-center gap-0.5 relative group/persona">
                                     <div
-                                      className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-sm"
+                                      onClick={(e) => handleAvatarClick(e, p)}
+                                      className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-sm cursor-pointer hover:scale-110 transition-transform"
                                       style={{
                                         backgroundColor: cargoColor,
                                         opacity: desasignando === p.asignacionId ? 0.4 : esHoy ? 1 : 0.75,
@@ -692,6 +792,45 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                       }}
                                     >
                                       <span className="text-[10px] font-bold" style={{ color: cargoColor }}>+</span>
+                                    </div>
+                                  );
+                                })}
+
+                                {/* Ghost circles: última persona asignada en período extendido.
+                                    Clic → extiende a la misma persona.
+                                    Drop → extiende a quien se suelte. */}
+                                {ghostPersonas.map((p) => {
+                                  const ghostKey = `${eng.id}-${cargo}-${p.id}`;
+                                  const isLoadingGhost = ghostLoading === ghostKey;
+                                  const isDragOverGhost = dragOverGhostKey === ghostKey;
+                                  return (
+                                    <div
+                                      key={`ghost-${p.asignacionId}`}
+                                      title={`${p.nombre} ${p.apellido} · ${p.pct}% · Clic para extender · Arrastra otra persona para reemplazar`}
+                                      className="flex flex-col items-center gap-0.5 cursor-pointer"
+                                      onClick={() => handleGhostClick(eng, cargo, p)}
+                                      onDragOver={(e) => { e.preventDefault(); setDragOverGhostKey(ghostKey); }}
+                                      onDragLeave={() => setDragOverGhostKey(null)}
+                                      onDrop={(e) => handleGhostDrop(e, eng, cargo, p)}
+                                    >
+                                      <div
+                                        className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold transition-all"
+                                        style={{
+                                          border: `2px dashed ${cargoColor}`,
+                                          color: isLoadingGhost ? "transparent" : cargoColor,
+                                          opacity: isDragOverGhost ? 1 : 0.65,
+                                          background: isDragOverGhost ? `${cargoColor}22` : "transparent",
+                                          transform: isDragOverGhost ? "scale(1.15)" : "scale(1)",
+                                        }}
+                                      >
+                                        {isLoadingGhost
+                                          ? <Loader2 className="w-3 h-3 animate-spin" style={{ color: cargoColor }} />
+                                          : iniciales(p.nombre, p.apellido)
+                                        }
+                                      </div>
+                                      <span className="text-[9px] px-1 rounded-full leading-tight" style={{ background: "#f1f5f9", color: "#94a3b8" }}>
+                                        {p.pct}%
+                                      </span>
                                     </div>
                                   );
                                 })}
@@ -750,6 +889,16 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
             </tbody>
           </table>
         </div>
+      )}
+
+      {/* ── Popup resumen persona completo (tablero, sin onPersonaClick) ── */}
+      {avatarPopup && !onPersonaClick && (
+        <PersonaResumenModal
+          personaId={avatarPopup.personaId}
+          anchorX={avatarPopup.x}
+          anchorY={avatarPopup.y}
+          onClose={() => setAvatarPopup(null)}
+        />
       )}
 
       {/* ── Quick-edit intensidad ── */}

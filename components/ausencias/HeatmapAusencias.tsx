@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { X, Loader2, Plus } from "lucide-react";
+import { X, Loader2, Plus, ChevronDown, ChevronRight } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
   fetchAusenciasMes,
@@ -317,6 +317,17 @@ export function HeatmapAusencias({
 
   const supabase = createClient();
 
+  // Colapso nivel 1 (cargos) y nivel 2 (personas)
+  const [cargoColapsados, setCargoColapsados] = useState<Set<string>>(new Set());
+  const [personaColapsados, setPersonaColapsados] = useState<Set<string>>(new Set());
+
+  function toggleCargo(cargo: string) {
+    setCargoColapsados(prev => { const s = new Set(prev); s.has(cargo) ? s.delete(cargo) : s.add(cargo); return s; });
+  }
+  function togglePersona(id: string) {
+    setPersonaColapsados(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
+  }
+
   // Sincronizar modal externo (desde la página)
   useEffect(() => {
     if (externalModalOpen) {
@@ -364,6 +375,9 @@ export function HeatmapAusencias({
     return Array.from(map.entries()); // [cargo, FilaPersona[]][]
   }, [filas]);
 
+  function colapsarTodo() { setCargoColapsados(new Set(grupos.map(([c]) => c))); }
+  function expandirTodo()  { setCargoColapsados(new Set()); setPersonaColapsados(new Set()); }
+
   // ── Render ─────────────────────────────────────────────────
   return (
     <div className="h-full flex flex-col">
@@ -381,21 +395,29 @@ export function HeatmapAusencias({
           <p className="text-sm">No hay personas activas registradas.</p>
         </div>
       ) : (
+        <>
+        {/* Botón colapsar/expandir todo */}
+        <div className="flex items-center justify-end px-4 py-2 border-b border-[#f0f0f0] flex-shrink-0">
+          <button
+            onClick={cargoColapsados.size >= grupos.length ? expandirTodo : colapsarTodo}
+            className="text-[11px] px-2.5 py-1 rounded-lg border border-[#e8e8e8] text-[#888] hover:text-[#555] hover:bg-[#f5f5f5] transition-colors"
+          >
+            {cargoColapsados.size >= grupos.length ? "Expandir todo" : "Colapsar todo"}
+          </button>
+        </div>
+
         <div className="flex-1 overflow-auto">
-          <table className="border-collapse w-full text-[12px]" style={{ minWidth: `${180 + dias.length * 36}px` }}>
+          <table className="border-collapse w-full text-[12px]" style={{ minWidth: `${200 + dias.length * 36}px` }}>
 
             {/* ── Encabezado ── */}
             <thead className="sticky top-0 z-20">
               <tr>
-                {/* Columna persona */}
                 <th
                   className="sticky left-0 z-30 bg-[#fafafa] border-b border-r border-[#ebebeb] px-4 py-2.5 text-left text-[11px] font-semibold text-[#888] uppercase tracking-wide"
                   style={{ minWidth: 200, width: 200 }}
                 >
                   Persona
                 </th>
-
-                {/* Columna por día */}
                 {dias.map((fecha) => {
                   const esLunes = isMonday(fecha);
                   return (
@@ -412,131 +434,191 @@ export function HeatmapAusencias({
               </tr>
             </thead>
 
-            {/* ── Filas agrupadas por cargo ── */}
             <tbody>
-              {grupos.map(([cargo, filasGrupo]) => (
-                <React.Fragment key={cargo}>
-                  {/* Filas de personas del grupo */}
-                  {filasGrupo.map((fila, rowIdx) => (
-                    <tr
-                      key={fila.persona.id}
-                      className={rowIdx % 2 === 0 ? "bg-white" : "bg-[#fafafa]"}
-                    >
-                      {/* Nombre */}
+              {grupos.map(([cargo, filasGrupo]) => {
+                const estaColapsadoCargo = cargoColapsados.has(cargo);
+                return (
+                  <React.Fragment key={cargo}>
+
+                    {/* ── Cabecera de cargo (Nivel 1) ── */}
+                    <tr className="bg-[#f0f0f0] border-t-2 border-b border-[#ddd]">
                       <td
-                        className="sticky left-0 z-10 bg-inherit border-r border-[#ebebeb] px-4 py-2"
+                        className="sticky left-0 z-10 bg-[#f0f0f0] border-r border-[#ddd] px-2 py-1.5"
                         style={{ minWidth: 200, width: 200 }}
                       >
-                        <div className="text-[12px] font-semibold text-[#1a1a1a] truncate">
-                          {fila.persona.nombre} {fila.persona.apellido}
-                        </div>
-                        {fila.persona.cargo_actual && (
-                          <div className="text-[10px] text-[#999] truncate">{fila.persona.cargo_actual}</div>
-                        )}
+                        <button
+                          onClick={() => toggleCargo(cargo)}
+                          className="flex items-center gap-1.5 w-full text-left hover:opacity-70 transition-opacity"
+                        >
+                          {estaColapsadoCargo
+                            ? <ChevronRight className="w-3 h-3 text-[#777] flex-shrink-0" />
+                            : <ChevronDown  className="w-3 h-3 text-[#777] flex-shrink-0" />}
+                          <span className="text-[10px] font-bold text-[#444] uppercase tracking-wide truncate">
+                            {cargo}
+                          </span>
+                          <span className="text-[9px] text-[#aaa] ml-1 flex-shrink-0">
+                            · {filasGrupo.length} {filasGrupo.length === 1 ? "persona" : "personas"}
+                          </span>
+                        </button>
                       </td>
-
-                      {/* Celdas de días */}
+                      {/* Cuando colapsado: muestra % de ausencia del cargo por día */}
                       {dias.map((fecha) => {
-                        const celda = fila.dias[fecha];
                         const esLunes = isMonday(fecha);
-                        const isActive = tooltip?.personaId === fila.persona.id && tooltip?.fecha === fecha;
-
+                        if (!estaColapsadoCargo) {
+                          return <td key={fecha} className={`border-b border-[#e8e8e8] ${esLunes ? "border-l border-[#ddd]" : ""}`} style={{ minWidth: 34, width: 34 }} />;
+                        }
+                        const ausentes = filasGrupo.filter((f) => f.dias[fecha] != null).length;
+                        const total    = filasGrupo.length;
+                        const pct      = total > 0 ? Math.round((ausentes / total) * 100) : 0;
+                        const estilo   = pctStyle(pct);
                         return (
-                          <td
-                            key={fecha}
-                            className={`py-1 px-0.5 border-b border-[#f5f5f5] relative ${esLunes ? "border-l border-[#ddd]" : ""}`}
+                          <td key={fecha} className={`px-0.5 py-1 text-center ${esLunes ? "border-l border-[#ddd]" : ""}`}
                             style={{ minWidth: 34, width: 34 }}
+                            title={pct > 0 ? `${ausentes}/${total} ausentes (${pct}%)` : "Sin ausencias"}
                           >
-                            {celda ? (
-                              <div className="relative">
-                                <button
-                                  type="button"
-                                  onClick={() => setTooltip(isActive ? null : { personaId: fila.persona.id, fecha })}
-                                  className="w-full h-7 rounded transition-opacity hover:opacity-75"
-                                  style={{ background: COLOR_AUSENCIA[celda.tipo]?.bg ?? "#ccc" }}
-                                  title={COLOR_AUSENCIA[celda.tipo]?.label}
-                                />
-                                {isActive && (
-                                  <CeldaTooltip
-                                    celda={celda}
-                                    persona={fila.persona}
-                                    fecha={fecha}
-                                    onEliminar={handleEliminar}
-                                    eliminando={eliminando === celda.ausencia_id}
-                                  />
-                                )}
+                            {estilo ? (
+                              <div className="w-full h-5 rounded flex items-center justify-center" style={{ background: estilo.bg }}>
+                                <span className="text-[8px] font-bold" style={{ color: estilo.text }}>{pct}%</span>
                               </div>
-                            ) : (
-                              <button
-                                type="button"
-                                className="w-full h-7 rounded hover:bg-[#f0f0f0] transition-colors group"
-                                onClick={() => {
-                                  setModalPersona(fila.persona.id);
-                                  setModalFecha(fecha);
-                                  setModalOpen(true);
-                                }}
-                                title="Agregar ausencia"
-                              >
-                                <Plus className="w-3 h-3 text-[#ddd] group-hover:text-[#bbb] mx-auto transition-colors" />
-                              </button>
-                            )}
+                            ) : <div className="w-full h-5" />}
                           </td>
                         );
                       })}
                     </tr>
-                  ))}
 
-                  {/* Fila de resumen del cargo */ }
-                  <tr key={`summary-${cargo}`} className="bg-[#f4f4f4] border-t border-b border-[#e0e0e0]">
-                    {/* Etiqueta del cargo */}
-                    <td
-                      className="sticky left-0 z-10 bg-[#f4f4f4] border-r border-[#e0e0e0] px-4 py-1.5"
-                      style={{ minWidth: 200, width: 200 }}
-                    >
-                      <div className="text-[10px] font-bold text-[#555] uppercase tracking-wide truncate">
-                        {cargo}
-                      </div>
-                      <div className="text-[9px] text-[#999]">
-                        {filasGrupo.length} {filasGrupo.length === 1 ? "persona" : "personas"}
-                      </div>
-                    </td>
-
-                    {/* % ausente por día */}
-                    {dias.map((fecha) => {
-                      const ausentes = filasGrupo.filter((f) => f.dias[fecha] != null).length;
-                      const total = filasGrupo.length;
-                      const pct = total > 0 ? Math.round((ausentes / total) * 100) : 0;
-                      const estilo = pctStyle(pct);
-                      const esLunes = isMonday(fecha);
-
+                    {/* ── Filas de personas (Nivel 2, visibles solo cuando cargo expandido) ── */}
+                    {!estaColapsadoCargo && filasGrupo.map((fila, rowIdx) => {
+                      const estaColapsadaPersona = personaColapsados.has(fila.persona.id);
                       return (
-                        <td
-                          key={fecha}
-                          className={`px-0.5 py-1 text-center ${esLunes ? "border-l border-[#ddd]" : ""}`}
-                          style={{ minWidth: 34, width: 34 }}
-                          title={pct > 0 ? `${ausentes} de ${total} ausentes (${pct}%)` : "Sin ausencias"}
-                        >
-                          {estilo ? (
-                            <div
-                              className="w-full h-6 rounded flex items-center justify-center"
-                              style={{ background: estilo.bg }}
-                            >
-                              <span className="text-[9px] font-bold leading-none" style={{ color: estilo.text }}>
-                                {pct}%
-                              </span>
+                        <tr key={fila.persona.id} className={rowIdx % 2 === 0 ? "bg-white" : "bg-[#fafafa]"}>
+
+                          {/* Nombre + chevron persona */}
+                          <td
+                            className="sticky left-0 z-10 bg-inherit border-r border-[#ebebeb] px-2 py-1"
+                            style={{ minWidth: 200, width: 200 }}
+                          >
+                            <div className="flex items-center gap-1">
+                              <button
+                                onClick={() => togglePersona(fila.persona.id)}
+                                className="flex-shrink-0 p-0.5 rounded hover:bg-[#e8e8e8] text-[#ccc] hover:text-[#888] transition-colors"
+                                title={estaColapsadaPersona ? "Expandir" : "Colapsar"}
+                              >
+                                {estaColapsadaPersona
+                                  ? <ChevronRight className="w-3 h-3" />
+                                  : <ChevronDown  className="w-3 h-3" />}
+                              </button>
+                              <div className="min-w-0">
+                                <div className="text-[12px] font-semibold text-[#1a1a1a] truncate">
+                                  {fila.persona.nombre} {fila.persona.apellido}
+                                </div>
+                                {!estaColapsadaPersona && fila.persona.cargo_actual && (
+                                  <div className="text-[10px] text-[#999] truncate">{fila.persona.cargo_actual}</div>
+                                )}
+                              </div>
                             </div>
-                          ) : (
-                            <div className="w-full h-6" />
-                          )}
-                        </td>
+                          </td>
+
+                          {/* Celdas de días */}
+                          {dias.map((fecha) => {
+                            const celda   = fila.dias[fecha];
+                            const esLunes = isMonday(fecha);
+
+                            if (estaColapsadaPersona) {
+                              // Vista compacta: barra mini de color sin interacción
+                              return (
+                                <td key={fecha}
+                                  className={`py-1.5 px-0.5 border-b border-[#f5f5f5] ${esLunes ? "border-l border-[#ddd]" : ""}`}
+                                  style={{ minWidth: 34, width: 34 }}
+                                  title={celda ? COLOR_AUSENCIA[celda.tipo]?.label : undefined}
+                                >
+                                  {celda
+                                    ? <div className="w-full h-2.5 rounded-sm" style={{ background: COLOR_AUSENCIA[celda.tipo]?.bg ?? "#94a3b8" }} />
+                                    : <div className="w-full h-2.5" />
+                                  }
+                                </td>
+                              );
+                            }
+
+                            const isActive = tooltip?.personaId === fila.persona.id && tooltip?.fecha === fecha;
+                            return (
+                              <td key={fecha}
+                                className={`py-1 px-0.5 border-b border-[#f5f5f5] relative ${esLunes ? "border-l border-[#ddd]" : ""}`}
+                                style={{ minWidth: 34, width: 34 }}
+                              >
+                                {celda ? (
+                                  <div className="relative">
+                                    <button type="button"
+                                      onClick={() => setTooltip(isActive ? null : { personaId: fila.persona.id, fecha })}
+                                      className="w-full h-7 rounded transition-opacity hover:opacity-75"
+                                      style={{ background: COLOR_AUSENCIA[celda.tipo]?.bg ?? "#ccc" }}
+                                      title={COLOR_AUSENCIA[celda.tipo]?.label}
+                                    />
+                                    {isActive && (
+                                      <CeldaTooltip celda={celda} persona={fila.persona} fecha={fecha}
+                                        onEliminar={handleEliminar} eliminando={eliminando === celda.ausencia_id}
+                                      />
+                                    )}
+                                  </div>
+                                ) : (
+                                  <button type="button"
+                                    className="w-full h-7 rounded hover:bg-[#f0f0f0] transition-colors group"
+                                    onClick={() => { setModalPersona(fila.persona.id); setModalFecha(fecha); setModalOpen(true); }}
+                                    title="Agregar ausencia"
+                                  >
+                                    <Plus className="w-3 h-3 text-[#ddd] group-hover:text-[#bbb] mx-auto transition-colors" />
+                                  </button>
+                                )}
+                              </td>
+                            );
+                          })}
+                        </tr>
                       );
                     })}
-                  </tr>
-                </React.Fragment>
-              ))}
+
+                    {/* ── Fila resumen del cargo (solo cuando expandido) ── */}
+                    {!estaColapsadoCargo && (
+                      <tr className="bg-[#f4f4f4] border-t border-b border-[#e0e0e0]">
+                        <td
+                          className="sticky left-0 z-10 bg-[#f4f4f4] border-r border-[#e0e0e0] px-4 py-1.5"
+                          style={{ minWidth: 200, width: 200 }}
+                        >
+                          <div className="text-[10px] font-bold text-[#555] uppercase tracking-wide truncate">
+                            Resumen · {cargo}
+                          </div>
+                          <div className="text-[9px] text-[#999]">
+                            {filasGrupo.length} {filasGrupo.length === 1 ? "persona" : "personas"}
+                          </div>
+                        </td>
+                        {dias.map((fecha) => {
+                          const ausentes = filasGrupo.filter((f) => f.dias[fecha] != null).length;
+                          const total    = filasGrupo.length;
+                          const pct      = total > 0 ? Math.round((ausentes / total) * 100) : 0;
+                          const estilo   = pctStyle(pct);
+                          const esLunes  = isMonday(fecha);
+                          return (
+                            <td key={fecha}
+                              className={`px-0.5 py-1 text-center ${esLunes ? "border-l border-[#ddd]" : ""}`}
+                              style={{ minWidth: 34, width: 34 }}
+                              title={pct > 0 ? `${ausentes} de ${total} ausentes (${pct}%)` : "Sin ausencias"}
+                            >
+                              {estilo ? (
+                                <div className="w-full h-6 rounded flex items-center justify-center" style={{ background: estilo.bg }}>
+                                  <span className="text-[9px] font-bold leading-none" style={{ color: estilo.text }}>{pct}%</span>
+                                </div>
+                              ) : <div className="w-full h-6" />}
+                            </td>
+                          );
+                        })}
+                      </tr>
+                    )}
+
+                  </React.Fragment>
+                );
+              })}
             </tbody>
           </table>
         </div>
+        </>
       )}
 
       {/* ── Modal nueva ausencia ── */}

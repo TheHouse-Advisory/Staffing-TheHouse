@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { AlertTriangle, CalendarX, CheckCircle, Loader2 } from "lucide-react";
+import { AlertTriangle, CalendarX, CheckCircle, Loader2, UserPlus, X } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { FieldWrapper, Input } from "@/components/ui/FormField";
@@ -16,12 +16,26 @@ interface ExtPersona {
   apellido: string;
   cargo: string;
   pct: number;
-  incluir: boolean;
   ausencias: {
     tipoLabel: string; fechaInicio: string; fechaFin: string;
     numDias: number; conflicto: boolean;
   }[];
   asigSolap: { engNombre: string; pct: number; fechaInicio: string; fechaFin: string | null }[];
+}
+
+interface PersonaOption {
+  id: string;
+  nombre: string;
+  apellido: string;
+  cargo_actual: string | null;
+}
+
+interface ReqBase {
+  id: string;
+  fase_nombre: string | null;
+  cargo_requerido: string | null;
+  pct_dedicacion: number;
+  descripcion: string | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -41,32 +55,76 @@ function avatarColor(id: string) {
   return palette[Math.abs(h) % palette.length];
 }
 
-// ─── Component ────────────────────────────────────────────────
+async function fetchConflictos(
+  sb: any,
+  personaId: string,
+  engagementId: string,
+  fechaInicio: string,
+  fechaFin: string
+) {
+  const [{ data: ausData }, { data: solapData }] = await Promise.all([
+    sb.from("ausencia")
+      .select("persona_id, tipo, fecha_inicio, fecha_fin")
+      .eq("persona_id", personaId)
+      .lte("fecha_inicio", fechaFin)
+      .gte("fecha_fin", fechaInicio),
+    sb.from("asignacion")
+      .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin, engagement:engagement_id(nombre)")
+      .eq("persona_id", personaId)
+      .neq("engagement_id", engagementId)
+      .eq("estado", "activa")
+      .lte("fecha_inicio", fechaFin)
+      .or(`fecha_fin.gte.${fechaInicio},fecha_fin.is.null`),
+  ]);
+  return { ausData: ausData ?? [], solapData: solapData ?? [] };
+}
+
+// ─── Props ────────────────────────────────────────────────────
 
 interface Props {
   engagementId: string;
+  engagementTipo?: string;
   onExtended?: () => void;
 }
 
-export function ExtenderProyecto({ engagementId, onExtended }: Props) {
+// ─── Component ────────────────────────────────────────────────
+
+export function ExtenderProyecto({ engagementId, engagementTipo, onExtended }: Props) {
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
   const [personas, setPersonas] = useState<ExtPersona[]>([]);
+  const [reqs, setReqs] = useState<ReqBase[]>([]);
   const [loading, setLoading] = useState(false);
   const [guardando, setGuardando] = useState(false);
   const [exito, setExito] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Reload when engagement changes (e.g. parent re-opens)
+  // Picker para añadir más personas
+  const [allPersonas, setAllPersonas] = useState<PersonaOption[]>([]);
+  const [selectedAdd, setSelectedAdd] = useState("");
+  const [addingPersona, setAddingPersona] = useState(false);
+
+  // Carga todas las personas activas una vez para el picker
   useEffect(() => {
-    setFechaInicio(""); setFechaFin(""); setPersonas([]);
-    setExito(false); setError(null);
+    const sb = createAnyClient();
+    (sb as any)
+      .from("persona")
+      .select("id, nombre, apellido, cargo_actual")
+      .eq("estado", "activo")
+      .order("apellido")
+      .then(({ data }: any) => setAllPersonas(data ?? []));
+  }, []);
+
+  // Reset cuando cambia el engagement
+  useEffect(() => {
+    setFechaInicio(""); setFechaFin(""); setPersonas([]); setReqs([]);
+    setExito(false); setError(null); setSelectedAdd("");
   }, [engagementId]);
 
-  // Auto-load team + conflict check when both dates are set
+  // Carga equipo + conflictos cuando ambas fechas están definidas
   useEffect(() => {
     if (!fechaInicio || !fechaFin || fechaFin < fechaInicio) {
-      setPersonas([]);
+      setPersonas([]); setReqs([]);
       return;
     }
     let cancelled = false;
@@ -77,6 +135,7 @@ export function ExtenderProyecto({ engagementId, onExtended }: Props) {
       setError(null);
       const sb = createAnyClient();
 
+      // Equipo actual (asignaciones activas)
       const { data: asigData } = await (sb as any)
         .from("asignacion")
         .select("persona_id, pct_dedicacion, cargo_al_momento, persona:persona_id(nombre, apellido)")
@@ -85,16 +144,29 @@ export function ExtenderProyecto({ engagementId, onExtended }: Props) {
 
       if (cancelled) return;
 
-      // Dedup by personaId
+      // Dedup por personaId (la persona más reciente)
       const seen = new Set<string>();
       const unique = ((asigData ?? []) as any[]).filter((a) => {
         if (seen.has(a.persona_id)) return false;
         seen.add(a.persona_id); return true;
       });
 
-      if (unique.length === 0) {
-        setPersonas([]); setLoading(false); return;
+      // Requerimientos base (deduplicados) para copiar al período extendido — todos los tipos
+      const { data: reqData } = await (sb as any)
+        .from("requerimiento_engagement")
+        .select("id, fase_nombre, cargo_requerido, pct_dedicacion, descripcion")
+        .eq("engagement_id", engagementId);
+      if (!cancelled) {
+        const seenReq = new Set<string>();
+        const uniqueReqs = ((reqData ?? []) as any[]).filter((r: any) => {
+          const key = `${r.fase_nombre}|${r.cargo_requerido}|${r.pct_dedicacion}`;
+          if (seenReq.has(key)) return false;
+          seenReq.add(key); return true;
+        });
+        setReqs(uniqueReqs as ReqBase[]);
       }
+
+      if (unique.length === 0) { setPersonas([]); setLoading(false); return; }
 
       const ids = unique.map((a: any) => a.persona_id as string);
 
@@ -134,7 +206,6 @@ export function ExtenderProyecto({ engagementId, onExtended }: Props) {
         apellido: a.persona?.apellido ?? "",
         cargo: a.cargo_al_momento ?? "",
         pct: Number(a.pct_dedicacion),
-        incluir: true,
         ausencias: (ausMap.get(a.persona_id) ?? []).map((aus: any) => {
           const tipo = aus.tipo as TipoAusencia;
           return {
@@ -159,39 +230,128 @@ export function ExtenderProyecto({ engagementId, onExtended }: Props) {
 
     load();
     return () => { cancelled = true; };
-  }, [fechaInicio, fechaFin, engagementId]);
+  }, [fechaInicio, fechaFin, engagementId, engagementTipo]);
+
+  // Eliminar persona de la lista
+  function removePersona(personaId: string) {
+    setPersonas((prev) => prev.filter((p) => p.personaId !== personaId));
+  }
+
+  // Añadir persona extra con verificación de conflictos
+  async function addPersona(personaId: string) {
+    if (!personaId || !fechaInicio || !fechaFin) return;
+    if (personas.some((p) => p.personaId === personaId)) {
+      setSelectedAdd(""); return;
+    }
+    const opt = allPersonas.find((a) => a.id === personaId);
+    if (!opt) { setSelectedAdd(""); return; }
+
+    setAddingPersona(true);
+    const sb = createAnyClient();
+    const { ausData, solapData } = await fetchConflictos(sb, personaId, engagementId, fechaInicio, fechaFin);
+
+    const newP: ExtPersona = {
+      personaId: opt.id,
+      nombre: opt.nombre,
+      apellido: opt.apellido,
+      cargo: opt.cargo_actual ?? "",
+      pct: 100,
+      ausencias: (ausData as any[]).map((aus: any) => {
+        const tipo = aus.tipo as TipoAusencia;
+        return {
+          tipoLabel: COLOR_AUSENCIA[tipo]?.label ?? aus.tipo,
+          fechaInicio: aus.fecha_inicio,
+          fechaFin: aus.fecha_fin,
+          numDias: expandirRango(aus.fecha_inicio, aus.fecha_fin).length,
+          conflicto: aus.fecha_inicio <= fechaFin && aus.fecha_fin >= fechaInicio,
+        };
+      }),
+      asigSolap: (solapData as any[]).map((s: any) => ({
+        engNombre: (s.engagement as any)?.nombre ?? "otro proyecto",
+        pct: Number(s.pct_dedicacion),
+        fechaInicio: s.fecha_inicio,
+        fechaFin: s.fecha_fin ?? null,
+      })),
+    };
+
+    setPersonas((prev) => [...prev, newP]);
+    setSelectedAdd("");
+    setAddingPersona(false);
+  }
 
   async function guardar() {
-    const toInsert = personas.filter((p) => p.incluir);
-    if (toInsert.length === 0) return;
+    if (personas.length === 0 && reqs.length === 0) return;
     setGuardando(true);
     setError(null);
     const sb = createAnyClient();
 
-    const { error: err } = await (sb as any).from("asignacion").insert(
-      toInsert.map((p) => ({
-        engagement_id: engagementId,
-        persona_id: p.personaId,
-        cargo_al_momento: p.cargo,
-        pct_dedicacion: p.pct,
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
-        estado: "activa",
-      }))
-    );
+    // 1. Crear requerimientos primero para obtener sus IDs y poder vincular asignaciones
+    // Mapa cargo → [id, ...] para asignar uno por persona que coincida
+    const reqPool = new Map<string, string[]>();
 
-    if (err) { setError(err.message); setGuardando(false); return; }
+    if (reqs.length > 0) {
+      const { data: newReqs, error: reqErr } = await (sb as any)
+        .from("requerimiento_engagement")
+        .insert(
+          reqs.map((r) => ({
+            engagement_id: engagementId,
+            fase_nombre: r.fase_nombre,
+            cargo_requerido: r.cargo_requerido,
+            pct_dedicacion: r.pct_dedicacion,
+            fecha_inicio: fechaInicio,
+            fecha_fin: fechaFin,
+            descripcion: r.descripcion ?? null,
+          }))
+        )
+        .select("id, cargo_requerido");
+
+      if (reqErr) { setError(reqErr.message); setGuardando(false); return; }
+
+      for (const r of (newReqs ?? []) as any[]) {
+        const key = r.cargo_requerido ?? "__any__";
+        if (!reqPool.has(key)) reqPool.set(key, []);
+        reqPool.get(key)!.push(r.id);
+      }
+    }
+
+    // 2. Crear asignaciones vinculadas al requerimiento correspondiente (por cargo)
+    //    → permite gestionar el equipo directamente desde el detalle del engagement
+    if (personas.length > 0) {
+      const { error: err } = await (sb as any).from("asignacion").insert(
+        personas.map((p) => {
+          // Busca req del mismo cargo; si no hay, intenta req sin cargo requerido
+          const pool = reqPool.get(p.cargo) ?? reqPool.get("__any__") ?? [];
+          const requerimiento_id = pool.shift() ?? null;
+          return {
+            engagement_id: engagementId,
+            persona_id: p.personaId,
+            cargo_al_momento: p.cargo,
+            pct_dedicacion: p.pct,
+            fecha_inicio: fechaInicio,
+            fecha_fin: fechaFin,
+            estado: "activa",
+            requerimiento_id,
+          };
+        })
+      );
+      if (err) { setError(err.message); setGuardando(false); return; }
+    }
+
     setExito(true);
     setGuardando(false);
+    window.dispatchEvent(new CustomEvent("asignacionChanged"));
     onExtended?.();
   }
 
-  const seleccionados = personas.filter((p) => p.incluir).length;
+  const tieneAlgo = personas.length > 0 || reqs.length > 0;
+  // Personas ya incluidas en el picker (para ocultarlas del dropdown)
+  const idsEnLista = new Set(personas.map((p) => p.personaId));
+  const opcionesAdd = allPersonas.filter((a) => !idsEnLista.has(a.id));
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-[#aaa] leading-relaxed">
-        Define el nuevo período. El equipo actual se cargará automáticamente y se verificarán conflictos antes de guardar.
+        Define el período. El equipo actual se añade automáticamente — puedes quitar personas o agregar más. Se verifican ausencias y solapamientos.
       </p>
 
       {/* Fechas */}
@@ -214,7 +374,7 @@ export function ExtenderProyecto({ engagementId, onExtended }: Props) {
         </FieldWrapper>
       </div>
 
-      {/* Lista de personas */}
+      {/* Lista de personas + picker */}
       {fechaInicio && fechaFin && (
         <>
           {loading ? (
@@ -222,16 +382,24 @@ export function ExtenderProyecto({ engagementId, onExtended }: Props) {
               <Loader2 className="w-4 h-4 animate-spin text-[#4a90e2]" />
               <span className="text-xs">Verificando equipo y conflictos…</span>
             </div>
-          ) : personas.length === 0 ? (
-            <p className="text-xs text-[#aaa] italic text-center py-4">
-              Sin asignaciones activas en este engagement.
-            </p>
           ) : (
             <div className="space-y-2.5">
-              <p className="text-[10px] font-semibold text-[#888] uppercase tracking-widest">
-                Equipo propuesto · {seleccionados}/{personas.length} seleccionados
-              </p>
-              {personas.map((p, i) => {
+              {/* Header */}
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-semibold text-[#888] uppercase tracking-widest">
+                  {personas.length === 0
+                    ? "Sin equipo actual"
+                    : `Equipo a extender · ${personas.length} persona${personas.length !== 1 ? "s" : ""}`}
+                </p>
+                {reqs.length > 0 && (
+                  <span className="text-[10px] text-[#4a90e2] font-medium">
+                    + {reqs.length} req{reqs.length !== 1 ? "s" : ""} copiado{reqs.length !== 1 ? "s" : ""}
+                  </span>
+                )}
+              </div>
+
+              {/* Tarjetas del equipo */}
+              {personas.map((p) => {
                 const tieneConflicto = p.ausencias.some((a) => a.conflicto) || p.asigSolap.length > 0;
                 const color = avatarColor(p.personaId);
                 return (
@@ -239,20 +407,12 @@ export function ExtenderProyecto({ engagementId, onExtended }: Props) {
                     key={p.personaId}
                     className="border rounded-xl p-3 space-y-2"
                     style={{
-                      borderColor: tieneConflicto ? "#fca5a5" : p.incluir ? "#c7d9f4" : "#e8e8e8",
-                      background:  tieneConflicto ? "#fff8f8" : p.incluir ? "#f8fbff" : "#fafafa",
+                      borderColor: tieneConflicto ? "#fca5a5" : "#c7d9f4",
+                      background: tieneConflicto ? "#fff8f8" : "#f8fbff",
                     }}
                   >
                     {/* Fila persona */}
                     <div className="flex items-center gap-2.5">
-                      <input
-                        type="checkbox"
-                        checked={p.incluir}
-                        onChange={(e) =>
-                          setPersonas((ps) => ps.map((x, j) => j === i ? { ...x, incluir: e.target.checked } : x))
-                        }
-                        className="w-4 h-4 flex-shrink-0 accent-[#4a90e2]"
-                      />
                       <div
                         className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[11px] font-bold flex-shrink-0"
                         style={{ background: color }}
@@ -263,27 +423,30 @@ export function ExtenderProyecto({ engagementId, onExtended }: Props) {
                         <p className="text-xs font-semibold text-[#1a1a2e] truncate">
                           {p.nombre} {p.apellido}
                         </p>
-                        <p className="text-[10px] text-[#888]">{p.cargo}</p>
+                        <p className="text-[10px] text-[#888]">{p.cargo || "Sin cargo"}</p>
                       </div>
                       <span className="flex-shrink-0 text-[11px] font-bold px-2 py-0.5 rounded-full bg-[#dbeafe] text-[#1d4ed8]">
                         {p.pct}%
                       </span>
+                      {/* Botón quitar */}
+                      <button
+                        onClick={() => removePersona(p.personaId)}
+                        title="Quitar de la extensión"
+                        className="flex-shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[#ccc] hover:text-red-400 hover:bg-red-50 transition-colors"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
                     </div>
 
                     {/* Alertas ausencia */}
-                    {p.ausencias.map((a, j) => (
+                    {p.ausencias.filter((a) => a.conflicto).map((a, j) => (
                       <div
                         key={`aus-${j}`}
-                        className={`flex items-start gap-1.5 text-[10px] rounded px-2 py-1.5 leading-tight ${
-                          a.conflicto ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-700"
-                        }`}
+                        className="flex items-start gap-1.5 text-[10px] rounded px-2 py-1.5 leading-tight bg-red-50 text-red-700"
                       >
-                        {a.conflicto
-                          ? <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-px text-red-500" />
-                          : <CalendarX className="w-3 h-3 flex-shrink-0 mt-px text-amber-500" />
-                        }
+                        <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-px text-red-500" />
                         <span>
-                          {a.conflicto && <strong className="font-semibold">Ausencia en período · </strong>}
+                          <strong className="font-semibold">Ausencia en el período · </strong>
                           {a.tipoLabel} · {fmtDate(a.fechaInicio)} → {fmtDate(a.fechaFin)}{" "}
                           <span className="font-semibold">({a.numDias}d hábiles)</span>
                         </span>
@@ -299,14 +462,45 @@ export function ExtenderProyecto({ engagementId, onExtended }: Props) {
                         <AlertTriangle className="w-3 h-3 flex-shrink-0 mt-px text-orange-500" />
                         <span>
                           <strong className="font-semibold">Carga alta · </strong>
-                          Asignado a <em>{s.engNombre}</em> al {s.pct}%
-                          {s.fechaInicio && ` (${fmtDate(s.fechaInicio)} → ${s.fechaFin ? fmtDate(s.fechaFin) : "∞"})`}
+                          También en <em>{s.engNombre}</em> al {s.pct}%
+                          {s.fechaInicio && ` · ${fmtDate(s.fechaInicio)} → ${s.fechaFin ? fmtDate(s.fechaFin) : "∞"}`}
                         </span>
                       </div>
                     ))}
                   </div>
                 );
               })}
+
+              {/* Picker: añadir persona */}
+              {opcionesAdd.length > 0 && (
+                <div className="flex items-center gap-2 pt-1">
+                  <UserPlus className="w-3.5 h-3.5 text-[#4a90e2] flex-shrink-0" />
+                  <select
+                    value={selectedAdd}
+                    onChange={(e) => {
+                      setSelectedAdd(e.target.value);
+                      if (e.target.value) addPersona(e.target.value);
+                    }}
+                    disabled={addingPersona}
+                    className="flex-1 text-xs border border-[#e8e8e8] rounded-lg px-2 py-1.5 bg-white text-[#1a1a2e] focus:outline-none focus:ring-1 focus:ring-[#4a90e2]"
+                  >
+                    <option value="">Añadir otra persona…</option>
+                    {opcionesAdd.map((a) => (
+                      <option key={a.id} value={a.id}>
+                        {a.apellido}, {a.nombre}{a.cargo_actual ? ` · ${a.cargo_actual}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                  {addingPersona && <Loader2 className="w-3.5 h-3.5 animate-spin text-[#4a90e2] flex-shrink-0" />}
+                </div>
+              )}
+
+              {/* Aviso si no hay equipo ni reqs */}
+              {personas.length === 0 && reqs.length === 0 && (
+                <p className="text-xs text-[#aaa] italic text-center py-2">
+                  Sin equipo ni requerimientos en este engagement. Añade personas arriba.
+                </p>
+              )}
             </div>
           )}
         </>
@@ -323,19 +517,23 @@ export function ExtenderProyecto({ engagementId, onExtended }: Props) {
       {exito && (
         <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-xs text-green-700 flex items-center gap-2">
           <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
-          Extensión guardada — {seleccionados} asignación{seleccionados !== 1 ? "es" : ""} creada{seleccionados !== 1 ? "s" : ""}.
+          Extensión guardada
+          {personas.length > 0 && ` — ${personas.length} asignación${personas.length !== 1 ? "es" : ""} creada${personas.length !== 1 ? "s" : ""}`}
+          {reqs.length > 0 && ` · ${reqs.length} requerimiento${reqs.length !== 1 ? "s" : ""} copiado${reqs.length !== 1 ? "s" : ""}`}
+          .
         </div>
       )}
 
       {/* Botón guardar */}
-      {personas.length > 0 && !exito && (
+      {tieneAlgo && fechaInicio && fechaFin && !exito && !loading && (
         <div className="flex justify-end pt-1">
           <Button
             onClick={guardar}
             loading={guardando}
-            disabled={seleccionados === 0 || guardando}
+            disabled={guardando}
           >
-            Guardar extensión ({seleccionados} persona{seleccionados !== 1 ? "s" : ""})
+            Guardar extensión
+            {personas.length > 0 && ` (${personas.length} persona${personas.length !== 1 ? "s" : ""})`}
           </Button>
         </div>
       )}

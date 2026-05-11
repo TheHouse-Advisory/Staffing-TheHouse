@@ -38,6 +38,18 @@ const NIVEL_LABEL: Record<string, string> = {
   avanzado: "avanzado",
 };
 
+function diasEnEmpresa(fechaIngreso: string | null): string | null {
+  if (!fechaIngreso) return null;
+  const inicio = new Date(fechaIngreso + "T00:00:00");
+  const hoy = new Date();
+  const totalDias = Math.floor((hoy.getTime() - inicio.getTime()) / 86_400_000);
+  if (totalDias < 0) return null;
+  if (totalDias < 365) return `${totalDias} días`;
+  const anios = Math.floor(totalDias / 365);
+  const resto = totalDias % 365;
+  return `${anios} ${anios === 1 ? "año" : "años"} y ${resto} días`;
+}
+
 function colorOcupacion(pct: number) {
   if (pct === 0)   return { bg: "#f0f0f0", text: "#888" };
   if (pct <= 50)   return { bg: "#dcf5e7", text: "#1e7e45" };
@@ -225,6 +237,11 @@ export function PersonaProfile({ id }: Props) {
                 >
                   {pctTotal}% ocupado actualmente
                 </span>
+                {diasEnEmpresa(persona.fecha_ingreso) && (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#f8f8f8] text-[#888] border border-[#ebebeb]">
+                    ⌛ {diasEnEmpresa(persona.fecha_ingreso)} en la empresa
+                  </span>
+                )}
               </div>
             </div>
           </div>

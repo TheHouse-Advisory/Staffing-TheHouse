@@ -659,7 +659,7 @@ export function EngagementDetail({ id }: Props) {
             <p className="font-semibold text-sm text-[#1a1a1a]">Extender Proyecto</p>
           </div>
           <div className="p-5">
-            <ExtenderProyecto engagementId={id} onExtended={load} />
+            <ExtenderProyecto engagementId={id} engagementTipo={engagement?.tipo} onExtended={load} />
           </div>
         </div>
       </div>
