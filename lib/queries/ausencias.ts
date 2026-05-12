@@ -1,5 +1,7 @@
 import type { TypedSupabaseClient } from "@/lib/supabase/types";
 import type { TipoAusencia } from "@/lib/types/database";
+import { expandirRangoHabil } from "@/lib/utils/date-utils";
+import { isHoliday } from "@/lib/constants/holidays";
 
 // ─────────────────────────────────────────────────────────────
 //  Constants
@@ -72,13 +74,12 @@ export interface AusenciasDelMes {
 //  Helpers de fecha
 // ─────────────────────────────────────────────────────────────
 
-/** Genera array de fechas ISO "YYYY-MM-DD" para todos los días del mes */
+/** Genera array de fechas ISO "YYYY-MM-DD" para todos los días del mes (lun–vie, INCLUYENDO feriados para que no haya huecos en el grid) */
 export function diasDelMes(year: number, month: number): string[] {
   const dias: string[] = [];
-  const totalDias = new Date(year, month, 0).getDate();  // month es 1-based
+  const totalDias = new Date(year, month, 0).getDate();
   for (let d = 1; d <= totalDias; d++) {
     const fecha = new Date(year, month - 1, d);
-    // Excluir fines de semana
     const dow = fecha.getDay();
     if (dow !== 0 && dow !== 6) {
       dias.push(fecha.toISOString().split("T")[0]);
@@ -87,20 +88,12 @@ export function diasDelMes(year: number, month: number): string[] {
   return dias;
 }
 
-/** Expande un rango fecha_inicio..fecha_fin a array de fechas ISO (días hábiles lun–vie) */
+// Re-export para uso en componentes de UI
+export { isHoliday };
+
+/** Expande un rango a días hábiles (sin fines de semana ni feriados Chile) */
 export function expandirRango(inicio: string, fin: string): string[] {
-  const result: string[] = [];
-  const start = new Date(inicio + "T00:00:00");
-  const end = new Date(fin + "T00:00:00");
-  const cur = new Date(start);
-  while (cur <= end) {
-    const dow = cur.getDay();
-    if (dow !== 0 && dow !== 6) {
-      result.push(cur.toISOString().split("T")[0]);
-    }
-    cur.setDate(cur.getDate() + 1);
-  }
-  return result;
+  return expandirRangoHabil(inicio, fin);
 }
 
 /** Calcula índice de seniority (menor = más senior) */

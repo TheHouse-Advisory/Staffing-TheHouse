@@ -12,6 +12,7 @@ import {
   CalendarOff,
   Home,
   Bell,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RolSistema } from "@/lib/types/database";
@@ -39,6 +40,7 @@ const navItems = [
     section: "Gestión",
     items: [
       { href: "/planificacion",  label: "Planificación",  icon: Kanban },
+      { href: "/capacity",       label: "Capacity",       icon: BarChart3 },
       { href: "/configuracion",  label: "Configuración",  icon: Settings },
     ],
   },

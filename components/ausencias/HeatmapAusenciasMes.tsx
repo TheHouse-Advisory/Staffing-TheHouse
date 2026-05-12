@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { COLOR_AUSENCIA } from "@/lib/queries/ausencias";
+import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import type { TipoAusencia } from "@/lib/types/database";
 
 const MESES_CORTO = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
@@ -32,8 +33,8 @@ function diasSolapan(
   const a = new Date(inicio + "T00:00:00") < mesInicio ? mesInicio : new Date(inicio + "T00:00:00");
   const b = new Date(fin   + "T00:00:00") > mesFin    ? mesFin    : new Date(fin   + "T00:00:00");
   if (a > b) return 0;
-  // Contar días calendario (incluye fines de semana igual que la vista mes)
-  return Math.round((b.getTime() - a.getTime()) / 86400000) + 1;
+  // Días hábiles sin fines de semana ni feriados Chile
+  return calculateBusinessDays(a.toISOString().split("T")[0], b.toISOString().split("T")[0]);
 }
 
 export function HeatmapAusenciasMes({ year }: Props) {

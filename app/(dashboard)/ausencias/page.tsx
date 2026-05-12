@@ -19,6 +19,7 @@ const LEYENDA = [
   { tipo: "dia_beneficio",            label: "Día beneficio",              color: "#a855f7" },
   { tipo: "dia_administrativo",       label: "Día administrativo",         color: "#22c55e" },
   { tipo: "otro",                     label: "Otro",                       color: "#9ca3af" },
+  { tipo: "feriado",                  label: "Día feriado",                color: "#9ca3af" },
 ];
 
 type Vista = "dia" | "mes";
@@ -51,24 +52,24 @@ export default function AusenciasPage() {
           <h1 className="text-[16px] font-bold text-[#1a1a1a] flex-shrink-0">Ausencias</h1>
 
           {/* Toggle vista */}
-          <div className="flex rounded-md overflow-hidden border border-[#e0e0e0] text-[12px] font-semibold flex-shrink-0">
+          <div className="flex items-center gap-1 bg-[#f3f4f6] rounded-xl p-1 flex-shrink-0">
             <button
               onClick={() => setVista("dia")}
-              className="px-3 py-1.5 transition-colors"
+              className="px-4 py-1.5 rounded-lg text-[12px] font-semibold transition-all duration-150"
               style={vista === "dia"
-                ? { background: "#1a1a1a", color: "#fff" }
-                : { background: "#fff", color: "#888" }}
+                ? { background: "#fff", color: "#1a1a1a", boxShadow: "0 1px 3px rgba(0,0,0,0.10)" }
+                : { background: "transparent", color: "#9ca3af" }}
             >
-              Por día
+              Por mes
             </button>
             <button
               onClick={() => setVista("mes")}
-              className="px-3 py-1.5 transition-colors"
+              className="px-4 py-1.5 rounded-lg text-[12px] font-semibold transition-all duration-150"
               style={vista === "mes"
-                ? { background: "#1a1a1a", color: "#fff" }
-                : { background: "#fff", color: "#888" }}
+                ? { background: "#fff", color: "#1a1a1a", boxShadow: "0 1px 3px rgba(0,0,0,0.10)" }
+                : { background: "transparent", color: "#9ca3af" }}
             >
-              Por mes
+              Por año
             </button>
           </div>
 
@@ -148,7 +149,13 @@ export default function AusenciasPage() {
         <div className="flex items-center gap-5 px-6 pb-3 flex-wrap">
           {LEYENDA.map((l) => (
             <div key={l.tipo} className="flex items-center gap-2 flex-shrink-0">
-              <span className="w-3 h-3 rounded flex-shrink-0" style={{ background: l.color }} />
+              <span
+                className="w-3 h-3 rounded flex-shrink-0"
+                style={{
+                  background: l.color,
+                  opacity: l.tipo === "feriado" ? 0.4 : 1,
+                }}
+              />
               <span className="text-[12px] text-[#555]">{l.label}</span>
             </div>
           ))}

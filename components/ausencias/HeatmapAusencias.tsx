@@ -1,16 +1,20 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { X, Loader2, Plus, ChevronDown, ChevronRight } from "lucide-react";
+import { X, Loader2, Plus, ChevronDown, ChevronRight, Calendar, Clock } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import {
   fetchAusenciasMes,
   crearAusencia,
   eliminarAusencia,
   COLOR_AUSENCIA,
+  isHoliday,
+  getDetailedPersonAbsences,
   type FilaPersona,
   type CeldaAusencia,
   type PersonaConSeniority,
+  type AusenciaDetalle,
+  type DetalleAusenciasPersona,
 } from "@/lib/queries/ausencias";
 import type { TipoAusencia } from "@/lib/types/database";
 
@@ -273,6 +277,129 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, onClose, o
 }
 
 // ─────────────────────────────────────────────────────────────
+//  Popover resumen persona
+// ─────────────────────────────────────────────────────────────
+
+function formatRangoAus(inicio: string, fin: string): string {
+  const MESES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
+  const fmt = (iso: string) => {
+    const [, m, d] = iso.split("-");
+    return `${parseInt(d)} ${MESES[parseInt(m) - 1]}`;
+  };
+  return inicio === fin ? fmt(inicio) : `${fmt(inicio)} – ${fmt(fin)}`;
+}
+
+function BloqueAusencias({ titulo, icono, items, emptyMsg }: {
+  titulo: string;
+  icono: React.ReactNode;
+  items: AusenciaDetalle[];
+  emptyMsg: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className="text-[#aaa]">{icono}</span>
+        <p className="text-[10px] font-bold text-[#888] uppercase tracking-widest">{titulo}</p>
+      </div>
+      {items.length === 0 ? (
+        <p className="text-[11px] text-[#bbb] italic pl-1">{emptyMsg}</p>
+      ) : (
+        <div className="space-y-1 max-h-36 overflow-y-auto">
+          {items.map((a) => (
+            <div key={a.id} className="flex items-center justify-between bg-[#fafafa] rounded-lg border border-[#f0f0f0] px-2.5 py-2">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: COLOR_AUSENCIA[a.tipo]?.bg ?? "#9ca3af" }} />
+                <div className="min-w-0">
+                  <p className="text-[11px] text-[#333] font-semibold truncate">{formatRangoAus(a.fechaInicio, a.fechaFin)}</p>
+                  <p className="text-[10px] text-[#999] truncate">{a.tipoLabel}</p>
+                </div>
+              </div>
+              <span className="text-[11px] font-bold text-[#555] flex-shrink-0 ml-3 bg-white border border-[#e8e8e8] rounded-md px-1.5 py-0.5">
+                {a.numDias}d
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function PopoverPersona({ persona, onClose }: { persona: PersonaConSeniority; onClose: () => void }) {
+  const [data, setData]       = useState<DetalleAusenciasPersona | null>(null);
+  const [loading, setLoading] = useState(true);
+  const supabase = createClient();
+
+  useEffect(() => {
+    setLoading(true);
+    getDetailedPersonAbsences(supabase, persona.id).then((d) => { setData(d); setLoading(false); });
+  }, [persona.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const total = data?.totalDiasAnioActual ?? 0;
+  const badgeStyle: React.CSSProperties =
+    total >= 15 ? { background: "#fef2f2", color: "#dc2626" } :
+    total >= 10 ? { background: "#fff7ed", color: "#ea580c" } :
+    total >  0  ? { background: "#eff6ff", color: "#2563eb" } :
+                  { background: "#f3f4f6", color: "#9ca3af" };
+
+  return (
+    <>
+      {/* Overlay — cierra al clicar fuera */}
+      <div className="fixed inset-0 z-40" onClick={onClose} />
+
+      {/* Tarjeta flotante */}
+      <div className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 bg-white rounded-2xl border border-[#e8e8e8] shadow-2xl overflow-hidden">
+        {/* Header */}
+        <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#f0f0f0] bg-[#fafafa]">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-full bg-[#1a1a1a] flex items-center justify-center text-white text-[12px] font-bold flex-shrink-0">
+              {persona.nombre[0]}{persona.apellido[0]}
+            </div>
+            <div>
+              <p className="text-[13px] font-bold text-[#1a1a1a]">{persona.nombre} {persona.apellido}</p>
+              {persona.cargo_actual && <p className="text-[10px] text-[#888] mt-0.5">{persona.cargo_actual}</p>}
+            </div>
+          </div>
+          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[#e8e8e8] text-[#bbb] hover:text-[#555] transition-colors">
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+
+        {/* Cuerpo */}
+        {loading ? (
+          <div className="flex items-center justify-center py-10 gap-2 text-[#888]">
+            <Loader2 className="w-4 h-4 animate-spin" />
+            <span className="text-xs">Cargando...</span>
+          </div>
+        ) : data ? (
+          <div className="px-4 py-4 space-y-4">
+            {/* Total destacado */}
+            <div className="flex items-center justify-between bg-[#f8faff] rounded-xl border border-[#dbeafe] px-4 py-3">
+              <span className="text-[12px] font-semibold text-[#3b82f6]">Total días consumidos</span>
+              <span className="text-[20px] font-black" style={badgeStyle}>{total}</span>
+            </div>
+            {/* Próximas */}
+            <BloqueAusencias
+              titulo="Próximas ausencias"
+              icono={<Clock className="w-3 h-3" />}
+              items={data.ausenciasFuturas}
+              emptyMsg="Sin ausencias planificadas"
+            />
+            {/* Historial */}
+            <BloqueAusencias
+              titulo="Historial año actual"
+              icono={<Calendar className="w-3 h-3" />}
+              items={data.ausenciasPasadasAnioActual}
+              emptyMsg="Sin historial este año"
+            />
+          </div>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 //  Helpers de resumen por cargo
 // ─────────────────────────────────────────────────────────────
 
@@ -305,6 +432,7 @@ export function HeatmapAusencias({
   const [dias, setDias]     = useState<string[]>([]);
   const [cargando, setCargando] = useState(true);
   const [error, setError]   = useState<string | null>(null);
+  const [totalesAnio, setTotalesAnio] = useState<Record<string, number>>({});
 
   // Tooltip activo: { personaId, fecha }
   const [tooltip, setTooltip] = useState<{ personaId: string; fecha: string } | null>(null);
@@ -314,6 +442,9 @@ export function HeatmapAusencias({
   const [modalOpen, setModalOpen]       = useState(false);
   const [modalFecha, setModalFecha]     = useState<string | undefined>();
   const [modalPersona, setModalPersona] = useState<string | undefined>();
+
+  // Popover resumen persona
+  const [popoverPersona, setPopoverPersona] = useState<PersonaConSeniority | null>(null);
 
   const supabase = createClient();
 
@@ -340,11 +471,36 @@ export function HeatmapAusencias({
   const cargar = useCallback(async () => {
     setCargando(true);
     setError(null);
-    const result = await fetchAusenciasMes(supabase, year, month);
+
+    const hoy        = new Date().toISOString().split("T")[0];
+    const inicioAnio = `${new Date().getFullYear()}-01-01`;
+
+    // Carga del mes + totales anuales en paralelo
+    const [result, ausAnioRes] = await Promise.all([
+      fetchAusenciasMes(supabase, year, month),
+      supabase
+        .from("ausencia")
+        .select("persona_id, fecha_inicio, fecha_fin")
+        .gte("fecha_fin", inicioAnio)
+        .lte("fecha_inicio", hoy),
+    ]);
+
     setCargando(false);
     if (result.error) { setError(result.error); return; }
     setFilas(result.filas);
     setDias(result.dias);
+
+    // Calcular totales anuales por persona (días hábiles sin feriados)
+    if (ausAnioRes.data) {
+      const { calculateBusinessDays } = await import("@/lib/utils/date-utils");
+      const map: Record<string, number> = {};
+      for (const a of ausAnioRes.data as { persona_id: string; fecha_inicio: string; fecha_fin: string }[]) {
+        const ini = a.fecha_inicio > inicioAnio ? a.fecha_inicio : inicioAnio;
+        const fin = a.fecha_fin   < hoy         ? a.fecha_fin   : hoy;
+        if (ini <= fin) map[a.persona_id] = (map[a.persona_id] ?? 0) + calculateBusinessDays(ini, fin);
+      }
+      setTotalesAnio(map);
+    }
   }, [year, month]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { cargar(); }, [cargar]);
@@ -419,15 +575,17 @@ export function HeatmapAusencias({
                   Persona
                 </th>
                 {dias.map((fecha) => {
-                  const esLunes = isMonday(fecha);
+                  const esLunes   = isMonday(fecha);
+                  const esFeriado = isHoliday(fecha);
                   return (
                     <th
                       key={fecha}
-                      className={`bg-[#fafafa] border-b border-[#ebebeb] px-0 py-1.5 text-center ${esLunes ? "border-l border-[#ddd]" : ""}`}
+                      className={`border-b border-[#ebebeb] px-0 py-1.5 text-center ${esLunes ? "border-l border-[#ddd]" : ""} ${esFeriado ? "bg-gray-200" : "bg-[#fafafa]"}`}
                       style={{ minWidth: 34, width: 34 }}
+                      title={esFeriado ? "Feriado" : undefined}
                     >
-                      <div className="text-[9px] text-[#bbb] font-medium">{getDow(fecha)}</div>
-                      <div className="text-[11px] text-[#555] font-semibold">{getDia(fecha)}</div>
+                      <div className={`text-[9px] font-medium ${esFeriado ? "text-gray-400" : "text-[#bbb]"}`}>{getDow(fecha)}</div>
+                      <div className={`text-[11px] font-semibold ${esFeriado ? "text-gray-400" : "text-[#555]"}`}>{getDia(fecha)}</div>
                     </th>
                   );
                 })}
@@ -507,9 +665,30 @@ export function HeatmapAusencias({
                                   ? <ChevronRight className="w-3 h-3" />
                                   : <ChevronDown  className="w-3 h-3" />}
                               </button>
-                              <div className="min-w-0">
-                                <div className="text-[12px] font-semibold text-[#1a1a1a] truncate">
-                                  {fila.persona.nombre} {fila.persona.apellido}
+                              <div className="min-w-0 flex-1 overflow-hidden">
+                                <div className="flex items-center gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={(e) => { e.stopPropagation(); setPopoverPersona(fila.persona); }}
+                                    className="text-[12px] font-semibold text-[#1a1a1a] truncate hover:text-[#2563eb] hover:underline transition-colors text-left"
+                                    title="Ver resumen de ausencias"
+                                  >
+                                    {fila.persona.nombre} {fila.persona.apellido}
+                                  </button>
+                                  {/* Badge días acumulados año actual */}
+                                  {(() => {
+                                    const d = totalesAnio[fila.persona.id] ?? 0;
+                                    if (d === 0) return null;
+                                    const style: React.CSSProperties =
+                                      d >= 15 ? { background: "#fef2f2", color: "#dc2626" } :
+                                      d >= 10 ? { background: "#fff7ed", color: "#ea580c" } :
+                                               { background: "#eff6ff", color: "#2563eb" };
+                                    return (
+                                      <span className="flex-shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={style}>
+                                        {d}d
+                                      </span>
+                                    );
+                                  })()}
                                 </div>
                                 {!estaColapsadaPersona && fila.persona.cargo_actual && (
                                   <div className="text-[10px] text-[#999] truncate">{fila.persona.cargo_actual}</div>
@@ -520,20 +699,22 @@ export function HeatmapAusencias({
 
                           {/* Celdas de días */}
                           {dias.map((fecha) => {
-                            const celda   = fila.dias[fecha];
-                            const esLunes = isMonday(fecha);
+                            const celda      = fila.dias[fecha];
+                            const esLunes    = isMonday(fecha);
+                            const esFeriado  = isHoliday(fecha);
 
                             if (estaColapsadaPersona) {
-                              // Vista compacta: barra mini de color sin interacción
                               return (
                                 <td key={fecha}
-                                  className={`py-1.5 px-0.5 border-b border-[#f5f5f5] ${esLunes ? "border-l border-[#ddd]" : ""}`}
+                                  className={`py-1.5 px-0.5 border-b border-[#f5f5f5] ${esLunes ? "border-l border-[#ddd]" : ""} ${esFeriado ? "bg-gray-200" : ""}`}
                                   style={{ minWidth: 34, width: 34 }}
-                                  title={celda ? COLOR_AUSENCIA[celda.tipo]?.label : undefined}
+                                  title={esFeriado ? "Feriado" : celda ? COLOR_AUSENCIA[celda.tipo]?.label : undefined}
                                 >
                                   {celda
                                     ? <div className="w-full h-2.5 rounded-sm" style={{ background: COLOR_AUSENCIA[celda.tipo]?.bg ?? "#94a3b8" }} />
-                                    : <div className="w-full h-2.5" />
+                                    : esFeriado
+                                      ? <div className="w-full h-2.5 rounded-sm bg-gray-400 opacity-40" />
+                                      : <div className="w-full h-2.5" />
                                   }
                                 </td>
                               );
@@ -542,7 +723,7 @@ export function HeatmapAusencias({
                             const isActive = tooltip?.personaId === fila.persona.id && tooltip?.fecha === fecha;
                             return (
                               <td key={fecha}
-                                className={`py-1 px-0.5 border-b border-[#f5f5f5] relative ${esLunes ? "border-l border-[#ddd]" : ""}`}
+                                className={`py-1 px-0.5 border-b border-[#f5f5f5] relative ${esLunes ? "border-l border-[#ddd]" : ""} ${esFeriado ? "bg-gray-200" : ""}`}
                                 style={{ minWidth: 34, width: 34 }}
                               >
                                 {celda ? (
@@ -559,6 +740,9 @@ export function HeatmapAusencias({
                                       />
                                     )}
                                   </div>
+                                ) : esFeriado ? (
+                                  /* Celda feriado: visible con gris, sin interacción */
+                                  <div className="w-full h-7 rounded bg-gray-400 opacity-40" title="Feriado" />
                                 ) : (
                                   <button type="button"
                                     className="w-full h-7 rounded hover:bg-[#f0f0f0] transition-colors group"
@@ -637,6 +821,14 @@ export function HeatmapAusencias({
         <div
           className="fixed inset-0 z-40"
           onClick={() => setTooltip(null)}
+        />
+      )}
+
+      {/* Popover resumen persona */}
+      {popoverPersona && (
+        <PopoverPersona
+          persona={popoverPersona}
+          onClose={() => setPopoverPersona(null)}
         />
       )}
     </div>

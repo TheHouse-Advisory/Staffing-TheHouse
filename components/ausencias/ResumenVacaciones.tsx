@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import { X } from "lucide-react";
-import { format, parseISO, differenceInCalendarDays } from "date-fns";
+import { format } from "date-fns";
+import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import { es } from "date-fns/locale";
 import { createAnyClient } from "@/lib/supabase/client";
 
@@ -27,9 +28,6 @@ interface Props {
   onClose: () => void;
 }
 
-function diasEntreFeochas(inicio: string, fin: string): number {
-  return differenceInCalendarDays(parseISO(fin), parseISO(inicio)) + 1;
-}
 
 export function ResumenVacaciones({ open, onClose }: Props) {
   const [hasta, setHasta] = useState(() => format(new Date(), "yyyy-MM-dd"));
@@ -61,7 +59,7 @@ export function ResumenVacaciones({ open, onClose }: Props) {
       for (const v of vacs) {
         const inicioEfectivo = v.fecha_inicio < desde ? desde : v.fecha_inicio;
         const finEfectivo    = v.fecha_fin    > hasta ? hasta  : v.fecha_fin;
-        const dias = diasEntreFeochas(inicioEfectivo, finEfectivo);
+        const dias = calculateBusinessDays(inicioEfectivo, finEfectivo);
         if (dias > 0) diasMap[v.persona_id] = (diasMap[v.persona_id] ?? 0) + dias;
       }
 
