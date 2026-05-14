@@ -514,6 +514,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
   const [popover, setPopover] = useState<PopoverState | null>(null);
   const [diasCriticosPersona, setDiasCriticosPersona] = useState<Set<string>>(new Set());
   const [diasCriticosEng, setDiasCriticosEng] = useState<Set<string>>(new Set());
+  const [collapsedMonths, setCollapsedMonths] = useState<string[]>([]);
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -554,6 +555,30 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
   const pv = periodoVista ?? "dia";
   const columnas = getColumnas(dias, pv);
 
+  // ── Lógica de meses colapsables (solo vista semana) ──────
+  const monthGroups = pv === "semana"
+    ? Array.from(
+        columnas.reduce((map, col, i) => {
+          const key = format(col.dias[0], "yyyy-MM");
+          if (!map.has(key)) map.set(key, { key, label: format(col.dias[0], "MMM yyyy", { locale: es }), indices: [] as number[] });
+          map.get(key)!.indices.push(i);
+          return map;
+        }, new Map<string, { key: string; label: string; indices: number[] }>())
+      ).map(([, g]) => g)
+    : [];
+
+  const toggleMonth = (key: string) =>
+    setCollapsedMonths(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
+  const collapseAllMonths = () => setCollapsedMonths(monthGroups.map(g => g.key));
+  const expandAllMonths  = () => setCollapsedMonths([]);
+
+  // Devuelve todos los días de un mes a partir del índice de su primera columna
+  const getMonthDias = (ci: number): Date[] => {
+    const monthKey = format(columnas[ci].dias[0], "yyyy-MM");
+    const group = monthGroups.find(g => g.key === monthKey);
+    return group ? group.indices.flatMap(idx => columnas[idx].dias) : columnas[ci].dias;
+  };
+
   // ── Vista por persona ────────────────────────────────────
 
   if (vista === "persona") {
@@ -584,15 +609,45 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
           <div className="overflow-x-auto">
             <table className="w-full text-sm border-collapse">
               <thead>
+                {pv === "semana" && (
+                  <tr className="bg-[#f4f4f4]">
+                    <th colSpan={2} className="px-4 py-1.5 sticky left-0 bg-[#f4f4f4] z-10">
+                      <div className="flex gap-2">
+                        <button type="button" onClick={collapseAllMonths} className="text-[10px] text-[#888] hover:text-[#333] underline">Colapsar todo</button>
+                        <span className="text-[10px] text-[#ccc]">·</span>
+                        <button type="button" onClick={expandAllMonths} className="text-[10px] text-[#888] hover:text-[#333] underline">Expandir todo</button>
+                      </div>
+                    </th>
+                    {monthGroups.map((g) => (
+                      <th key={g.key} colSpan={collapsedMonths.includes(g.key) ? 1 : g.indices.length} className="px-1.5 py-1.5 text-center border-l border-[#e8e8e8]">
+                        <button type="button" onClick={() => toggleMonth(g.key)} className="flex items-center gap-1 mx-auto text-[11px] font-bold text-[#555] hover:text-[#333] capitalize">
+                          <span>{g.label}</span>
+                          <span className="text-[9px] text-[#aaa]">{collapsedMonths.includes(g.key) ? "▶" : "▼"}</span>
+                        </button>
+                      </th>
+                    ))}
+                  </tr>
+                )}
                 <tr className="border-b border-[#e8e8e8] bg-[#f9f9f9]">
                   <th className="text-left px-4 py-3 font-semibold text-[#555] w-48 sticky left-0 bg-[#f9f9f9] z-10">Persona</th>
                   <th className="text-left px-3 py-3 font-semibold text-[#555] w-32">Cargo</th>
-                  {columnas.map((col, i) => (
-                    <th key={i} className="px-1.5 py-3 font-semibold text-center min-w-[90px]">
-                      <div className="text-[11px] font-bold text-[#333]">{col.label}</div>
-                      <div className="text-[10px] font-normal text-[#888]">{col.sublabel}</div>
-                    </th>
-                  ))}
+                  {columnas.map((col, i) => {
+                    if (pv === "semana") {
+                      const monthKey = format(col.dias[0], "yyyy-MM");
+                      const isCollapsed = collapsedMonths.includes(monthKey);
+                      const group = monthGroups.find(g => g.key === monthKey)!;
+                      if (isCollapsed) {
+                        if (group.indices[0] !== i) return null;
+                        return <th key={i} colSpan={group.indices.length} className="px-1.5 py-3 text-center min-w-[90px] text-[10px] font-normal text-[#aaa] italic border-l border-[#e8e8e8]">resumen</th>;
+                      }
+                    }
+                    return (
+                      <th key={i} className="px-1.5 py-3 font-semibold text-center min-w-[90px]">
+                        <div className="text-[11px] font-bold text-[#333]">{col.label}</div>
+                        <div className="text-[10px] font-normal text-[#888]">{col.sublabel}</div>
+                      </th>
+                    );
+                  })}
                 </tr>
               </thead>
               <tbody>
@@ -627,6 +682,24 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
                         </td>
                         <td className="px-3 py-2 text-xs" style={{ color: cargoColor }}>{fila.cargo_actual}</td>
                         {columnas.map((col, ci) => {
+                          // Mes colapsado (solo semana)
+                          if (pv === "semana") {
+                            const monthKey = format(col.dias[0], "yyyy-MM");
+                            const isCollapsed = collapsedMonths.includes(monthKey);
+                            if (isCollapsed) {
+                              const group = monthGroups.find(g => g.key === monthKey)!;
+                              if (group.indices[0] !== ci) return null;
+                              const allDias = getMonthDias(ci);
+                              const pctAgg = avgPersona(fila, allDias, planId);
+                              const { bg, text } = colorOcupacion(pctAgg);
+                              const esCritico = allDias.some(d => diasCriticosPersona.has(`${fila.persona_id}|${format(d, "yyyy-MM-dd")}`));
+                              return (
+                                <td key={ci} colSpan={group.indices.length} className="px-1.5 py-2">
+                                  <CeldaAgregada bg={pctAgg === 0 ? "#f0f0f0" : bg} text={pctAgg === 0 ? "#ccc" : text} label={pctAgg === 0 ? "—" : formatPct(pctAgg)} critico={esCritico} />
+                                </td>
+                              );
+                            }
+                          }
                           if (pv === "dia") {
                             const dia = col.dias[0];
                             const diaStr = format(dia, "yyyy-MM-dd");
@@ -701,15 +774,45 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
         <div className="overflow-x-auto">
           <table className="w-full text-sm border-collapse">
             <thead>
+              {pv === "semana" && (
+                <tr className="bg-[#f4f4f4]">
+                  <th colSpan={2} className="px-4 py-1.5 sticky left-0 bg-[#f4f4f4] z-10">
+                    <div className="flex gap-2">
+                      <button type="button" onClick={collapseAllMonths} className="text-[10px] text-[#888] hover:text-[#333] underline">Colapsar todo</button>
+                      <span className="text-[10px] text-[#ccc]">·</span>
+                      <button type="button" onClick={expandAllMonths} className="text-[10px] text-[#888] hover:text-[#333] underline">Expandir todo</button>
+                    </div>
+                  </th>
+                  {monthGroups.map((g) => (
+                    <th key={g.key} colSpan={collapsedMonths.includes(g.key) ? 1 : g.indices.length} className="px-1.5 py-1.5 text-center border-l border-[#e8e8e8]">
+                      <button type="button" onClick={() => toggleMonth(g.key)} className="flex items-center gap-1 mx-auto text-[11px] font-bold text-[#555] hover:text-[#333] capitalize">
+                        <span>{g.label}</span>
+                        <span className="text-[9px] text-[#aaa]">{collapsedMonths.includes(g.key) ? "▶" : "▼"}</span>
+                      </button>
+                    </th>
+                  ))}
+                </tr>
+              )}
               <tr className="border-b border-[#e8e8e8] bg-[#f9f9f9]">
                 <th className="text-left px-4 py-3 font-semibold text-[#555] w-52 sticky left-0 bg-[#f9f9f9] z-10">Engagement</th>
                 <th className="text-left px-3 py-3 font-semibold text-[#555] w-36">Cliente</th>
-                {columnas.map((col, i) => (
-                  <th key={i} className="px-1.5 py-3 font-semibold text-center min-w-[90px]">
-                    <div className="text-[11px] font-bold text-[#333]">{col.label}</div>
-                    <div className="text-[10px] font-normal text-[#888]">{col.sublabel}</div>
-                  </th>
-                ))}
+                {columnas.map((col, i) => {
+                  if (pv === "semana") {
+                    const monthKey = format(col.dias[0], "yyyy-MM");
+                    const isCollapsed = collapsedMonths.includes(monthKey);
+                    const group = monthGroups.find(g => g.key === monthKey)!;
+                    if (isCollapsed) {
+                      if (group.indices[0] !== i) return null;
+                      return <th key={i} colSpan={group.indices.length} className="px-1.5 py-3 text-center min-w-[90px] text-[10px] font-normal text-[#aaa] italic border-l border-[#e8e8e8]">resumen</th>;
+                    }
+                  }
+                  return (
+                    <th key={i} className="px-1.5 py-3 font-semibold text-center min-w-[90px]">
+                      <div className="text-[11px] font-bold text-[#333]">{col.label}</div>
+                      <div className="text-[10px] font-normal text-[#888]">{col.sublabel}</div>
+                    </th>
+                  );
+                })}
               </tr>
             </thead>
             <tbody>
@@ -739,6 +842,24 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
                     </td>
                     <td className="px-3 py-2 text-[#888] text-xs truncate max-w-[120px]">{fila.cliente}</td>
                     {columnas.map((col, ci) => {
+                      // Mes colapsado (solo semana)
+                      if (pv === "semana") {
+                        const monthKey = format(col.dias[0], "yyyy-MM");
+                        const isCollapsed = collapsedMonths.includes(monthKey);
+                        if (isCollapsed) {
+                          const group = monthGroups.find(g => g.key === monthKey)!;
+                          if (group.indices[0] !== ci) return null;
+                          const allDias = getMonthDias(ci);
+                          const cobAgg = avgCoberturaCol(fila, allDias);
+                          const { bg, text } = colorCobertura(cobAgg);
+                          const esCriticoEng = allDias.some(d => diasCriticosEng.has(`${fila.engagement_id}|${format(d, "yyyy-MM-dd")}`));
+                          return (
+                            <td key={ci} colSpan={group.indices.length} className="px-1.5 py-2">
+                              <CeldaAgregada bg={bg} text={text} label={cobAgg < 0 ? "—" : `${Math.round(cobAgg)}%`} critico={esCriticoEng} />
+                            </td>
+                          );
+                        }
+                      }
                       if (pv === "dia") {
                         const dia = col.dias[0];
                         const diaStr = format(dia, "yyyy-MM-dd");

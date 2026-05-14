@@ -7,6 +7,7 @@ import { X, ChevronDown } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { getDetailedPersonAbsences, type AusenciaDetalle } from "@/lib/queries/ausencias";
 import { ProyectosPersonaDetalle } from "@/components/personas/ProyectosPersonaDetalle";
+import { TalentMatrix } from "@/components/personas/TalentMatrix";
 import type { Persona } from "@/lib/types/database";
 
 const COLORES: Record<string, string> = {
@@ -17,11 +18,6 @@ const COLORES: Record<string, string> = {
 };
 const COLOR_DEFAULT = "#94a3b8";
 
-const TALENTO_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
-  talento:       { label: "Talento",       bg: "#f0fdf4", color: "#16a34a" },
-  en_desarrollo: { label: "En desarrollo", bg: "#fefce8", color: "#ca8a04" },
-  no_talento:    { label: "No talento",    bg: "#fef2f2", color: "#dc2626" },
-};
 
 function iniciales(n: string, a: string) { return `${n[0] ?? ""}${a[0] ?? ""}`.toUpperCase(); }
 
@@ -253,15 +249,15 @@ export function PersonaResumenModal({ personaId, onClose }: Props) {
                   </div>
                 )}
               </div>
-              {persona.talento && TALENTO_CONFIG[persona.talento] && (
+              {(persona.talento_potencial != null || persona.talento_desempeno != null) && (
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400 text-xs">Talento</span>
-                  <span
-                    className="text-[10px] font-semibold px-2 py-0.5 rounded-full"
-                    style={{ background: TALENTO_CONFIG[persona.talento].bg, color: TALENTO_CONFIG[persona.talento].color }}
-                  >
-                    {TALENTO_CONFIG[persona.talento].label}
-                  </span>
+                  <TalentMatrix
+                    potencial={persona.talento_potencial}
+                    desempeno={persona.talento_desempeno}
+                    isEditable={false}
+                    size="compact"
+                  />
                 </div>
               )}
               <div className="flex justify-between items-center">

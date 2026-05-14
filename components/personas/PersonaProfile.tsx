@@ -9,6 +9,7 @@ import { getDetailedPersonAbsences, type DetalleAusenciasPersona, COLOR_AUSENCIA
 import { ProyectosPersonaDetalle } from "./ProyectosPersonaDetalle";
 import { Button } from "@/components/ui/Button";
 import { PersonaForm } from "./PersonaForm";
+import { TalentMatrix } from "./TalentMatrix";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import type { Persona } from "@/lib/types/database";
 
@@ -205,20 +206,6 @@ export function PersonaProfile({ id }: Props) {
               </div>
               <div className="flex items-center gap-2 mt-0.5 flex-wrap">
                 <p className="font-semibold text-sm" style={{ color: cargoColor }}>{persona.cargo_actual ?? "Sin cargo"}</p>
-                {persona.talento && (
-                  <span
-                    className="text-xs px-2.5 py-0.5 rounded-full font-semibold"
-                    style={
-                      persona.talento === "talento"
-                        ? { background: "#f0fdf4", color: "#16a34a" }
-                        : persona.talento === "en_desarrollo"
-                        ? { background: "#fefce8", color: "#ca8a04" }
-                        : { background: "#fef2f2", color: "#dc2626" }
-                    }
-                  >
-                    {persona.talento === "talento" ? "Talento" : persona.talento === "en_desarrollo" ? "En desarrollo" : "No talento"}
-                  </span>
-                )}
               </div>
               <div className="flex gap-2 mt-1.5 flex-wrap">
                 {persona.is_leverager && (
@@ -310,6 +297,24 @@ export function PersonaProfile({ id }: Props) {
               </div>
             )}
           </dl>
+        </div>
+
+        {/* ── Matriz de Talento 9-Box ──────────────────────── */}
+        <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
+          <h3 className="font-semibold mb-4">Matriz de Talento</h3>
+          <TalentMatrix
+            potencial={persona.talento_potencial}
+            desempeno={persona.talento_desempeno}
+            isEditable
+            onUpdate={async (p, d) => {
+              const supabase = createAnyClient();
+              const { error } = await supabase
+                .from("persona")
+                .update({ talento_potencial: p, talento_desempeno: d })
+                .eq("id", persona.id);
+              if (!error) setPersona((prev) => prev ? { ...prev, talento_potencial: p, talento_desempeno: d } : prev);
+            }}
+          />
         </div>
 
         {/* ── Proyectos activos y futuros ───────────────────── */}

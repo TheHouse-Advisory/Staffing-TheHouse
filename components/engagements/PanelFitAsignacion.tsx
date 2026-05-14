@@ -7,6 +7,7 @@ import {
   X, ChevronRight, AlertTriangle, CalendarX, Info, Zap, Loader2, CheckCircle,
 } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
+import { TalentMatrix } from "@/components/personas/TalentMatrix";
 import {
   fetchPersonasFit,
   today,
@@ -57,11 +58,6 @@ function formatFecha(f: string | null) {
   catch { return f; }
 }
 
-const TALENTO_CONFIG: Record<string, { label: string; bg: string; color: string }> = {
-  talento:       { label: "Talento",       bg: "#f0fdf4", color: "#16a34a" },
-  en_desarrollo: { label: "En desarrollo", bg: "#fefce8", color: "#ca8a04" },
-  no_talento:    { label: "No talento",    bg: "#fef2f2", color: "#dc2626" },
-};
 
 // ─────────────────────────────────────────────────────────────
 //  Mini-Gantt de capacidad
@@ -164,7 +160,8 @@ interface ResumenPerfil {
   capacidades: string[];
   tematicas: string[];
   vacacionesDias: number;
-  talento: string | null;
+  talento_potencial: number | null;
+  talento_desempeno: number | null;
   mentorNombre: string | null;
   mentoreados: string[];
 }
@@ -282,19 +279,16 @@ function PopupPerfil({ persona, resumen, loading, popupRef, onClose }: PopupPerf
                 <span className="font-medium text-[#1a1a2e]">{resumen.vacacionesDias}</span>
               </div>
 
-              {/* Talento */}
+              {/* Talento 9-Box */}
               <div className="flex justify-between items-center">
                 <span className="text-gray-400">Talento</span>
-                {resumen.talento && TALENTO_CONFIG[resumen.talento] ? (
-                  <span
-                    className="text-xs font-semibold px-2.5 py-0.5 rounded-full"
-                    style={{
-                      background: TALENTO_CONFIG[resumen.talento].bg,
-                      color:      TALENTO_CONFIG[resumen.talento].color,
-                    }}
-                  >
-                    {TALENTO_CONFIG[resumen.talento].label}
-                  </span>
+                {resumen.talento_potencial != null ? (
+                  <TalentMatrix
+                    potencial={resumen.talento_potencial}
+                    desempeno={resumen.talento_desempeno}
+                    isEditable={false}
+                    size="compact"
+                  />
                 ) : (
                   <span className="text-gray-300 text-xs">Sin asignar</span>
                 )}
@@ -392,14 +386,14 @@ export function PanelFitAsignacion({
         .eq("persona_id", p.persona_id)
         .gte("fecha_inicio", `${añoActual}-01-01`)
         .lte("fecha_fin", `${añoActual}-12-31`),
-      sb.from("persona").select("talento, mentor_id").eq("id", p.persona_id).single(),
+      sb.from("persona").select("talento_potencial, talento_desempeno, mentor_id").eq("id", p.persona_id).single(),
       (sb as any).from("persona_industria").select("cat_industria(nombre)").eq("persona_id", p.persona_id),
       (sb as any).from("persona_capacidad").select("cat_capacidad(nombre)").eq("persona_id", p.persona_id),
       (sb as any).from("persona_tematica").select("cat_tematica(nombre)").eq("persona_id", p.persona_id),
       sb.from("persona").select("nombre, apellido").eq("mentor_id", p.persona_id).eq("activo", true),
     ]);
 
-    const personaData = personaRes.data as { talento: string | null; mentor_id: string | null } | null;
+    const personaData = personaRes.data as { talento_potencial: number | null; talento_desempeno: number | null; mentor_id: string | null } | null;
     let mentorNombre: string | null = null;
     if (personaData?.mentor_id) {
       const { data: md } = await sb.from("persona").select("nombre, apellido").eq("id", personaData.mentor_id).single();
@@ -416,7 +410,8 @@ export function PanelFitAsignacion({
       capacidades: ((capRes.data ?? []) as any[]).map((r: any) => r.cat_capacidad?.nombre).filter(Boolean) as string[],
       tematicas:   ((temRes.data ?? []) as any[]).map((r: any) => r.cat_tematica?.nombre).filter(Boolean) as string[],
       vacacionesDias: (vacRes as any).count ?? 0,
-      talento: personaData?.talento ?? null,
+      talento_potencial: personaData?.talento_potencial ?? null,
+      talento_desempeno: personaData?.talento_desempeno ?? null,
       mentorNombre,
       mentoreados: ((mentoreRes.data ?? []) as { nombre: string; apellido: string }[]).map((m) => `${m.nombre} ${m.apellido}`),
     });

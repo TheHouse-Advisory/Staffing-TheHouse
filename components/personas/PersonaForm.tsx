@@ -27,7 +27,6 @@ interface FormState {
   fecha_ingreso: string;
   fecha_nacimiento: string;
   mentor_id: string;
-  talento: string;
   is_leverager: boolean;
   industrias: string[];
   capacidades: string[];
@@ -43,7 +42,6 @@ const EMPTY: FormState = {
   fecha_ingreso: "",
   fecha_nacimiento: "",
   mentor_id: "",
-  talento: "",
   is_leverager: false,
   industrias: [],
   capacidades: [],
@@ -110,7 +108,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
         fecha_ingreso: persona!.fecha_ingreso ?? "",
         fecha_nacimiento: persona!.fecha_nacimiento ?? "",
         mentor_id: persona!.mentor_id ?? "",
-        talento: persona!.talento ?? "",
         is_leverager: persona!.is_leverager ?? false,
         industrias: (pi.data ?? []).map((r: any) => r.industria_id),
         capacidades: (pc.data ?? []).map((r: any) => r.capacidad_id),
@@ -149,7 +146,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
       fecha_ingreso: form.fecha_ingreso || null,
       fecha_nacimiento: form.fecha_nacimiento || null,
       mentor_id: form.mentor_id || null,
-      talento: form.talento || null,
       // Si el cargo ya no es elegible, forzar false al guardar
       is_leverager: CARGOS_LEVERAGER.includes(form.cargo_actual) ? form.is_leverager : false,
     };
@@ -294,30 +290,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
             options={mentoresOpciones}
             placeholder="Sin mentor asignado"
           />
-        </FieldWrapper>
-
-        <FieldWrapper label="Talento" hint="Evaluación del potencial de la persona">
-          <div className="flex gap-2">
-            {[
-              { value: "talento",       label: "Talento",       color: "#16a34a", bg: "#f0fdf4", border: "#86efac" },
-              { value: "en_desarrollo", label: "En desarrollo", color: "#ca8a04", bg: "#fefce8", border: "#fde047" },
-              { value: "no_talento",    label: "No talento",    color: "#dc2626", bg: "#fef2f2", border: "#fca5a5" },
-            ].map((op) => (
-              <button
-                key={op.value}
-                type="button"
-                onClick={() => set("talento")(form.talento === op.value ? "" : op.value)}
-                className="flex-1 py-2 px-3 rounded-lg border-2 text-xs font-semibold transition-all"
-                style={
-                  form.talento === op.value
-                    ? { background: op.bg, borderColor: op.border, color: op.color }
-                    : { background: "#f9f9f9", borderColor: "#e8e8e8", color: "#aaa" }
-                }
-              >
-                {op.label}
-              </button>
-            ))}
-          </div>
         </FieldWrapper>
 
         {/* Toggle Apalancador — solo para cargos elegibles */}

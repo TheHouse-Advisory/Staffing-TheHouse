@@ -86,7 +86,8 @@ export interface Persona {
   activo: boolean;
   fecha_ingreso: string | null;
   mentor_id: string | null;
-  talento: "talento" | "en_desarrollo" | "no_talento" | null;
+  talento_potencial: number | null;
+  talento_desempeno: number | null;
   fecha_nacimiento: string | null;
   is_leverager: boolean;
   is_ex_houser: boolean;
