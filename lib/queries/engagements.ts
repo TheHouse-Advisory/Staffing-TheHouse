@@ -11,16 +11,41 @@ export interface EngagementConCobertura extends Engagement {
   requerimientos_cubiertos: number;
 }
 
+/** Fecha de corte: hoy - 30 días (YYYY-MM-DD). */
+function cutoffFecha(): string {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  return d.toISOString().split("T")[0];
+}
+
 /**
- * Lista de engagements activos/propuestas con indicador de cobertura.
+ * Filtro PostgREST para engagements ACTUALES/FUTUROS:
+ * fecha efectiva >= cutoff  O  sin fecha de fin.
+ * Fecha efectiva = fecha_fin_real ?? fecha_fin_estimada.
+ */
+function filtroActuales(cutoff: string): string {
+  return [
+    `fecha_fin_real.gte.${cutoff}`,
+    `and(fecha_fin_real.is.null,fecha_fin_estimada.gte.${cutoff})`,
+    `and(fecha_fin_real.is.null,fecha_fin_estimada.is.null)`,
+  ].join(",");
+}
+
+/**
+ * Lista de engagements activos/propuestas ACTUALES/FUTUROS con indicador de cobertura.
+ * Excluye proyectos cuya fecha de fin efectiva sea < hoy - 30 días.
  */
 export async function fetchEngagementsConCobertura(
   supabase: TypedSupabaseClient
 ): Promise<{ data: EngagementConCobertura[]; error: string | null }> {
+  const cutoff = cutoffFecha();
+
   const { data: engagements, error: engError } = await supabase
     .from("engagement")
     .select("*")
     .in("estado", ["propuesta", "activo", "pausado"])
+    .eq("is_deleted", false)
+    .or(filtroActuales(cutoff))
     .order("created_at", { ascending: false });
 
   if (engError) return { data: [], error: engError.message };
@@ -35,7 +60,6 @@ export async function fetchEngagementsConCobertura(
 
   if (cobError) return { data: [], error: cobError.message };
 
-  // Indexar cobertura por engagement_id
   const coberturaMap = new Map<
     string,
     { tiene_alerta: boolean; total: number; cubiertos: number }
@@ -69,6 +93,62 @@ export async function fetchEngagementsConCobertura(
   );
 
   return { data: result, error: null };
+}
+
+const PAGE_SIZE = 20;
+
+export interface PaginaHistorico {
+  data: Engagement[];
+  total: number;
+  pagina: number;
+  totalPaginas: number;
+  error: string | null;
+}
+
+/**
+ * Engagements PASADOS (fecha efectiva < hoy - 30 días), paginados de 20 en 20.
+ * Excluye is_deleted. Acepta búsqueda por nombre/cliente.
+ */
+export async function fetchEngagementsPasados(
+  supabase: TypedSupabaseClient,
+  pagina = 1,
+  busqueda = ""
+): Promise<PaginaHistorico> {
+  const cutoff = cutoffFecha();
+  const desde = (pagina - 1) * PAGE_SIZE;
+
+  // Engagements donde la fecha efectiva < cutoff:
+  // fecha_fin_real < cutoff  O  (fecha_fin_real IS NULL AND fecha_fin_estimada < cutoff)
+  const filtroPasados = [
+    `fecha_fin_real.lt.${cutoff}`,
+    `and(fecha_fin_real.is.null,fecha_fin_estimada.lt.${cutoff})`,
+  ].join(",");
+
+  let query = supabase
+    .from("engagement")
+    .select("*", { count: "exact" })
+    .eq("is_deleted", false)
+    .or(filtroPasados)
+    .order("fecha_fin_real", { ascending: false, nullsFirst: false });
+
+  if (busqueda.trim()) {
+    query = query.or(
+      `nombre.ilike.%${busqueda.trim()}%,cliente.ilike.%${busqueda.trim()}%`
+    );
+  }
+
+  const { data, count, error } = await query.range(desde, desde + PAGE_SIZE - 1);
+
+  if (error) return { data: [], total: 0, pagina, totalPaginas: 0, error: error.message };
+
+  const total = count ?? 0;
+  return {
+    data: (data ?? []) as Engagement[],
+    total,
+    pagina,
+    totalPaginas: Math.ceil(total / PAGE_SIZE),
+    error: null,
+  };
 }
 
 /**

@@ -17,18 +17,18 @@ export type RolSistema = "proposer" | "admin";
 
 export type EstadoEngagement = "activo" | "terminado";
 
-export type TipoEngagement = "propuesta" | "proyecto";
+export type TipoEngagement = "propuesta" | "proyecto" | "ayuda_interna";
 
 export type EstadoPropuesta = "borrador" | "aprobada" | "rechazada";
 
 export type EstadoAsignacion = "activa" | "finalizada" | "cancelada";
 
 export type TipoAusencia =
-  | "vacaciones"
-  | "licencia_medica"
-  | "capacitacion"
-  | "permiso"
-  | "dia_libre"
+  | "vacaciones_confirmadas"
+  | "vacaciones_por_confirmar"
+  | "permiso_sin_goce"
+  | "dia_post_proyecto"
+  | "dia_beneficio"
   | "dia_administrativo"
   | "otro";
 
@@ -85,6 +85,14 @@ export interface Persona {
   rol_sistema: RolSistema | null;
   activo: boolean;
   fecha_ingreso: string | null;
+  mentor_id: string | null;
+  talento_potencial: number | null;
+  talento_desempeno: number | null;
+  fecha_nacimiento: string | null;
+  is_leverager: boolean;
+  is_ex_houser: boolean;
+  is_deleted: boolean;
+  deleted_at: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -147,6 +155,8 @@ export interface Engagement {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  is_deleted: boolean;
+  deleted_at: string | null;
 }
 
 /**

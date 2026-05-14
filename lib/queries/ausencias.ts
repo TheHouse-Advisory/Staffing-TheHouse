@@ -1,5 +1,7 @@
 import type { TypedSupabaseClient } from "@/lib/supabase/types";
 import type { TipoAusencia } from "@/lib/types/database";
+import { expandirRangoHabil } from "@/lib/utils/date-utils";
+import { isHoliday } from "@/lib/constants/holidays";
 
 // ─────────────────────────────────────────────────────────────
 //  Constants
@@ -19,13 +21,13 @@ export const SENIORITY_ORDER = [
 
 // Colores por tipo de ausencia
 export const COLOR_AUSENCIA: Record<TipoAusencia, { bg: string; text: string; label: string }> = {
-  vacaciones:        { bg: "#3b82f6", text: "#fff",   label: "Vacaciones" },
-  dia_libre:         { bg: "#22c55e", text: "#fff",   label: "Día libre" },
-  dia_administrativo:{ bg: "#f59e0b", text: "#fff",   label: "Día administrativo" },
-  permiso:           { bg: "#a855f7", text: "#fff",   label: "Permiso" },
-  licencia_medica:   { bg: "#ef4444", text: "#fff",   label: "Licencia médica" },
-  capacitacion:      { bg: "#06b6d4", text: "#fff",   label: "Capacitación" },
-  otro:              { bg: "#6b7280", text: "#fff",   label: "Otro" },
+  vacaciones_confirmadas:   { bg: "#38bdf8", text: "#fff", label: "Vacaciones confirmadas" },
+  vacaciones_por_confirmar: { bg: "#fbbf24", text: "#fff", label: "Vacaciones por confirmar" },
+  permiso_sin_goce:         { bg: "#92400e", text: "#fff", label: "Permiso sin goce de sueldo" },
+  dia_post_proyecto:        { bg: "#f97316", text: "#fff", label: "Día post proyecto" },
+  dia_beneficio:            { bg: "#a855f7", text: "#fff", label: "Día beneficio" },
+  dia_administrativo:       { bg: "#22c55e", text: "#fff", label: "Día administrativo" },
+  otro:                     { bg: "#9ca3af", text: "#fff", label: "Otro" },
 };
 
 // ─────────────────────────────────────────────────────────────
@@ -72,13 +74,12 @@ export interface AusenciasDelMes {
 //  Helpers de fecha
 // ─────────────────────────────────────────────────────────────
 
-/** Genera array de fechas ISO "YYYY-MM-DD" para todos los días del mes */
+/** Genera array de fechas ISO "YYYY-MM-DD" para todos los días del mes (lun–vie, INCLUYENDO feriados para que no haya huecos en el grid) */
 export function diasDelMes(year: number, month: number): string[] {
   const dias: string[] = [];
-  const totalDias = new Date(year, month, 0).getDate();  // month es 1-based
+  const totalDias = new Date(year, month, 0).getDate();
   for (let d = 1; d <= totalDias; d++) {
     const fecha = new Date(year, month - 1, d);
-    // Excluir fines de semana
     const dow = fecha.getDay();
     if (dow !== 0 && dow !== 6) {
       dias.push(fecha.toISOString().split("T")[0]);
@@ -87,20 +88,12 @@ export function diasDelMes(year: number, month: number): string[] {
   return dias;
 }
 
-/** Expande un rango fecha_inicio..fecha_fin a array de fechas ISO */
-function expandirRango(inicio: string, fin: string): string[] {
-  const result: string[] = [];
-  const start = new Date(inicio + "T00:00:00");
-  const end = new Date(fin + "T00:00:00");
-  const cur = new Date(start);
-  while (cur <= end) {
-    const dow = cur.getDay();
-    if (dow !== 0 && dow !== 6) {
-      result.push(cur.toISOString().split("T")[0]);
-    }
-    cur.setDate(cur.getDate() + 1);
-  }
-  return result;
+// Re-export para uso en componentes de UI
+export { isHoliday };
+
+/** Expande un rango a días hábiles (sin fines de semana ni feriados Chile) */
+export function expandirRango(inicio: string, fin: string): string[] {
+  return expandirRangoHabil(inicio, fin);
 }
 
 /** Calcula índice de seniority (menor = más senior) */
@@ -233,4 +226,93 @@ export async function eliminarAusencia(
     .delete()
     .eq("id", ausenciaId);
   return { error: error?.message ?? null };
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Detalle de ausencias por persona
+// ─────────────────────────────────────────────────────────────
+
+export interface AusenciaDetalle {
+  id: string;
+  fechaInicio: string;    // "YYYY-MM-DD"
+  fechaFin: string;       // "YYYY-MM-DD"
+  numDias: number;        // días hábiles lun–vie
+  tipo: TipoAusencia;
+  tipoLabel: string;      // texto legible del tipo
+  descripcion: string | null;
+}
+
+export interface DetalleAusenciasPersona {
+  /** Ausencias cuya fecha_fin >= hoy (en curso o futuras) */
+  ausenciasFuturas: AusenciaDetalle[];
+  /** Ausencias ya terminadas dentro del año calendario actual (fecha_fin < hoy) */
+  ausenciasPasadasAnioActual: AusenciaDetalle[];
+  /** Suma de días hábiles de todas las ausencias del año actual (pasadas + en curso hasta hoy) */
+  totalDiasAnioActual: number;
+}
+
+/**
+ * Devuelve el desglose detallado de ausencias de una persona:
+ * futuras, pasadas del año actual y total de días del año.
+ */
+export async function getDetailedPersonAbsences(
+  supabase: any,
+  personaId: string
+): Promise<DetalleAusenciasPersona> {
+  const hoy = new Date().toISOString().split("T")[0];          // "YYYY-MM-DD"
+  const inicioAnio = `${new Date().getFullYear()}-01-01`;
+  const finAnio    = `${new Date().getFullYear()}-12-31`;
+
+  // Una sola query: todas las ausencias de esta persona en el año actual + futuras
+  // Condición: fecha_fin >= inicioAnio (cubre todo el año + futuras sin límite)
+  const { data, error } = await supabase
+    .from("ausencia")
+    .select("id, tipo, fecha_inicio, fecha_fin, descripcion")
+    .eq("persona_id", personaId)
+    .gte("fecha_fin", inicioAnio)   // descarta ausencias de años anteriores
+    .order("fecha_inicio", { ascending: true });
+
+  if (error || !data) {
+    return { ausenciasFuturas: [], ausenciasPasadasAnioActual: [], totalDiasAnioActual: 0 };
+  }
+
+  type RawRow = { id: string; tipo: string; fecha_inicio: string; fecha_fin: string; descripcion: string | null };
+
+  const ausenciasFuturas: AusenciaDetalle[] = [];
+  const ausenciasPasadasAnioActual: AusenciaDetalle[] = [];
+  let totalDiasAnioActual = 0;
+
+  for (const row of data as RawRow[]) {
+    const tipo = row.tipo as TipoAusencia;
+    const numDias = expandirRango(row.fecha_inicio, row.fecha_fin).length;
+    const detalle: AusenciaDetalle = {
+      id: row.id,
+      fechaInicio: row.fecha_inicio,
+      fechaFin: row.fecha_fin,
+      numDias,
+      tipo,
+      tipoLabel: COLOR_AUSENCIA[tipo]?.label ?? row.tipo,
+      descripcion: row.descripcion,
+    };
+
+    const esFutura = row.fecha_fin >= hoy;          // termina hoy o más adelante
+    const esPasadaDesteAnio = row.fecha_fin < hoy && row.fecha_inicio >= inicioAnio;
+
+    if (esFutura) {
+      ausenciasFuturas.push(detalle);
+    }
+
+    if (esPasadaDesteAnio) {
+      ausenciasPasadasAnioActual.push(detalle);
+    }
+
+    // Contribución al total del año: días hábiles que caen dentro del año actual y hasta hoy
+    if (row.fecha_inicio <= hoy && row.fecha_fin >= inicioAnio) {
+      const finClamped  = row.fecha_fin  < hoy     ? row.fecha_fin  : hoy;
+      const iniClamped  = row.fecha_inicio > inicioAnio ? row.fecha_inicio : inicioAnio;
+      totalDiasAnioActual += expandirRango(iniClamped, finClamped).length;
+    }
+  }
+
+  return { ausenciasFuturas, ausenciasPasadasAnioActual, totalDiasAnioActual };
 }

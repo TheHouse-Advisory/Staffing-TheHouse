@@ -2,7 +2,7 @@
 //  Constantes canónicas del dominio — fuente única de verdad
 // ─────────────────────────────────────────────────────────────
 
-/** Los 8 cargos válidos, en orden de seniority descendente */
+/** Los cargos válidos, en orden de seniority descendente */
 export const CARGOS = [
   "Socio",
   "Director de Proyectos",
@@ -12,12 +12,37 @@ export const CARGOS = [
   "Consultor de Proyectos",
   "Consultor Analista",
   "Consultor Trainee",
+  "Desarrollo",
 ] as const;
 
 export type CargoNombre = typeof CARGOS[number];
 
-/** Para usar en selects de formularios */
-export const CARGOS_OPTIONS = CARGOS.map((c) => ({ value: c, label: c }));
+/** Para usar en selects de formularios — Asociado y Consultor Senior son la misma categoría */
+export const CARGOS_OPTIONS = [
+  { value: "Socio",                       label: "Socio" },
+  { value: "Director de Proyectos",       label: "Director de Proyectos" },
+  { value: "Gerente de Proyectos",        label: "Gerente de Proyectos" },
+  { value: "Asociado / Consultor Senior", label: "Asociado / Consultor Senior" },
+  { value: "Consultor de Proyectos",      label: "Consultor de Proyectos" },
+  { value: "Consultor Analista",          label: "Consultor Analista" },
+  { value: "Consultor Trainee",           label: "Consultor Trainee" },
+  { value: "Desarrollo",                  label: "Desarrollo" },
+];
+
+/** Color por cargo — fuente única para toda la app */
+export const CARGO_COLORS: Record<string, string> = {
+  "Socio":                   "#1a1a2e",
+  "Director de Proyectos":   "#4a90e2",
+  "Gerente de Proyectos":    "#7c5cbf",
+  "Asociado":                       "#e2884a",
+  "Consultor Senior":               "#4ab89a",
+  "Asociado / Consultor Senior":    "#e2884a",
+  "Consultor de Proyectos":  "#e24a6a",
+  "Consultor Analista":      "#a0b84a",
+  "Consultor Trainee":       "#c07c4a",
+  "Desarrollo":              "#94a3b8",
+};
+export const CARGO_COLOR_DEFAULT = "#94a3b8";
 
 /** Estilos por estado de engagement */
 export const ESTADO_ENGAGEMENT: Record<string, { bg: string; text: string; label: string }> = {

@@ -58,6 +58,7 @@ export interface FilaProyecto {
   engagement_id: string;
   engagement_nombre: string;
   cliente: string;
+  tipo: string;
   dias: Record<string, DatoDiaProyecto>; // key = "yyyy-MM-dd"
 }
 
@@ -73,11 +74,12 @@ export interface FilaProyecto {
 export async function fetchOcupacionDiariaPersona(
   supabase: TypedSupabaseClient,
   semanaInicio: Date,
-  planId: string | null
+  planId: string | null,
+  totalDias: number = 7
 ): Promise<{ filas: FilaDia[]; dias: Date[]; diasCriticosPersona: Set<string>; error: string | null }> {
-  const dias = Array.from({ length: 7 }, (_, i) => addDays(semanaInicio, i));
+  const dias = Array.from({ length: totalDias }, (_, i) => addDays(semanaInicio, i));
   const inicioStr = format(dias[0], "yyyy-MM-dd");
-  const finStr    = format(dias[6], "yyyy-MM-dd");
+  const finStr    = format(dias[totalDias - 1], "yyyy-MM-dd");
 
   type PersonaRaw = { id: string; nombre: string; apellido: string; cargo_actual: string | null };
   type AsigRaw = { persona_id: string; engagement_id: string | null; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string | null };
@@ -260,27 +262,45 @@ interface ReqRaw {
 export async function fetchCoberturaProyecto(
   supabase: TypedSupabaseClient,
   semanaInicio: Date,
-  planId: string | null
+  planId: string | null,
+  totalDias: number = 7
 ): Promise<{ filas: FilaProyecto[]; dias: Date[]; diasCriticosEng: Set<string>; error: string | null }> {
-  const dias = Array.from({ length: 7 }, (_, i) => addDays(semanaInicio, i));
+  const dias = Array.from({ length: totalDias }, (_, i) => addDays(semanaInicio, i));
   const inicioStr = format(dias[0], "yyyy-MM-dd");
-  const finStr    = format(dias[6], "yyyy-MM-dd");
+  const finStr    = format(dias[totalDias - 1], "yyyy-MM-dd");
 
-  // 1. Requerimientos que solapan con la semana (con nombre de engagement)
+  // 1a. Engagements activos que solapan con la semana (con o sin requerimientos)
+  const { data: engsRaw, error: engsErr } = await supabase
+    .from("engagement")
+    .select("id, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
+    .eq("estado", "activo")
+    .lte("fecha_inicio", finStr)
+    .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null`);
+
+  if (engsErr) return { filas: [], dias, diasCriticosEng: new Set(), error: engsErr.message };
+  if (!engsRaw || engsRaw.length === 0) return { filas: [], dias, diasCriticosEng: new Set(), error: null };
+
+  const engIds = (engsRaw as any[]).map((e) => e.id);
+
+  // 1b. Requerimientos que solapan con la semana para esos engagements
   const { data: reqRaw, error: reqErr } = await supabase
     .from("requerimiento_engagement")
-    .select(
-      "id, engagement_id, pct_dedicacion, fecha_inicio, fecha_fin, cargo_requerido, " +
-      "engagement:engagement_id(nombre, cliente)"
-    )
+    .select("id, engagement_id, pct_dedicacion, fecha_inicio, fecha_fin, cargo_requerido")
+    .in("engagement_id", engIds)
     .lte("fecha_inicio", finStr)
     .gte("fecha_fin", inicioStr);
 
   if (reqErr) return { filas: [], dias, diasCriticosEng: new Set(), error: reqErr.message };
-  if (!reqRaw || reqRaw.length === 0) return { filas: [], dias, diasCriticosEng: new Set(), error: null };
 
-  const reqs = reqRaw as unknown as ReqRaw[];
-  const engIds = [...new Set(reqs.map((r) => r.engagement_id))];
+  const reqs = (reqRaw ?? []) as unknown as ReqRaw[];
+
+  // Inyectar nombre/cliente desde engsRaw en cada req
+  const engLookup = new Map<string, { nombre: string; cliente: string }>(
+    (engsRaw as any[]).map((e) => [e.id, { nombre: e.nombre, cliente: e.cliente }])
+  );
+  for (const r of reqs) {
+    r.engagement = engLookup.get(r.engagement_id) ?? null;
+  }
 
   type AsigEng = { engagement_id: string; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string | null };
 
@@ -343,18 +363,17 @@ export async function fetchCoberturaProyecto(
     }
   }
 
-  // 4. Construir mapa engagement → días
+  // 4. Construir mapa engagement → días (incluye todos, con o sin requerimientos)
   const engMap = new Map<string, FilaProyecto>();
 
-  for (const req of reqs) {
-    if (!engMap.has(req.engagement_id)) {
-      engMap.set(req.engagement_id, {
-        engagement_id: req.engagement_id,
-        engagement_nombre: req.engagement?.nombre ?? "—",
-        cliente: req.engagement?.cliente ?? "—",
-        dias: {},
-      });
-    }
+  for (const eng of engsRaw as any[]) {
+    engMap.set(eng.id, {
+      engagement_id: eng.id,
+      engagement_nombre: eng.nombre ?? "—",
+      cliente: eng.cliente ?? "—",
+      tipo: eng.tipo ?? "proyecto",
+      dias: {},
+    });
   }
 
   for (const dia of dias) {

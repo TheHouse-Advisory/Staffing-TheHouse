@@ -1,246 +1,113 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { startOfISOWeek, addWeeks, subWeeks, format } from "date-fns";
+import { useState } from "react";
+import { startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths, addDays, format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
-import { TablonOcupacion } from "@/components/tablero/TablonOcupacion";
-import { PlanReviewPanel } from "@/components/tablero/PlanReviewPanel";
-import { createClient } from "@/lib/supabase/client";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+import { DesgloceEngagements } from "@/components/inicio/DesgloceEngagements";
+import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTablero";
 import { cn } from "@/lib/utils";
 
-interface PlanResumen {
-  id: string;
-  nombre: string;
-}
-
-type Vista = "persona" | "proyecto";
+type VistaPrincipal = "proyectos" | "perfil";
+type Periodo = "dia" | "semana" | "mes";
 
 export default function TableroPage() {
-  const [semanaInicio, setSemanaInicio] = useState<Date>(() =>
-    startOfISOWeek(new Date())
-  );
-  // null = vista real; string = ID del plan
-  const [planId, setPlanId] = useState<string | null>(null);
-  const [vista, setVista] = useState<Vista>("persona");
-  const [planes, setPlanes] = useState<PlanResumen[]>([]);
-  const [planesLoading, setPlanesLoading] = useState(true);
-  const [dropdownOpen, setDropdownOpen] = useState(false);
-  const [miPersonaId, setMiPersonaId] = useState<string>("");
-  const [isAdmin, setIsAdmin] = useState(false);
+  const [vistaPrincipal, setVistaPrincipal] = useState<VistaPrincipal>("proyectos");
 
-  const semanaLabel = (() => {
-    const fin = addWeeks(semanaInicio, 1);
-    return `${format(semanaInicio, "d MMM", { locale: es })} – ${format(fin, "d MMM yyyy", { locale: es })}`;
+  // ── Estado de fecha COMPARTIDO entre ambas vistas ──
+  const [periodo, setPeriodo] = useState<Periodo>("semana");
+  const [base, setBase] = useState<Date>(() => startOfISOWeek(new Date()));
+
+  // Etiqueta de rango para el header
+  const rangoLabel = (() => {
+    if (periodo === "semana") return `${format(base, "d MMM", { locale: es })} – ${format(addWeeks(base, 5), "d MMM yyyy", { locale: es })}`;
+    if (periodo === "mes")    return `${format(base, "MMM", { locale: es })} – ${format(addMonths(base, 4), "MMM yyyy", { locale: es })}`;
+    // dia: muestra la semana
+    return `${format(startOfISOWeek(base), "d MMM", { locale: es })} – ${format(addDays(startOfISOWeek(base), 6), "d MMM yyyy", { locale: es })}`;
   })();
 
-  // Cargar planes borrador y datos del usuario actual
-  const loadPlanes = useCallback(async () => {
-    const supabase = createClient();
-    const { data: { user } } = await supabase.auth.getUser();
-
-    const [planesRes, personaRes] = await Promise.all([
-      supabase
-        .from("propuesta_plan")
-        .select("id, nombre")
-        .eq("estado", "borrador")
-        .order("created_at", { ascending: false }),
-      user
-        ? (supabase as any)
-            .from("persona")
-            .select("id, rol_sistema")
-            .eq("auth_user_id", user.id)
-            .single()
-        : Promise.resolve({ data: null }),
-    ]);
-
-    setPlanes((planesRes.data ?? []) as PlanResumen[]);
-    setPlanesLoading(false);
-
-    if (personaRes.data) {
-      const me = personaRes.data as any;
-      setMiPersonaId(me.id);
-      setIsAdmin(me.rol_sistema === "admin");
-    }
-  }, []);
-
-  useEffect(() => { loadPlanes(); }, [loadPlanes]);
-
-  const planActual = planes.find((p) => p.id === planId);
-
-  // Tras aprobar o descartar: recargar lista de planes
-  // Si el plan ya no existe en borrador → volver a vista real
-  const handlePlanActualizado = useCallback(() => {
-    loadPlanes().then(() => {
-      // Si el planId ya no está en borradores, deseleccionar
-      // (El panel llama a onClose en ambos casos, así que esta lógica
-      //  es un safety net en caso de que el panel no lo hiciera)
-    });
-  }, [loadPlanes]);
+  function navPrev() {
+    if (periodo === "dia")    setBase((b) => addDays(startOfISOWeek(b), -7));
+    if (periodo === "semana") setBase((b) => subWeeks(b, 5));
+    if (periodo === "mes")    setBase((b) => subMonths(b, 4));
+  }
+  function navNext() {
+    if (periodo === "dia")    setBase((b) => addDays(startOfISOWeek(b), 7));
+    if (periodo === "semana") setBase((b) => addWeeks(b, 5));
+    if (periodo === "mes")    setBase((b) => addMonths(b, 4));
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* Topbar del tablero */}
-      <header className="h-14 bg-white border-b border-[#e8e8e8] flex items-center px-6 gap-3 flex-shrink-0">
-        <h1 className="text-[16px] font-bold flex-1">Tablero de Capacidad</h1>
 
-        {/* Toggle persona / proyecto */}
+      {/* ── Header estático — idéntico en ambas vistas ── */}
+      <header className="h-14 bg-white border-b border-[#e8e8e8] flex items-center px-6 gap-3 flex-shrink-0">
+        <h1 className="text-[16px] font-bold flex-1">Tablero</h1>
+
+        {/* Toggle principal */}
         <div className="flex bg-[#f0f0f0] rounded-lg p-[3px] gap-[2px]">
           <button
-            onClick={() => setVista("persona")}
-            className={cn(
-              "px-3.5 py-[5px] rounded-md text-xs font-semibold transition-all",
-              vista === "persona"
-                ? "bg-white text-[#1a1a1a] shadow-sm"
-                : "text-[#888] hover:text-[#555]"
+            onClick={() => setVistaPrincipal("proyectos")}
+            className={cn("px-3.5 py-[5px] rounded-md text-xs font-semibold transition-all",
+              vistaPrincipal === "proyectos" ? "bg-white text-[#1a1a1a] shadow-sm" : "text-[#888] hover:text-[#555]"
             )}
-          >
-            Por persona
-          </button>
+          >Vista Proyectos</button>
           <button
-            onClick={() => setVista("proyecto")}
-            className={cn(
-              "px-3.5 py-[5px] rounded-md text-xs font-semibold transition-all",
-              vista === "proyecto"
-                ? "bg-white text-[#1a1a1a] shadow-sm"
-                : "text-[#888] hover:text-[#555]"
+            onClick={() => setVistaPrincipal("perfil")}
+            className={cn("px-3.5 py-[5px] rounded-md text-xs font-semibold transition-all",
+              vistaPrincipal === "perfil" ? "bg-white text-[#1a1a1a] shadow-sm" : "text-[#888] hover:text-[#555]"
             )}
-          >
-            Por proyecto
-          </button>
+          >Perfil Individual</button>
         </div>
 
-        {/* Navegación de semana */}
-        <div className="flex items-center gap-2 text-[13px] text-[#555]">
-          <button
-            onClick={() => setSemanaInicio((s) => subWeeks(s, 1))}
-            className="w-7 h-7 rounded-md border border-[#e0e0e0] bg-white flex items-center justify-center hover:bg-[#f5f5f5] transition-colors"
-            title="Semana anterior"
-          >
+        {/* Selector Día / Semana / Mes — siempre visible */}
+        <div className="flex bg-[#f0f0f0] rounded-lg p-[3px] gap-[2px]">
+          {(["dia", "semana", "mes"] as Periodo[]).map((pv) => (
+            <button key={pv} onClick={() => setPeriodo(pv)}
+              className={cn("px-3.5 py-[5px] rounded-md text-xs font-semibold transition-all",
+                periodo === pv ? "bg-white text-[#1a1a1a] shadow-sm" : "text-[#888] hover:text-[#555]"
+              )}
+            >
+              {pv === "dia" ? "Día" : pv === "semana" ? "Semana" : "Mes"}
+            </button>
+          ))}
+        </div>
+
+        {/* Navegador de fechas — siempre visible */}
+        <div className="flex items-center gap-2">
+          <button onClick={navPrev} className="w-7 h-7 rounded-md border border-[#e0e0e0] bg-white flex items-center justify-center hover:bg-[#f5f5f5] transition-colors">
             <ChevronLeft className="w-3.5 h-3.5" />
           </button>
-          <span className="font-semibold text-[#1a1a1a] min-w-[200px] text-center text-xs">
-            {semanaLabel}
-          </span>
-          <button
-            onClick={() => setSemanaInicio((s) => addWeeks(s, 1))}
-            className="w-7 h-7 rounded-md border border-[#e0e0e0] bg-white flex items-center justify-center hover:bg-[#f5f5f5] transition-colors"
-            title="Semana siguiente"
-          >
+          <span className="font-semibold text-[#1a1a1a] min-w-[220px] text-center text-xs">{rangoLabel}</span>
+          <button onClick={navNext} className="w-7 h-7 rounded-md border border-[#e0e0e0] bg-white flex items-center justify-center hover:bg-[#f5f5f5] transition-colors">
             <ChevronRight className="w-3.5 h-3.5" />
           </button>
           <button
-            onClick={() => setSemanaInicio(startOfISOWeek(new Date()))}
+            onClick={() => setBase(startOfISOWeek(new Date()))}
             className="ml-1 text-xs px-2.5 py-1 rounded-md border border-[#e0e0e0] hover:bg-[#f5f5f5] transition-colors text-[#555]"
-          >
-            Hoy
-          </button>
-        </div>
-
-        {/* Selector de vista: Real vs Plan */}
-        <div className="flex bg-[#f0f0f0] rounded-lg p-[3px] gap-[2px] relative">
-          {/* Botón Real */}
-          <button
-            onClick={() => { setPlanId(null); setDropdownOpen(false); }}
-            className={cn(
-              "px-3.5 py-[5px] rounded-md text-xs font-semibold transition-all",
-              planId === null
-                ? "bg-white text-[#1a1a1a] shadow-sm"
-                : "text-[#888] hover:text-[#555]"
-            )}
-          >
-            Real
-          </button>
-
-          {/* Botón Plan (dropdown) */}
-          <button
-            onClick={() => setDropdownOpen((v) => !v)}
-            className={cn(
-              "flex items-center gap-1.5 px-3.5 py-[5px] rounded-md text-xs font-semibold transition-all",
-              planId !== null
-                ? "bg-[#eaf4ff] text-[#1a5276] shadow-sm"
-                : "text-[#888] hover:text-[#555]"
-            )}
-          >
-            {planId && planActual ? planActual.nombre : "Plan"}
-            <ChevronDown className="w-3 h-3" />
-          </button>
-
-          {/* Dropdown de planes */}
-          {dropdownOpen && (
-            <div className="absolute top-full right-0 mt-1.5 min-w-[240px] bg-white border border-[#e8e8e8] rounded-xl shadow-lg z-20 overflow-hidden">
-              {planesLoading ? (
-                <p className="text-xs text-[#888] px-4 py-3">Cargando planes...</p>
-              ) : planes.length === 0 ? (
-                <p className="text-xs text-[#888] px-4 py-3">
-                  No hay planes en borrador.
-                </p>
-              ) : (
-                <div className="py-1.5">
-                  <p className="text-[10px] font-semibold text-[#aaa] uppercase tracking-widest px-4 py-1.5">
-                    Planes pendientes de revisión
-                  </p>
-                  {planes.map((plan) => (
-                    <button
-                      key={plan.id}
-                      type="button"
-                      onClick={() => { setPlanId(plan.id); setDropdownOpen(false); }}
-                      className={cn(
-                        "w-full text-left px-4 py-2.5 text-sm transition-colors flex items-center justify-between gap-2",
-                        planId === plan.id
-                          ? "bg-[#eaf4ff] text-[#1a5276] font-semibold"
-                          : "text-[#333] hover:bg-[#f5f5f5]"
-                      )}
-                    >
-                      <span className="truncate">{plan.nombre}</span>
-                      {isAdmin && (
-                        <span className="text-[10px] text-[#aaa] flex-shrink-0">revisar →</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          >Hoy</button>
         </div>
       </header>
 
-      {/* Click fuera cierra el dropdown */}
-      {dropdownOpen && (
-        <div
-          className="fixed inset-0 z-10"
-          onClick={() => setDropdownOpen(false)}
-        />
-      )}
+      {/* ── Contenido — p-6 uniforme en ambas vistas ── */}
+      <div className="flex-1 min-h-0 p-6 flex flex-col">
 
-      {/* Panel de revisión del plan — solo admins, solo cuando hay plan seleccionado */}
-      {planId && isAdmin && (
-        <PlanReviewPanel
-          key={planId}
-          planId={planId}
-          miPersonaId={miPersonaId}
-          onSuccess={handlePlanActualizado}
-          onClose={() => setPlanId(null)}
-        />
-      )}
+        {/* Vista Proyectos: controles de fecha manejados por el header */}
+        {vistaPrincipal === "proyectos" && (
+          <div className="bg-white rounded-xl shadow-md flex-1 min-h-0 overflow-hidden flex flex-col p-6">
+            <DesgloceEngagements vistaExterna={periodo} baseExterna={base} />
+          </div>
+        )}
 
-      {/* Aviso informativo para no-admins con plan seleccionado */}
-      {planId && !isAdmin && (
-        <div className="bg-[#eaf4ff] border-b border-[#bfdbfe] px-6 py-2 flex items-center gap-2 flex-shrink-0">
-          <span className="text-xs text-[#1a5276]">
-            📋 Vista proyectada con el plan <strong>{planActual?.nombre}</strong> aplicado.
-            Solo los administradores pueden aprobar o descartar planes.
-          </span>
-        </div>
-      )}
+        {/* Vista Perfil Individual */}
+        {vistaPrincipal === "perfil" && (
+          <div className="overflow-auto flex-1 min-h-0">
+            <div className="bg-white rounded-xl shadow-md p-6">
+              <PerfilIndividualTablero semanaInicio={base} periodoVista={periodo} />
+            </div>
+          </div>
+        )}
 
-      {/* Heatmap */}
-      <div className="flex-1 overflow-auto scrollbar-thin">
-        <TablonOcupacion
-          semanaInicio={semanaInicio}
-          planId={planId}
-          vista={vista}
-        />
       </div>
     </div>
   );

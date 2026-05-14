@@ -10,6 +10,9 @@ import {
   LogOut,
   Kanban,
   CalendarOff,
+  Home,
+  Bell,
+  BarChart3,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RolSistema } from "@/lib/types/database";
@@ -25,16 +28,19 @@ const navItems = [
   {
     section: "Principal",
     items: [
+      { href: "/inicio",    label: "Inicio",    icon: Home },
       { href: "/tablero",   label: "Tablero",   icon: LayoutDashboard },
       { href: "/engagements", label: "Engagements", icon: Briefcase },
       { href: "/personas",  label: "Personas",  icon: Users },
       { href: "/ausencias", label: "Ausencias", icon: CalendarOff },
+      { href: "/alertas",   label: "Alertas",   icon: Bell },
     ],
   },
   {
     section: "Gestión",
     items: [
       { href: "/planificacion",  label: "Planificación",  icon: Kanban },
+      { href: "/capacity",       label: "Capacity",       icon: BarChart3 },
       { href: "/configuracion",  label: "Configuración",  icon: Settings },
     ],
   },
