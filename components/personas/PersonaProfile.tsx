@@ -1,9 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Pencil, Mail } from "lucide-react";
-import { createClient, createAnyClient } from "@/lib/supabase/client";
-import { enviarInvitacion } from "@/lib/auth/actions";
+import { Pencil } from "lucide-react";
+import { createAnyClient } from "@/lib/supabase/client";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { getDetailedPersonAbsences, type DetalleAusenciasPersona, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
@@ -12,7 +11,7 @@ import { Button } from "@/components/ui/Button";
 import { PersonaForm } from "./PersonaForm";
 import { TalentMatrix } from "./TalentMatrix";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
-import type { Persona, RolSistema } from "@/lib/types/database";
+import type { Persona } from "@/lib/types/database";
 
 interface Props {
   id: string;
@@ -71,9 +70,6 @@ export function PersonaProfile({ id }: Props) {
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(false);
   const [ausenciasDetalle, setAusenciasDetalle] = useState<DetalleAusenciasPersona | null>(null);
-  const [rolActual, setRolActual] = useState<RolSistema | null>(null);
-  const [invitando, setInvitando] = useState(false);
-  const [inviteMsg, setInviteMsg] = useState<{ ok: boolean; text: string } | null>(null);
 
   const load = async () => {
     const supabase = createAnyClient();
@@ -177,37 +173,6 @@ export function PersonaProfile({ id }: Props) {
     load();
   }, [id]);
 
-  // Detectar rol del usuario actual para mostrar acciones de admin.
-  useEffect(() => {
-    async function loadRol() {
-      const supabase = createClient();
-      const sb = createAnyClient();
-      const { data: { user } } = await supabase.auth.getUser();
-      if (!user) return;
-      const { data } = await sb
-        .from("persona")
-        .select("rol_sistema")
-        .eq("auth_user_id", user.id)
-        .single();
-      setRolActual((data?.rol_sistema as RolSistema) ?? null);
-    }
-    loadRol();
-  }, []);
-
-  const handleReenviarInvitacion = async () => {
-    if (!persona) return;
-    setInvitando(true);
-    setInviteMsg(null);
-    const result = await enviarInvitacion({
-      personaId: persona.id,
-      origin: window.location.origin,
-    });
-    setInviteMsg({ ok: result.ok, text: result.message });
-    setInvitando(false);
-  };
-
-  const isAdmin = rolActual === "admin";
-
   if (loading) return <p className="text-sm text-[#888] p-6">Cargando...</p>;
   if (!persona) return <p className="text-sm text-red-500 p-6">Persona no encontrada.</p>;
 
@@ -268,18 +233,6 @@ export function PersonaProfile({ id }: Props) {
             </div>
           </div>
           <div className="flex items-center gap-1">
-            {isAdmin && persona.rol_sistema && persona.activo && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleReenviarInvitacion}
-                loading={invitando}
-                className="text-[#888] hover:text-[#1a1a1a]"
-                title="Reenviar invitación / enlace de contraseña"
-              >
-                <Mail className="w-3.5 h-3.5" />
-              </Button>
-            )}
             <Button
               variant="ghost"
               size="sm"
@@ -291,18 +244,6 @@ export function PersonaProfile({ id }: Props) {
             </Button>
           </div>
         </div>
-
-        {inviteMsg && (
-          <div
-            className={`p-3 rounded-lg text-sm ${
-              inviteMsg.ok
-                ? "bg-green-50 border border-green-200 text-green-700"
-                : "bg-red-50 border border-red-200 text-red-700"
-            }`}
-          >
-            {inviteMsg.text}
-          </div>
-        )}
 
         {/* ── Info ───────────────────────────────────────────── */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">

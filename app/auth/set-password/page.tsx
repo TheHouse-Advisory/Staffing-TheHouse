@@ -19,6 +19,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
+import { confirmarCuenta } from "@/lib/auth/actions";
 
 const MIN_LENGTH = 8;
 
@@ -66,6 +67,9 @@ export default function SetPasswordPage() {
       setLoading(false);
       return;
     }
+
+    // Marca la cuenta como activa (best-effort: no bloquea el ingreso).
+    await confirmarCuenta().catch(() => {});
 
     setDone(true);
     setLoading(false);

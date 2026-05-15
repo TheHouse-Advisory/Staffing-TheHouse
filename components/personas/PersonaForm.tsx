@@ -2,7 +2,6 @@
 
 import { useState, useEffect } from "react";
 import { createAnyClient } from "@/lib/supabase/client";
-import { enviarInvitacion } from "@/lib/auth/actions";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
 import { FieldWrapper, Input, Select } from "@/components/ui/FormField";
@@ -24,7 +23,6 @@ interface FormState {
   apellido: string;
   email: string;
   cargo_actual: string;
-  rol_sistema: string;
   fecha_ingreso: string;
   fecha_nacimiento: string;
   mentor_id: string;
@@ -39,7 +37,6 @@ const EMPTY: FormState = {
   apellido: "",
   email: "",
   cargo_actual: "",
-  rol_sistema: "",
   fecha_ingreso: "",
   fecha_nacimiento: "",
   mentor_id: "",
@@ -54,7 +51,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [loading, setLoading] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
-  const [inviteInfo, setInviteInfo] = useState<string | null>(null);
 
   // Catálogos
   const [cargos, setCargos] = useState<Option[]>([]);
@@ -91,7 +87,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
 
   // Poblar form al editar
   useEffect(() => {
-    if (!open) { setForm(EMPTY); setErrors({}); setServerError(null); setInviteInfo(null); return; }
+    if (!open) { setForm(EMPTY); setErrors({}); setServerError(null); return; }
     if (!persona) return;
 
     async function loadRelaciones() {
@@ -106,7 +102,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
         apellido: persona!.apellido,
         email: persona!.email,
         cargo_actual: persona!.cargo_actual ?? "",
-        rol_sistema: persona!.rol_sistema ?? "",
         fecha_ingreso: persona!.fecha_ingreso ?? "",
         fecha_nacimiento: persona!.fecha_nacimiento ?? "",
         mentor_id: persona!.mentor_id ?? "",
@@ -137,7 +132,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
     if (!validate()) return;
     setLoading(true);
     setServerError(null);
-    setInviteInfo(null);
     const supabase = createAnyClient();
 
     const payload = {
@@ -145,7 +139,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
       apellido: form.apellido.trim(),
       email: form.email.trim().toLowerCase(),
       cargo_actual: form.cargo_actual,
-      rol_sistema: form.rol_sistema || null,
       fecha_ingreso: form.fecha_ingreso || null,
       fecha_nacimiento: form.fecha_nacimiento || null,
       mentor_id: form.mentor_id || null,
@@ -184,29 +177,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
     // Sincronizar relaciones N:N
     await syncRelaciones(supabase, personaId, form);
 
-    // Si se creó una persona con rol asignado → enviar invitación.
-    // En edición no auto-invitamos: el admin usa el botón "Reenviar invitación".
-    if (!persona && payload.rol_sistema) {
-      const result = await enviarInvitacion({
-        personaId,
-        origin: window.location.origin,
-      });
-      if (!result.ok) {
-        setServerError(
-          `Persona creada, pero la invitación falló: ${result.message}`
-        );
-        setLoading(false);
-        onSuccess();
-        return;
-      }
-      setInviteInfo(result.message);
-      setLoading(false);
-      onSuccess();
-      // Mantenemos el drawer abierto un momento para que el admin vea el aviso.
-      setTimeout(() => onClose(), 1800);
-      return;
-    }
-
     setLoading(false);
     onSuccess();
     onClose();
@@ -233,12 +203,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
         {serverError && (
           <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
             {serverError}
-          </div>
-        )}
-
-        {inviteInfo && (
-          <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-sm text-green-700">
-            {inviteInfo}
           </div>
         )}
 
@@ -276,35 +240,15 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
           )}
         </FieldWrapper>
 
-        <div className="grid grid-cols-2 gap-4">
-          <FieldWrapper label="Cargo" required error={errors.cargo_actual}>
-            <Select
-              value={form.cargo_actual}
-              onChange={(e) => set("cargo_actual")(e.target.value)}
-              options={cargos}
-              placeholder="Seleccionar cargo"
-              error={!!errors.cargo_actual}
-            />
-          </FieldWrapper>
-          <FieldWrapper
-            label="Rol en el sistema"
-            hint={
-              !persona
-                ? "Si asignas un rol se enviará una invitación al correo."
-                : "Deja vacío si es solo recurso (sin acceso al sistema)."
-            }
-          >
-            <Select
-              value={form.rol_sistema}
-              onChange={(e) => set("rol_sistema")(e.target.value)}
-              options={[
-                { value: "proposer", label: "Proposer" },
-                { value: "admin", label: "Admin" },
-              ]}
-              placeholder="Sin acceso al sistema"
-            />
-          </FieldWrapper>
-        </div>
+        <FieldWrapper label="Cargo" required error={errors.cargo_actual}>
+          <Select
+            value={form.cargo_actual}
+            onChange={(e) => set("cargo_actual")(e.target.value)}
+            options={cargos}
+            placeholder="Seleccionar cargo"
+            error={!!errors.cargo_actual}
+          />
+        </FieldWrapper>
 
         <FieldWrapper label="Fecha de ingreso">
           <Input

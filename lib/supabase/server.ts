@@ -3,6 +3,7 @@
  * Server Actions). Lee/escribe cookies mediante next/headers.
  */
 import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import type { Database } from "@/lib/types/database";
 
@@ -43,34 +44,16 @@ export async function createAnyClient(): Promise<any> {
   return createClient();
 }
 
-/** Cliente con Service Role para operaciones admin. NUNCA exponer al cliente. */
-export async function createAdminClient() {
-  const cookieStore = await cookies();
-
-  return createServerClient<Database>(
+/**
+ * Cliente con Service Role REAL — autenticado únicamente con la service
+ * role key, sin sesión de usuario. Salta RLS y los triggers de seguridad
+ * (auth.uid() = NULL). Úsalo solo en Server Actions, después de validar
+ * permisos con requireAdmin(). NUNCA exponer al browser.
+ */
+export function createServiceClient() {
+  return createSupabaseClient<Database>(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return cookieStore.getAll();
-        },
-        setAll(
-          cookiesToSet: Array<{
-            name: string;
-            value: string;
-            options?: CookieOptions;
-          }>
-        ) {
-          try {
-            cookiesToSet.forEach(({ name, value, options }) =>
-              cookieStore.set(name, value, options)
-            );
-          } catch {
-            // idem
-          }
-        },
-      },
-    }
+    { auth: { autoRefreshToken: false, persistSession: false } }
   );
 }

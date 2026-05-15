@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { Sidebar } from "@/components/layout/Sidebar";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, createAnyClient } from "@/lib/supabase/client";
 import type { Persona, RolSistema } from "@/lib/types/database";
 
 interface DashboardLayoutProps {
@@ -25,13 +25,26 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       return;
     }
 
-    const { data } = await supabase
+    const sb = createAnyClient();
+    const { data } = await sb
       .from("persona")
       .select("*")
       .eq("auth_user_id", user.id)
       .single();
 
-    if (data) setPersona(data);
+    if (data) {
+      // El acceso pudo ser revocado o suspendido por un admin → cerrar sesión.
+      if (!data.rol_sistema || data.acceso_estado === "suspendida") {
+        await supabase.auth.signOut();
+        router.replace(
+          `/login?error=${
+            data.acceso_estado === "suspendida" ? "acceso_suspendido" : "sin_acceso"
+          }`
+        );
+        return;
+      }
+      setPersona(data);
+    }
   }, [router]);
 
   useEffect(() => {

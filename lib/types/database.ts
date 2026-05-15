@@ -15,6 +15,15 @@
 
 export type RolSistema = "proposer" | "admin";
 
+/**
+ * Ciclo de vida del acceso al sistema de una persona.
+ *  - null         → la persona no tiene acceso (solo recurso de staffing)
+ *  - "invitada"   → invitación enviada, falta que defina su contraseña
+ *  - "activa"     → la persona ya tiene acceso a la plataforma
+ *  - "suspendida" → un admin desactivó el acceso (conserva el rol)
+ */
+export type EstadoAcceso = "invitada" | "activa" | "suspendida";
+
 export type EstadoEngagement = "activo" | "terminado";
 
 export type TipoEngagement = "propuesta" | "proyecto" | "ayuda_interna";
@@ -83,6 +92,7 @@ export interface Persona {
   email: string;
   cargo_actual: string | null;
   rol_sistema: RolSistema | null;
+  acceso_estado: EstadoAcceso | null;
   activo: boolean;
   fecha_ingreso: string | null;
   mentor_id: string | null;
