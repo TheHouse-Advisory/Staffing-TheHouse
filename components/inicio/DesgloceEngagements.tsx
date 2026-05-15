@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   startOfISOWeek, addDays, addWeeks, addMonths,
   subWeeks, subMonths, format, startOfMonth, endOfMonth,
@@ -165,10 +165,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   function colapsarTodos() { setColapsados(new Set(engs.map((e) => e.id))); }
   function expandirTodos()  { setColapsados(new Set()); }
 
-  const columnas: Columna[] =
-    vista === "dia" ? columnasDia(base) :
-    vista === "semana" ? columnasSemana(base) :
-    columnasMes(base);
+  const columnas: Columna[] = useMemo(
+    () =>
+      vista === "dia" ? columnasDia(base) :
+      vista === "semana" ? columnasSemana(base) :
+      columnasMes(base),
+    [vista, base]
+  );
 
   const inicioStr = format(columnas[0].inicio, "yyyy-MM-dd");
   const finStr = format(columnas[columnas.length - 1].fin, "yyyy-MM-dd");
