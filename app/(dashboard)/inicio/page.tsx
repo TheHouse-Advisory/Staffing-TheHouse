@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths,
   format, isSameDay, parseISO,
@@ -105,7 +105,9 @@ export default function InicioPage() {
       const hoy = format(new Date(), "yyyy-MM-dd");
 
       const [persRes, asigRes] = await Promise.all([
-        sb.from("persona").select("*").eq("activo", true).order("cargo_actual").order("apellido"),
+        sb.from("persona")
+          .select("id, nombre, apellido, cargo_actual, is_leverager, fecha_ingreso")
+          .eq("activo", true).order("cargo_actual").order("apellido"),
         sb.from("asignacion")
           .select("persona_id, pct_dedicacion")
           .eq("estado", "activa")
@@ -161,14 +163,17 @@ export default function InicioPage() {
 
   function abrirResumen(p: Persona) { setSeleccionada(p); }
 
-  // Agrupar personas por cargo
-  const grupos: Record<string, Persona[]> = {};
-  for (const p of personas) {
-    const cargo = p.cargo_actual ?? "Sin cargo";
-    if (!grupos[cargo]) grupos[cargo] = [];
-    grupos[cargo].push(p);
-  }
-  const cargos = ordenarCargos(Object.keys(grupos));
+  // Agrupar personas por cargo — memoizado: solo cambia con `personas`,
+  // no en cada toggle de la UI (paneles, cuadrantes, navegación de fechas).
+  const { grupos, cargos } = useMemo(() => {
+    const grupos: Record<string, Persona[]> = {};
+    for (const p of personas) {
+      const cargo = p.cargo_actual ?? "Sin cargo";
+      if (!grupos[cargo]) grupos[cargo] = [];
+      grupos[cargo].push(p);
+    }
+    return { grupos, cargos: ordenarCargos(Object.keys(grupos)) };
+  }, [personas]);
 
   return (
     <div className="flex flex-col h-full p-6 gap-4">
