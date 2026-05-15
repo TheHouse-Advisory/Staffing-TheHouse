@@ -13,6 +13,8 @@ import {
   Home,
   Bell,
   BarChart3,
+  ShieldCheck,
+  type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { RolSistema } from "@/lib/types/database";
@@ -24,7 +26,15 @@ interface SidebarProps {
   onSignOut: () => void;
 }
 
-const navItems = [
+interface NavItem {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  /** Solo visible para personas con rol admin. */
+  adminOnly?: boolean;
+}
+
+const navItems: { section: string; items: NavItem[] }[] = [
   {
     section: "Principal",
     items: [
@@ -41,6 +51,7 @@ const navItems = [
     items: [
       { href: "/planificacion",  label: "Planificación",  icon: Kanban },
       { href: "/capacity",       label: "Capacity",       icon: BarChart3 },
+      { href: "/accesos",        label: "Accesos",        icon: ShieldCheck, adminOnly: true },
       { href: "/configuracion",  label: "Configuración",  icon: Settings },
     ],
   },
@@ -77,7 +88,9 @@ export function Sidebar({
             <p className="px-3 pt-4 pb-1.5 text-[10px] font-bold text-white/30 uppercase tracking-widest">
               {group.section}
             </p>
-            {group.items.map((item) => {
+            {group.items
+              .filter((item) => !item.adminOnly || rol === "admin")
+              .map((item) => {
               const isActive =
                 pathname === item.href ||
                 (item.href !== "/tablero" && pathname.startsWith(item.href));

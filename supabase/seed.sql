@@ -72,8 +72,8 @@ ON CONFLICT (nombre) DO NOTHING;
 --     UUIDs fijos → referenciados en asignaciones y ausencias
 -- ─────────────────────────────────────────────────────────────
 
--- rol_sistema = NULL porque estas personas no tienen auth_user_id en Supabase Auth.
--- El constraint "rol_requiere_auth" exige auth_user_id NOT NULL cuando rol_sistema != NULL.
+-- rol_sistema = NULL: estas personas son recursos de staffing sin acceso al
+-- sistema. El acceso (rol + invitación) se otorga aparte desde la página /accesos.
 INSERT INTO persona (id, nombre, apellido, email, cargo_actual, rol_sistema, activo, fecha_ingreso) VALUES
   -- Gerentes
   ('11111111-1111-1111-1111-000000000001', 'Ana',       'González',  'ana.gonzalez@thehouse.cl',       'Gerente',         NULL, true, '2020-03-01'),

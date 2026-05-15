@@ -23,6 +23,8 @@ function LoginForm() {
       "Tu correo no está registrado en el sistema. Contacta a un administrador.",
     sin_acceso:
       "Tu usuario no tiene acceso a la plataforma. Contacta a un administrador para que te asigne un rol.",
+    acceso_suspendido:
+      "Tu acceso al sistema fue suspendido. Contacta a un administrador.",
     auth_callback: "Error al completar el inicio de sesión. Intenta de nuevo.",
   };
 

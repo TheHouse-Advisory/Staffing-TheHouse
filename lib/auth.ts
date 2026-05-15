@@ -75,6 +75,12 @@ export async function requireAuth(): Promise<AuthUser> {
     redirect("/login?error=sin_acceso");
   }
 
+  // ── Acceso suspendido por un administrador ────────────────────────────────
+  if (persona.acceso_estado === "suspendida") {
+    await supabase.auth.signOut();
+    redirect("/login?error=acceso_suspendido");
+  }
+
   return {
     authId: user.id,
     email: user.email ?? "",
