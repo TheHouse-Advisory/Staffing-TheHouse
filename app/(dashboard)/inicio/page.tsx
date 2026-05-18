@@ -12,6 +12,7 @@ import { createAnyClient } from "@/lib/supabase/client";
 import { GanttAusencias } from "@/components/inicio/GanttAusencias";
 import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTablero";
 import { DesgloceEngagements, type PanelInfo } from "@/components/inicio/DesgloceEngagements";
+import { DisponiblesTablero, type AsigDetalle } from "@/components/inicio/DisponiblesTablero";
 import { PanelFitAsignacion } from "@/components/engagements/PanelFitAsignacion";
 import { PersonaResumenModal } from "@/components/personas/PersonaResumenModal";
 import type { Persona } from "@/lib/types/database";
@@ -55,6 +56,7 @@ function ocupColor(pct: number) {
 export default function InicioPage() {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [ocupacionMap, setOcupacionMap] = useState<Record<string, number>>({});
+  const [asignacionesDetalle, setAsignacionesDetalle] = useState<AsigDetalle[]>([]);
   const [loading, setLoading] = useState(true);
   const [alertasHoy, setAlertasHoy] = useState(0);
 
@@ -104,12 +106,17 @@ export default function InicioPage() {
       const sb = createAnyClient();
       const hoy = format(new Date(), "yyyy-MM-dd");
 
-      const [persRes, asigRes] = await Promise.all([
+      const [persRes, asigRes, asigDetalleRes] = await Promise.all([
         sb.from("persona")
           .select("id, nombre, apellido, cargo_actual, is_leverager, fecha_ingreso")
           .eq("activo", true).order("cargo_actual").order("apellido"),
         sb.from("asignacion")
           .select("persona_id, pct_dedicacion")
+          .eq("estado", "activa")
+          .lte("fecha_inicio", hoy)
+          .gte("fecha_fin", hoy),
+        (sb as any).from("asignacion")
+          .select("persona_id, fecha_fin, engagement:engagement_id(tipo)")
           .eq("estado", "activa")
           .lte("fecha_inicio", hoy)
           .gte("fecha_fin", hoy),
@@ -124,6 +131,15 @@ export default function InicioPage() {
         map[a.persona_id] = (map[a.persona_id] ?? 0) + Number(a.pct_dedicacion);
       }
       setOcupacionMap(map);
+
+      // Detalle de asignaciones para DisponiblesTablero
+      setAsignacionesDetalle(
+        ((asigDetalleRes.data ?? []) as any[]).map((a) => ({
+          persona_id: a.persona_id,
+          fecha_fin: a.fecha_fin,
+          tipo: a.engagement?.tipo ?? "proyecto",
+        }))
+      );
 
       // Aniversarios hoy
       const hoyDate = new Date();
@@ -200,9 +216,9 @@ export default function InicioPage() {
       {/* Layout 3 columnas: EQUIPO | TABLERO+RESUMEN | RECOMENDACIONES */}
       <div className="flex gap-4 flex-1 min-h-0">
 
-        {/* ── Cuadrante 1: EQUIPO con % ocupación ── */}
+        {/* ── Columna izquierda: EQUIPO + DISPONIBLES ── */}
         <div
-          className="overflow-hidden transition-all duration-500 ease-in-out"
+          className="flex flex-col gap-4 overflow-hidden transition-all duration-500 ease-in-out"
           style={
             equipoEstado === "colapsado"
               ? { flexGrow: 0, flexShrink: 0, flexBasis: 40 }
@@ -211,6 +227,8 @@ export default function InicioPage() {
               : { flexGrow: 1, flexShrink: 1, flexBasis: "0%", minWidth: 0 }
           }
         >
+        {/* EQUIPO ocupa el espacio flexible */}
+        <div className="flex-1 min-h-0 overflow-hidden">
         {equipoEstado === "colapsado" ? (
           /* Strip colapsado */
           <div className="w-10 h-full rounded-xl border border-gray-100 shadow-sm bg-white flex flex-col items-center py-3 gap-3">
@@ -330,7 +348,16 @@ export default function InicioPage() {
           )}
         </div>
         )}{/* fin ternario equipo expandido */}
-        </div>{/* fin wrapper transición EQUIPO */}
+        </div>{/* fin wrapper flex-1 EQUIPO */}
+
+        {/* DISPONIBLES PRÓXIMAMENTE — oculto en strip colapsado */}
+        {equipoEstado !== "colapsado" && (
+          <DisponiblesTablero
+            personas={personas}
+            asignaciones={asignacionesDetalle}
+          />
+        )}
+        </div>{/* fin columna izquierda */}
 
         {/* ── Columna central: TABLERO arriba + RESÚMEN abajo ── */}
         <div className="flex-1 min-w-0 flex flex-col gap-4 min-h-0 overflow-hidden">
@@ -378,41 +405,34 @@ export default function InicioPage() {
         >
           <div className="flex items-center justify-between mb-3 flex-shrink-0">
             <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Resúmen</p>
-            <div className="flex items-center gap-1 flex-wrap justify-end">
-              {/* Botón expandir/colapsar */}
-              <button
-                onClick={() => setActiveQuadrant((q) => q === "resumen" ? "both" : "resumen")}
-                className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
-                title={activeQuadrant === "resumen" ? "Restaurar" : "Expandir resúmen"}
-              >
-                {activeQuadrant === "resumen" ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
-              </button>
-              {/* Toggle Gantt / Perfil — oculto cuando está colapsado */}
-              {activeQuadrant !== "tablero" && <>
-              <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
-                <button
-                  onClick={() => setVistaResumen("gantt")}
-                  className="px-2.5 py-1 transition-colors"
-                  style={vistaResumen === "gantt"
-                    ? { background: "#4a90e2", color: "#fff" }
-                    : { background: "#f9f9f9", color: "#888" }}
-                >
-                  Ausencias
-                </button>
-                <button
-                  onClick={() => setVistaResumen("perfil")}
-                  className="px-2.5 py-1 transition-colors"
-                  style={vistaResumen === "perfil"
-                    ? { background: "#4a90e2", color: "#fff" }
-                    : { background: "#f9f9f9", color: "#888" }}
-                >
-                  Perfil individual
-                </button>
-              </div>
+            <div className="flex items-center gap-2">
+              {/* Grupo 1: Toggle Ausencias / Perfil individual — oculto cuando colapsado */}
+              {activeQuadrant !== "tablero" && (
+                <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
+                  <button
+                    onClick={() => setVistaResumen("gantt")}
+                    className="px-2.5 py-1 transition-colors"
+                    style={vistaResumen === "gantt"
+                      ? { background: "#4a90e2", color: "#fff" }
+                      : { background: "#f9f9f9", color: "#888" }}
+                  >
+                    Ausencias
+                  </button>
+                  <button
+                    onClick={() => setVistaResumen("perfil")}
+                    className="px-2.5 py-1 transition-colors"
+                    style={vistaResumen === "perfil"
+                      ? { background: "#4a90e2", color: "#fff" }
+                      : { background: "#f9f9f9", color: "#888" }}
+                  >
+                    Perfil individual
+                  </button>
+                </div>
+              )}
 
-              {/* Navegación temporal — solo visible en vista perfil */}
-              {vistaResumen === "perfil" && (
-                <>
+              {/* Grupo 2: Granularidad temporal + navegación — oculto cuando colapsado */}
+              {activeQuadrant !== "tablero" && (
+                <div className="flex items-center gap-1">
                   <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
                     {(["dia", "semana", "mes"] as const).map((pv) => (
                       <button
@@ -434,15 +454,23 @@ export default function InicioPage() {
                   <button onClick={navResumenNext} className="p-1 rounded hover:bg-gray-100 text-gray-400">
                     <ChevronRight className="w-3.5 h-3.5" />
                   </button>
-                </>
+                </div>
               )}
-              </>}
+
+              {/* Grupo 3: Expandir/colapsar — alineado con el botón del cuadrante Tablero */}
+              <button
+                onClick={() => setActiveQuadrant((q) => q === "resumen" ? "both" : "resumen")}
+                className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
+                title={activeQuadrant === "resumen" ? "Restaurar" : "Expandir resúmen"}
+              >
+                {activeQuadrant === "resumen" ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
             </div>
           </div>
 
           <div className="flex-1 overflow-auto min-h-0">
             {vistaResumen === "gantt"
-              ? <GanttAusencias onVerPersona={abrirResumen} />
+              ? <GanttAusencias onVerPersona={abrirResumen} vistaExterna={periodoResumen} baseExterna={semanaResumen} />
               : <PerfilIndividualTablero semanaInicio={semanaResumen} periodoVista={periodoResumen} />
             }
           </div>

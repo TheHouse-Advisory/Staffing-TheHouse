@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
-import { X, Loader2, Plus, ChevronDown, ChevronRight, Calendar, Clock } from "lucide-react";
+import { X, Loader2, Plus, ChevronDown, ChevronRight, Calendar, Clock, RotateCcw, Pencil, Trash2 } from "lucide-react";
+import { ConfirmDialog } from "@/components/ui/Modal";
 import { createClient } from "@/lib/supabase/client";
 import {
   fetchAusenciasMes,
@@ -61,15 +62,19 @@ interface TooltipProps {
   fecha: string;
   onEliminar: (id: string) => void;
   eliminando: boolean;
+  onEditar: () => void;
+  onCerrar: () => void;
 }
 
-function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando }: TooltipProps) {
+function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar, onCerrar }: TooltipProps) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const cfg = COLOR_AUSENCIA[celda.tipo];
   const labelFecha = new Date(fecha + "T00:00:00").toLocaleDateString("es-CL", {
     weekday: "long", day: "numeric", month: "long",
   });
 
   return (
+    <>
     <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 rounded-xl bg-white border border-[#e8e8e8] shadow-lg p-3 text-left pointer-events-auto">
       {/* Tipo badge */}
       <div className="flex items-center justify-between mb-2">
@@ -79,16 +84,32 @@ function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando }: Tooltip
         >
           {cfg.label}
         </span>
-        <button
-          onClick={() => onEliminar(celda.ausencia_id)}
-          disabled={eliminando}
-          className="text-[#bbb] hover:text-red-500 transition-colors"
-          title="Eliminar ausencia"
-        >
-          {eliminando
-            ? <Loader2 className="w-3 h-3 animate-spin" />
-            : <X className="w-3 h-3" />}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onEditar}
+            className="text-[#bbb] hover:text-[#4a90e2] transition-colors"
+            title="Editar ausencia"
+          >
+            <Pencil className="w-3 h-3" />
+          </button>
+          <button
+            onClick={() => setConfirmOpen(true)}
+            disabled={eliminando}
+            className="text-[#bbb] hover:text-red-500 transition-colors"
+            title="Eliminar ausencia"
+          >
+            {eliminando
+              ? <Loader2 className="w-3 h-3 animate-spin" />
+              : <Trash2 className="w-3 h-3" />}
+          </button>
+          <button
+            onClick={onCerrar}
+            className="text-[#bbb] hover:text-[#555] transition-colors"
+            title="Cerrar"
+          >
+            <X className="w-3 h-3" />
+          </button>
+        </div>
       </div>
       {/* Persona */}
       <p className="text-[12px] font-semibold text-[#1a1a1a] leading-tight">
@@ -106,6 +127,16 @@ function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando }: Tooltip
         </p>
       )}
     </div>
+    <ConfirmDialog
+      open={confirmOpen}
+      onClose={() => setConfirmOpen(false)}
+      onConfirm={() => { setConfirmOpen(false); onEliminar(celda.ausencia_id); }}
+      title="Eliminar ausencia"
+      message="¿Estás seguro de que deseas eliminar esta ausencia? Esta acción es irreversible y actualizará el estado de la persona inmediatamente."
+      confirmLabel="Confirmar eliminación"
+      loading={eliminando}
+    />
+    </>
   );
 }
 
@@ -113,28 +144,62 @@ function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando }: Tooltip
 //  Modal nueva ausencia
 // ─────────────────────────────────────────────────────────────
 
+interface EditarAusenciaData {
+  id: string;
+  tipo: TipoAusencia;
+  fecha_inicio: string;
+  fecha_fin: string;
+  descripcion: string | null;
+  personaNombre: string;
+}
+
 interface ModalProps {
   personas: PersonaConSeniority[];
   fechaInicial?: string;
   personaInicial?: string;
+  editarAusencia?: EditarAusenciaData;
   onClose: () => void;
   onGuardado: () => void;
 }
 
-function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, onClose, onGuardado }: ModalProps) {
+type FormSnapshot = { personaId: string; tipo: TipoAusencia; fechaInicio: string; fechaFin: string; descripcion: string };
+
+function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAusencia, onClose, onGuardado }: ModalProps) {
+  const modoEdicion = !!editarAusencia;
   const [personaId, setPersonaId] = useState(personaInicial ?? "");
-  const [tipo, setTipo]           = useState<TipoAusencia>("vacaciones_confirmadas");
-  const [fechaInicio, setFechaInicio] = useState(fechaInicial ?? "");
-  const [fechaFin, setFechaFin]       = useState(fechaInicial ?? "");
-  const [descripcion, setDescripcion] = useState("");
+  const [tipo, setTipo]           = useState<TipoAusencia>(editarAusencia?.tipo ?? "vacaciones_confirmadas");
+  const [fechaInicio, setFechaInicio] = useState(editarAusencia?.fecha_inicio ?? fechaInicial ?? "");
+  const [fechaFin, setFechaFin]       = useState(editarAusencia?.fecha_fin ?? fechaInicial ?? "");
+  const [descripcion, setDescripcion] = useState(editarAusencia?.descripcion ?? "");
   const [guardando, setGuardando]     = useState(false);
   const [error, setError]             = useState<string | null>(null);
+  const [history, setHistory]         = useState<FormSnapshot[]>([]);
+
+  function pushAndSet<T>(setter: (v: T) => void, value: T, current: FormSnapshot) {
+    setHistory((h) => [...h, current]);
+    setter(value);
+  }
+
+  function undo() {
+    if (history.length === 0) return;
+    const prev = history[history.length - 1];
+    setPersonaId(prev.personaId);
+    setTipo(prev.tipo);
+    setFechaInicio(prev.fechaInicio);
+    setFechaFin(prev.fechaFin);
+    setDescripcion(prev.descripcion);
+    setHistory((h) => h.slice(0, -1));
+  }
 
   const supabase = createClient();
 
   async function handleGuardar() {
-    if (!personaId || !fechaInicio || !fechaFin) {
+    if (!modoEdicion && !personaId) {
       setError("Persona, fecha inicio y fecha fin son obligatorios.");
+      return;
+    }
+    if (!fechaInicio || !fechaFin) {
+      setError("Fecha inicio y fecha fin son obligatorios.");
       return;
     }
     if (fechaFin < fechaInicio) {
@@ -142,13 +207,25 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, onClose, o
       return;
     }
     setGuardando(true);
-    const { error: err } = await crearAusencia(supabase, {
-      persona_id: personaId, tipo,
-      fecha_inicio: fechaInicio, fecha_fin: fechaFin,
-      descripcion: descripcion || undefined,
-    });
-    setGuardando(false);
-    if (err) { setError(err); return; }
+
+    if (modoEdicion) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { error: err } = await (supabase as any)
+        .from("ausencia")
+        .update({ tipo, fecha_inicio: fechaInicio, fecha_fin: fechaFin, descripcion: descripcion || null })
+        .eq("id", editarAusencia!.id);
+      setGuardando(false);
+      if (err) { setError((err as { message: string }).message); return; }
+    } else {
+      const { error: err } = await crearAusencia(supabase, {
+        persona_id: personaId, tipo,
+        fecha_inicio: fechaInicio, fecha_fin: fechaFin,
+        descripcion: descripcion || undefined,
+      });
+      setGuardando(false);
+      if (err) { setError(err); return; }
+    }
+
     onGuardado();
     onClose();
   }
@@ -160,10 +237,20 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, onClose, o
       <div className="bg-white rounded-2xl border border-[#e8e8e8] shadow-2xl w-full max-w-sm mx-4">
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-[#f0f0f0]">
-          <h2 className="text-[14px] font-bold text-[#1a1a1a]">Nueva ausencia</h2>
-          <button onClick={onClose} className="text-[#bbb] hover:text-[#555] transition-colors">
-            <X className="w-4 h-4" />
-          </button>
+          <h2 className="text-[14px] font-bold text-[#1a1a1a]">{modoEdicion ? "Editar ausencia" : "Nueva ausencia"}</h2>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={undo}
+              disabled={history.length === 0}
+              title="Deshacer último cambio"
+              className="p-1.5 rounded-lg text-[#bbb] hover:text-[#555] hover:bg-[#f5f5f5] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+            </button>
+            <button onClick={onClose} className="text-[#bbb] hover:text-[#555] transition-colors">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
         </div>
 
         <div className="px-5 py-4 space-y-3">
@@ -172,18 +259,24 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, onClose, o
             <label className="block text-[11px] font-semibold text-[#888] uppercase tracking-wide mb-1">
               Persona
             </label>
-            <select
-              value={personaId}
-              onChange={(e) => setPersonaId(e.target.value)}
-              className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] bg-white focus:outline-none focus:border-[#1a1a1a] transition-colors"
-            >
-              <option value="">Seleccionar persona...</option>
-              {personas.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.nombre} {p.apellido}{p.cargo_actual ? ` — ${p.cargo_actual}` : ""}
-                </option>
-              ))}
-            </select>
+            {modoEdicion ? (
+              <div className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#555] bg-[#f5f5f5]">
+                {editarAusencia!.personaNombre}
+              </div>
+            ) : (
+              <select
+                value={personaId}
+                onChange={(e) => pushAndSet(setPersonaId, e.target.value, { personaId, tipo, fechaInicio, fechaFin, descripcion })}
+                className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] bg-white focus:outline-none focus:border-[#1a1a1a] transition-colors"
+              >
+                <option value="">Seleccionar persona...</option>
+                {personas.map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.nombre} {p.apellido}{p.cargo_actual ? ` — ${p.cargo_actual}` : ""}
+                  </option>
+                ))}
+              </select>
+            )}
           </div>
 
           {/* Tipo */}
@@ -198,7 +291,7 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, onClose, o
               />
               <select
                 value={tipo}
-                onChange={(e) => setTipo(e.target.value as TipoAusencia)}
+                onChange={(e) => pushAndSet(setTipo, e.target.value as TipoAusencia, { personaId, tipo, fechaInicio, fechaFin, descripcion })}
                 className="flex-1 border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] bg-white focus:outline-none focus:border-[#1a1a1a] transition-colors"
               >
                 {TIPOS_AUSENCIA.map((t) => (
@@ -217,7 +310,7 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, onClose, o
               <input
                 type="date"
                 value={fechaInicio}
-                onChange={(e) => setFechaInicio(e.target.value)}
+                onChange={(e) => pushAndSet(setFechaInicio, e.target.value, { personaId, tipo, fechaInicio, fechaFin, descripcion })}
                 className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] focus:outline-none focus:border-[#1a1a1a] transition-colors"
               />
             </div>
@@ -229,7 +322,7 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, onClose, o
                 type="date"
                 value={fechaFin}
                 min={fechaInicio}
-                onChange={(e) => setFechaFin(e.target.value)}
+                onChange={(e) => pushAndSet(setFechaFin, e.target.value, { personaId, tipo, fechaInicio, fechaFin, descripcion })}
                 className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] focus:outline-none focus:border-[#1a1a1a] transition-colors"
               />
             </div>
@@ -243,7 +336,7 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, onClose, o
             <input
               type="text"
               value={descripcion}
-              onChange={(e) => setDescripcion(e.target.value)}
+              onChange={(e) => pushAndSet(setDescripcion, e.target.value, { personaId, tipo, fechaInicio, fechaFin, descripcion })}
               placeholder="Ej: vacaciones de invierno"
               className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] placeholder-[#ccc] focus:outline-none focus:border-[#1a1a1a] transition-colors"
             />
@@ -268,7 +361,7 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, onClose, o
             className="flex-1 py-2 rounded-lg bg-[#1a1a1a] hover:bg-[#333] text-[13px] font-semibold text-white transition-colors disabled:opacity-50 flex items-center justify-center gap-1.5"
           >
             {guardando && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-            {guardando ? "Guardando..." : "Guardar"}
+            {guardando ? "Guardando..." : modoEdicion ? "Guardar cambios" : "Guardar"}
           </button>
         </div>
       </div>
@@ -437,11 +530,17 @@ export function HeatmapAusencias({
   // Tooltip activo: { personaId, fecha }
   const [tooltip, setTooltip] = useState<{ personaId: string; fecha: string } | null>(null);
   const [eliminando, setEliminando] = useState<string | null>(null);
+  type AusenciaSnapshot = { persona_id: string; tipo: TipoAusencia; fecha_inicio: string; fecha_fin: string; descripcion: string | null };
+  const [undoStack, setUndoStack] = useState<AusenciaSnapshot[]>([]);
+  const [undoing, setUndoing] = useState(false);
 
   // Modal de nueva ausencia
   const [modalOpen, setModalOpen]       = useState(false);
   const [modalFecha, setModalFecha]     = useState<string | undefined>();
   const [modalPersona, setModalPersona] = useState<string | undefined>();
+
+  // Modal editar ausencia
+  const [editModalData, setEditModalData] = useState<EditarAusenciaData | null>(null);
 
   // Popover resumen persona
   const [popoverPersona, setPopoverPersona] = useState<PersonaConSeniority | null>(null);
@@ -506,10 +605,54 @@ export function HeatmapAusencias({
   useEffect(() => { cargar(); }, [cargar]);
 
   async function handleEliminar(ausenciaId: string) {
+    // Guardar snapshot antes de borrar
+    const { data } = await supabase
+      .from("ausencia")
+      .select("persona_id, tipo, fecha_inicio, fecha_fin, descripcion")
+      .eq("id", ausenciaId)
+      .single();
+    if (data) setUndoStack((s) => [...s, data as AusenciaSnapshot].slice(-2));
+
     setEliminando(ausenciaId);
     await eliminarAusencia(supabase, ausenciaId);
     setEliminando(null);
     setTooltip(null);
+    cargar();
+  }
+
+  async function handleAbrirEditar(ausenciaId: string, persona: PersonaConSeniority) {
+    type AusRow = { id: string; tipo: TipoAusencia; fecha_inicio: string; fecha_fin: string; descripcion: string | null };
+    const { data } = await supabase
+      .from("ausencia")
+      .select("id, tipo, fecha_inicio, fecha_fin, descripcion")
+      .eq("id", ausenciaId)
+      .single() as unknown as { data: AusRow | null };
+    if (data) {
+      setEditModalData({
+        id: data.id,
+        tipo: data.tipo,
+        fecha_inicio: data.fecha_inicio,
+        fecha_fin: data.fecha_fin,
+        descripcion: data.descripcion,
+        personaNombre: `${persona.nombre} ${persona.apellido}`,
+      });
+      setTooltip(null);
+    }
+  }
+
+  async function handleUndo() {
+    if (undoStack.length === 0) return;
+    const last = undoStack[undoStack.length - 1];
+    setUndoing(true);
+    await crearAusencia(supabase, {
+      persona_id: last.persona_id,
+      tipo: last.tipo,
+      fecha_inicio: last.fecha_inicio,
+      fecha_fin: last.fecha_fin,
+      descripcion: last.descripcion ?? undefined,
+    });
+    setUndoStack((s) => s.slice(0, -1));
+    setUndoing(false);
     cargar();
   }
 
@@ -552,8 +695,18 @@ export function HeatmapAusencias({
         </div>
       ) : (
         <>
-        {/* Botón colapsar/expandir todo */}
-        <div className="flex items-center justify-end px-4 py-2 border-b border-[#f0f0f0] flex-shrink-0">
+        {/* Barra de acciones */}
+        <div className="flex items-center justify-between px-4 py-2 border-b border-[#f0f0f0] flex-shrink-0">
+          <button
+            onClick={handleUndo}
+            disabled={undoStack.length === 0 || undoing}
+            title="Deshacer última eliminación"
+            className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-lg border border-[#e8e8e8] text-[#888] hover:text-[#555] hover:bg-[#f5f5f5] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            {undoing
+              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              : <RotateCcw className="w-3.5 h-3.5" />}
+          </button>
           <button
             onClick={cargoColapsados.size >= grupos.length ? expandirTodo : colapsarTodo}
             className="text-[11px] px-2.5 py-1 rounded-lg border border-[#e8e8e8] text-[#888] hover:text-[#555] hover:bg-[#f5f5f5] transition-colors"
@@ -737,6 +890,8 @@ export function HeatmapAusencias({
                                     {isActive && (
                                       <CeldaTooltip celda={celda} persona={fila.persona} fecha={fecha}
                                         onEliminar={handleEliminar} eliminando={eliminando === celda.ausencia_id}
+                                        onEditar={() => handleAbrirEditar(celda.ausencia_id, fila.persona)}
+                                        onCerrar={() => setTooltip(null)}
                                       />
                                     )}
                                   </div>
@@ -812,6 +967,16 @@ export function HeatmapAusencias({
           fechaInicial={modalFecha}
           personaInicial={modalPersona}
           onClose={handleCloseModal}
+          onGuardado={cargar}
+        />
+      )}
+
+      {/* ── Modal editar ausencia ── */}
+      {editModalData && (
+        <ModalNuevaAusencia
+          personas={todasPersonas}
+          editarAusencia={editModalData}
+          onClose={() => setEditModalData(null)}
           onGuardado={cargar}
         />
       )}

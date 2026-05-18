@@ -41,11 +41,18 @@ export interface PersonaCapacity {
   seniority_order: number;
 }
 
+export interface AusenciaCapacity {
+  persona_id: string;
+  fecha_inicio: string;  // YYYY-MM-DD
+  fecha_fin: string;     // YYYY-MM-DD
+}
+
 export interface CapacityData {
   personas: PersonaCapacity[];
   semanas: string[];           // fechas ISO de los lunes del año
   // persona_id → semana_inicio → capacidad
   valores: Record<string, Record<string, number>>;
+  ausencias: AusenciaCapacity[];
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -105,7 +112,10 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
   const primeraSemana = semanas[0];
   const ultimaSemana  = semanas[semanas.length - 1];
 
-  const [persRes, capRes] = await Promise.all([
+  const inicioAnio = `${year}-01-01`;
+  const finAnio    = `${year}-12-31`;
+
+  const [persRes, capRes, ausRes] = await Promise.all([
     supabase
       .from("persona")
       .select("id, nombre, apellido, cargo_actual")
@@ -116,6 +126,11 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
       .select("persona_id, semana_inicio, capacidad")
       .gte("semana_inicio", primeraSemana)
       .lte("semana_inicio", ultimaSemana),
+    supabase
+      .from("ausencia")
+      .select("persona_id, fecha_inicio, fecha_fin")
+      .lte("fecha_inicio", finAnio)
+      .gte("fecha_fin", inicioAnio),
   ]);
 
   const personas: PersonaCapacity[] = ((persRes.data ?? []) as any[])
@@ -142,7 +157,9 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
     }
   }
 
-  return { personas, semanas, valores };
+  const ausencias: AusenciaCapacity[] = (ausRes.data ?? []) as AusenciaCapacity[];
+
+  return { personas, semanas, valores, ausencias };
 }
 
 // ─────────────────────────────────────────────────────────────

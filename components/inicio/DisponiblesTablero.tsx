@@ -1,142 +1,137 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { format } from "date-fns";
-import { createAnyClient } from "@/lib/supabase/client";
+import { useMemo, useState } from "react";
+import { differenceInCalendarDays, parseISO, addDays, format } from "date-fns";
+import { ChevronUp, ChevronDown } from "lucide-react";
 import type { Persona } from "@/lib/types/database";
 
-const JERARQUIA: Record<string, number> = {
-  "Socio": 1, "Director de Proyectos": 2, "Director": 2,
-  "Gerente de Proyectos": 3, "Gerente": 3, "Asociado": 4,
-  "Consultor Senior": 5, "Consultor de Proyectos": 6, "Consultor Proyecto": 6,
-  "Consultor": 6, "Consultor Analista": 7, "Analista Senior": 7,
-  "Consultor Trainee": 8, "Analista": 8, "Practicante": 9,
-};
-
-const COLORES: Record<string, string> = {
-  "Socio": "#1a1a2e", "Director de Proyectos": "#4a90e2", "Director": "#4a90e2",
-  "Gerente de Proyectos": "#7c5cbf", "Gerente": "#7c5cbf", "Asociado": "#e2884a",
-  "Consultor Senior": "#4ab89a", "Consultor de Proyectos": "#e24a6a",
-  "Consultor Analista": "#a0b84a", "Consultor Trainee": "#c07c4a",
-};
-const COLOR_DEFAULT = "#94a3b8";
-
-function iniciales(nombre: string, apellido: string) {
-  return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
-}
-
-interface PersonaDisp {
-  persona: Persona;
-  disponibilidad: number;
+export interface AsigDetalle {
+  persona_id: string;
+  fecha_fin: string;
+  tipo: string;
 }
 
 interface Props {
-  onVerPersona: (p: Persona) => void;
+  personas: Persona[];
+  asignaciones: AsigDetalle[];
 }
 
-export function DisponiblesTablero({ onVerPersona }: Props) {
-  const [disponibles, setDisponibles] = useState<PersonaDisp[]>([]);
-  const [loading, setLoading] = useState(true);
+type Estado = "libre" | "pronto" | "comercial";
 
-  useEffect(() => {
-    async function load() {
-      const sb = createAnyClient();
-      const hoy = format(new Date(), "yyyy-MM-dd");
+interface DisponibleItem {
+  persona: Persona;
+  estado: Estado;
+  dias?: number;
+}
 
-      const [persRes, asigRes] = await Promise.all([
-        sb.from("persona").select("*").eq("activo", true),
-        sb.from("asignacion")
-          .select("persona_id, pct_dedicacion")
-          .eq("estado", "activa")
-          .lte("fecha_inicio", hoy)
-          .gte("fecha_fin", hoy),
-      ]);
+function excluir(cargo: string | null): boolean {
+  if (!cargo) return false;
+  const c = cargo.toLowerCase();
+  return c.includes("socio") || c.includes("desarrollo");
+}
 
-      const personas = (persRes.data ?? []) as Persona[];
-      const asignaciones = (asigRes.data ?? []) as { persona_id: string; pct_dedicacion: number }[];
+const BADGE: Record<Estado, { bg: string; text: string; label: (d?: number) => string }> = {
+  libre:     { bg: "#f0fdf4", text: "#16a34a", label: () => "Libre" },
+  comercial: { bg: "#faf5ff", text: "#7c3aed", label: () => "Frente Comercial" },
+  pronto:    { bg: "#fff7ed", text: "#c2410c", label: (d) => d === 0 ? "Hoy" : `En ${d}d` },
+};
 
-      // Sumar ocupación por persona
-      const ocupacion: Record<string, number> = {};
-      for (const a of asignaciones) {
-        ocupacion[a.persona_id] = (ocupacion[a.persona_id] ?? 0) + Number(a.pct_dedicacion);
+export function DisponiblesTablero({ personas, asignaciones }: Props) {
+  const [colapsado, setColapsado] = useState(false);
+
+  const disponibles = useMemo((): DisponibleItem[] => {
+    const hoy = new Date();
+    const hoyStr = format(hoy, "yyyy-MM-dd");
+    const en7diasStr = format(addDays(hoy, 7), "yyyy-MM-dd");
+    const result: DisponibleItem[] = [];
+
+    for (const p of personas) {
+      if (excluir(p.cargo_actual)) continue;
+
+      const asigs = asignaciones.filter((a) => a.persona_id === p.id);
+
+      if (asigs.length === 0) {
+        result.push({ persona: p, estado: "libre" });
+        continue;
       }
 
-      const result: PersonaDisp[] = personas
-        .map((p) => ({ persona: p, disponibilidad: Math.max(0, 100 - (ocupacion[p.id] ?? 0)) }))
-        .filter((pd) => pd.disponibilidad > 0)
-        .sort((a, b) => {
-          const ia = JERARQUIA[a.persona.cargo_actual ?? ""] ?? 99;
-          const ib = JERARQUIA[b.persona.cargo_actual ?? ""] ?? 99;
-          if (ia !== ib) return ia - ib;
-          return a.persona.apellido.localeCompare(b.persona.apellido);
-        });
+      // Liberación pronta: alguna asignación termina en ≤7 días
+      const terminaProx = asigs
+        .filter((a) => a.fecha_fin >= hoyStr && a.fecha_fin <= en7diasStr)
+        .sort((a, b) => a.fecha_fin.localeCompare(b.fecha_fin))[0];
 
-      setDisponibles(result);
-      setLoading(false);
+      if (terminaProx) {
+        const dias = Math.max(0, differenceInCalendarDays(parseISO(terminaProx.fecha_fin), hoy));
+        result.push({ persona: p, estado: "pronto", dias });
+        continue;
+      }
+
+      // Frente comercial: TODAS las asignaciones son propuestas
+      if (asigs.every((a) => a.tipo === "propuesta")) {
+        result.push({ persona: p, estado: "comercial" });
+      }
     }
-    load();
-  }, []);
 
-  if (loading) return <p className="text-sm text-gray-300 p-2">Cargando...</p>;
-  if (disponibles.length === 0)
-    return <p className="text-sm text-gray-300 italic p-2">Todo el equipo está al 100% hoy.</p>;
-
-  // Agrupar por cargo
-  const grupos: Record<string, PersonaDisp[]> = {};
-  for (const pd of disponibles) {
-    const cargo = pd.persona.cargo_actual ?? "Sin cargo";
-    if (!grupos[cargo]) grupos[cargo] = [];
-    grupos[cargo].push(pd);
-  }
-
-  const cargosOrdenados = Object.keys(grupos).sort((a, b) => {
-    const ia = JERARQUIA[a] ?? 99;
-    const ib = JERARQUIA[b] ?? 99;
-    return ia !== ib ? ia - ib : a.localeCompare(b);
-  });
+    // Orden: pronto (más urgente primero) → comercial → libre
+    return result.sort((a, b) => {
+      const ord: Record<Estado, number> = { pronto: 0, comercial: 1, libre: 2 };
+      if (a.estado !== b.estado) return ord[a.estado] - ord[b.estado];
+      if (a.estado === "pronto") return (a.dias ?? 99) - (b.dias ?? 99);
+      return `${a.persona.apellido}${a.persona.nombre}`.localeCompare(`${b.persona.apellido}${b.persona.nombre}`);
+    });
+  }, [personas, asignaciones]);
 
   return (
-    <div className="flex-1 overflow-y-auto space-y-4 pr-1">
-      {cargosOrdenados.map((cargo) => (
-        <div key={cargo}>
-          <p className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-2">
-            {cargo}
+    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col flex-shrink-0">
+      {/* Header con toggle */}
+      <div className="flex items-center justify-between flex-shrink-0" style={{ marginBottom: colapsado ? 0 : 8 }}>
+        <div className="flex items-center gap-2">
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">
+            Disponibles próximamente
           </p>
-          <div className="flex flex-wrap gap-3">
-            {grupos[cargo].map(({ persona, disponibilidad }) => {
-              const color = COLORES[persona.cargo_actual ?? ""] ?? COLOR_DEFAULT;
-              const pctColor =
-                disponibilidad === 100
-                  ? { bg: "#f0fdf4", text: "#16a34a" }
-                  : disponibilidad >= 50
-                  ? { bg: "#fefce8", text: "#ca8a04" }
-                  : { bg: "#fff7ed", text: "#ea580c" };
+          {disponibles.length > 0 && (
+            <span className="text-[10px] font-semibold text-gray-300">{disponibles.length}</span>
+          )}
+        </div>
+        <button
+          onClick={() => setColapsado((v) => !v)}
+          className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
+          title={colapsado ? "Expandir" : "Colapsar"}
+        >
+          {colapsado ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+        </button>
+      </div>
 
+      {!colapsado && (
+        disponibles.length === 0 ? (
+          <p className="text-xs text-gray-300 italic">Sin disponibilidades próximas.</p>
+        ) : (
+          <div
+            className="space-y-2 overflow-y-auto [&::-webkit-scrollbar]:hidden"
+            style={{ scrollbarWidth: "none", maxHeight: 180 }}
+          >
+            {disponibles.map(({ persona, estado, dias }) => {
+              const b = BADGE[estado];
               return (
-                <button
-                  key={persona.id}
-                  onClick={() => onVerPersona(persona)}
-                  title={`${persona.nombre} ${persona.apellido} — ${disponibilidad}% libre`}
-                  className="flex flex-col items-center gap-1 hover:scale-105 transition-transform"
-                >
-                  <div
-                    className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[13px] font-bold flex-shrink-0 shadow-sm"
-                    style={{ backgroundColor: color }}
-                  >
-                    {iniciales(persona.nombre, persona.apellido)}
+                <div key={persona.id} className="flex items-center justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="text-[12px] font-semibold text-[#1a1a2e] truncate leading-tight">
+                      {persona.nombre} {persona.apellido}
+                    </p>
+                    <p className="text-[10px] text-gray-400 truncate">{persona.cargo_actual ?? "Sin cargo"}</p>
                   </div>
                   <span
-                    className="text-[10px] font-bold px-1.5 py-0.5 rounded-full leading-none"
-                    style={{ background: pctColor.bg, color: pctColor.text }}
+                    className="flex-shrink-0 text-[10px] font-bold px-2 py-0.5 rounded-full leading-none whitespace-nowrap"
+                    style={{ background: b.bg, color: b.text }}
                   >
-                    {disponibilidad}%
+                    {b.label(dias)}
                   </span>
-                </button>
+                </div>
               );
             })}
           </div>
-        </div>
-      ))}
+        )
+      )}
     </div>
   );
 }

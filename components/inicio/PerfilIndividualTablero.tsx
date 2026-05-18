@@ -107,7 +107,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
       const [persRes, asigRes, ausenRes] = await Promise.all([
         sb.from("persona").select("id, nombre, apellido, cargo_actual").eq("activo", true),
         sb.from("asignacion")
-          .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin, engagement:engagement_id(id, nombre, cliente)" as any)
+          .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin, engagement:engagement_id(id, codigo, nombre, cliente)" as any)
           .eq("estado", "activa")
           .lte("fecha_inicio", fechaFin)
           .gte("fecha_fin", fechaInicio),
@@ -128,7 +128,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
             .filter((a) => a.persona_id === p.id)
             .map((a) => ({
               id: a.engagement?.id ?? "",
-              nombre: a.engagement?.nombre ?? "—",
+              nombre: a.engagement?.codigo ? `${a.engagement.codigo}: ${a.engagement.nombre ?? "—"}` : a.engagement?.nombre ?? "—",
               cliente: a.engagement?.cliente ?? "",
               inicio: a.fecha_inicio,
               fin: a.fecha_fin,
@@ -169,7 +169,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
     : columnas;
 
   return (
-    <div className="overflow-auto">
+    <div className="overflow-auto h-full">
       <table className="w-full text-xs border-collapse" style={{ minWidth: 520 }}>
         <thead className="sticky top-0 bg-white z-20">
           <tr>

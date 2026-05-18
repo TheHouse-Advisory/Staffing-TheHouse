@@ -272,7 +272,7 @@ export async function fetchCoberturaProyecto(
   // 1a. Engagements activos que solapan con la semana (con o sin requerimientos)
   const { data: engsRaw, error: engsErr } = await supabase
     .from("engagement")
-    .select("id, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
+    .select("id, codigo, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
     .eq("estado", "activo")
     .lte("fecha_inicio", finStr)
     .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null`);
@@ -369,7 +369,7 @@ export async function fetchCoberturaProyecto(
   for (const eng of engsRaw as any[]) {
     engMap.set(eng.id, {
       engagement_id: eng.id,
-      engagement_nombre: eng.nombre ?? "—",
+      engagement_nombre: eng.codigo ? `${eng.codigo}: ${eng.nombre ?? "—"}` : eng.nombre ?? "—",
       cliente: eng.cliente ?? "—",
       tipo: eng.tipo ?? "proyecto",
       dias: {},

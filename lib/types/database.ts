@@ -151,6 +151,7 @@ export interface PersonaTematica {
  */
 export interface Engagement {
   id: string;
+  codigo: string | null;
   nombre: string;
   cliente: string;
   tipo: TipoEngagement;
