@@ -22,6 +22,16 @@ const BOXES = [
 const COL_LABELS = ["1-2", "3", "4-5"];
 const ROW_LABELS = ["Alto (5)", "Medio (4)", "Bajo (2-3)"];
 
+export function getTalentBoxName(potencial: number | null, desempeno: number | null): string | null {
+  if (potencial == null || desempeno == null) return null;
+  // La cuadrícula divide el rango [1,5] en 3 tercios iguales → cortes en 7/3 y 11/3
+  const b1 = 7 / 3;  // ≈ 2.33
+  const b2 = 11 / 3; // ≈ 3.67
+  const row = potencial > b2 ? 0 : potencial > b1 ? 1 : 2;
+  const col = desempeno <= b1 ? 0 : desempeno <= b2 ? 1 : 2;
+  return BOXES[row * 3 + col].title;
+}
+
 interface Props {
   potencial:  number | null;
   desempeno:  number | null;
@@ -90,16 +100,23 @@ export function TalentMatrix({ potencial, desempeno, isEditable, onUpdate, size 
   // ── Vista full ──
   return (
     <div className="select-none">
+      {/* Header eje Y — encima del grid, alineado con él */}
+      <p className="text-[10px] font-bold text-[#555] uppercase tracking-wide text-center mb-1" style={{ marginLeft: 80 }}>
+        Potencial
+      </p>
+
+      {/* Fila principal: labels de fila + grid */}
       <div className="flex gap-2">
-        {/* Etiqueta eje Y */}
-        <div className="flex flex-col justify-around pr-1" style={{ width: 72 }}>
-          <p className="text-[10px] font-bold text-[#555] uppercase tracking-wide text-center -rotate-0 mb-1">Potencial</p>
+        {/* Labels de fila — self-stretch = misma altura que el grid, sin header extra */}
+        <div className="self-stretch flex flex-col pr-1" style={{ width: 72 }}>
           {ROW_LABELS.map((l) => (
-            <div key={l} className="text-[10px] text-[#888] font-medium text-right leading-tight py-2">{l}</div>
+            <div key={l} className="flex-1 flex items-center justify-end">
+              <span className="text-[10px] text-[#888] font-medium text-right leading-tight">{l}</span>
+            </div>
           ))}
         </div>
 
-        {/* Cuadrícula */}
+        {/* Cuadrícula + eje X */}
         <div className="flex-1 flex flex-col gap-0">
           <div
             ref={gridRef}

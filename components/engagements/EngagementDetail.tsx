@@ -70,6 +70,11 @@ export function EngagementDetail({ id }: Props) {
   const [asignacionesSinReq, setAsignacionesSinReq] = useState<AsignacionReq[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [caracteristicas, setCaracteristicas] = useState<{
+    industria: string | null;
+    capacidades: string[];
+    tematicas: string[];
+  }>({ industria: null, capacidades: [], tematicas: [] });
 
   // Engagement edit / delete
   const [editando, setEditando] = useState(false);
@@ -115,8 +120,8 @@ export function EngagementDetail({ id }: Props) {
       persona: { nombre: string; apellido: string } | null;
     }
 
-    const [{ data: eng, error: engErr }, cobResult, asigResult, dcResult] = await Promise.all([
-      sb.from("engagement").select("*").eq("id", id).single(),
+    const [{ data: eng, error: engErr }, cobResult, asigResult, dcResult, capResult, temResult] = await Promise.all([
+      sb.from("engagement").select("*, cat_industria(nombre)").eq("id", id).single(),
       fetchCoberturaEngagement(supabase, id),
       sb
         .from("asignacion")
@@ -125,6 +130,8 @@ export function EngagementDetail({ id }: Props) {
         .eq("estado", "activa")
         .order("fecha_inicio"),
       sb.from("dia_critico").select("id, fecha, fecha_fin, intensidad, descripcion").eq("engagement_id", id).order("fecha"),
+      (sb as any).from("engagement_capacidad").select("cat_capacidad(nombre)").eq("engagement_id", id),
+      (sb as any).from("engagement_tematica").select("cat_tematica(nombre)").eq("engagement_id", id),
     ]);
 
     if (engErr || !eng) {
@@ -133,6 +140,11 @@ export function EngagementDetail({ id }: Props) {
       setEngagement(eng as Engagement);
       setCobertura(cobResult.data);
       if (cobResult.error) setError(cobResult.error);
+      setCaracteristicas({
+        industria: (eng as any).cat_industria?.nombre ?? null,
+        capacidades: ((capResult.data ?? []) as any[]).map((r: any) => r.cat_capacidad?.nombre).filter(Boolean),
+        tematicas:   ((temResult.data ?? []) as any[]).map((r: any) => r.cat_tematica?.nombre).filter(Boolean),
+      });
     }
 
     const asigData = (asigResult.data ?? []) as unknown as AsignacionRaw[];
@@ -338,7 +350,7 @@ export function EngagementDetail({ id }: Props) {
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                <h2 className="text-xl font-bold truncate">{engagement.nombre}</h2>
+                <h2 className="text-xl font-bold truncate">{engagement.codigo ? `${engagement.codigo}: ${engagement.nombre}` : engagement.nombre}</h2>
                 {tieneAlerta && <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />}
               </div>
               <p className="text-[#888]">{engagement.cliente}</p>
@@ -388,6 +400,43 @@ export function EngagementDetail({ id }: Props) {
             )}
           </div>
         </div>
+
+        {/* ── Características del proyecto ────────────────────── */}
+        {(caracteristicas.industria || caracteristicas.capacidades.length > 0 || caracteristicas.tematicas.length > 0) && (
+          <div className="bg-white rounded-xl border border-[#e8e8e8] p-5 space-y-4">
+            <h3 className="font-semibold text-[15px]">Características del proyecto</h3>
+            <div className="space-y-3">
+              {caracteristicas.industria && (
+                <div>
+                  <p className="text-[#888] text-xs mb-1.5">Industria</p>
+                  <span className="text-[11px] px-2.5 py-1 rounded-full bg-[#eaf4ff] text-[#1a5276] font-medium">
+                    {caracteristicas.industria}
+                  </span>
+                </div>
+              )}
+              {caracteristicas.capacidades.length > 0 && (
+                <div>
+                  <p className="text-[#888] text-xs mb-1.5">Capacidades</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {caracteristicas.capacidades.map((c) => (
+                      <span key={c} className="text-[11px] px-2.5 py-1 rounded-full bg-[#f0f9f4] text-[#1e7e45] font-medium">{c}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {caracteristicas.tematicas.length > 0 && (
+                <div>
+                  <p className="text-[#888] text-xs mb-1.5">Temáticas</p>
+                  <div className="flex flex-wrap gap-1.5">
+                    {caracteristicas.tematicas.map((t) => (
+                      <span key={t} className="text-[11px] px-2.5 py-1 rounded-full bg-[#fdf4ff] text-[#6b21a8] font-medium">{t}</span>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* ── Requerimientos + asignaciones ──────────────────── */}
         <div className="space-y-3">
@@ -711,6 +760,7 @@ export function EngagementDetail({ id }: Props) {
                   type="number"
                   min={1}
                   max={100}
+                  step={0.5}
                   value={reqForm.pct_dedicacion}
                   onChange={(e) => setReqForm({ ...reqForm, pct_dedicacion: e.target.value })}
                 />

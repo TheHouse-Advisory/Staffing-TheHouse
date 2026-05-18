@@ -225,7 +225,7 @@ function PersonaPopover({ state, planId, onClose }: { state: PopoverPersonaState
 
       const { data: realRaw } = await supabase
         .from("asignacion")
-        .select("id, pct_dedicacion, engagement:engagement_id(nombre)")
+        .select("id, pct_dedicacion, engagement:engagement_id(nombre, codigo)")
         .eq("persona_id", state.personaId)
         .eq("estado", "activa")
         .lte("fecha_inicio", diaStr)
@@ -250,14 +250,14 @@ function PersonaPopover({ state, planId, onClose }: { state: PopoverPersonaState
       }
 
       for (const a of realAsigs) {
-        resultado.push({ engagement_nombre: a.engagement?.nombre ?? "—", pct: Number(a.pct_dedicacion), tipo: liberacionIds.has(a.id) ? "liberar" : "real" });
+        resultado.push({ engagement_nombre: (a.engagement as any)?.codigo ? `${(a.engagement as any).codigo}: ${a.engagement?.nombre ?? "—"}` : a.engagement?.nombre ?? "—", pct: Number(a.pct_dedicacion), tipo: liberacionIds.has(a.id) ? "liberar" : "real" });
       }
 
       if (planId) {
-        type AsigDesglosePlan = { pct_dedicacion: number; engagement: { nombre: string } | null };
+        type AsigDesglosePlan = { pct_dedicacion: number; engagement: { nombre: string; codigo?: string | null } | null };
         const { data: planRaw } = await (supabase as any)
           .from("asignacion_propuesta")
-          .select("pct_dedicacion, engagement:engagement_id(nombre)")
+          .select("pct_dedicacion, engagement:engagement_id(nombre, codigo)")
           .eq("persona_id", state.personaId)
           .eq("plan_id", planId)
           .eq("estado", "borrador")
@@ -265,7 +265,7 @@ function PersonaPopover({ state, planId, onClose }: { state: PopoverPersonaState
           .lte("fecha_inicio", diaStr)
           .gte("fecha_fin", diaStr);
         for (const a of (planRaw ?? []) as unknown as AsigDesglosePlan[]) {
-          resultado.push({ engagement_nombre: a.engagement?.nombre ?? "—", pct: Number(a.pct_dedicacion), tipo: "plan" });
+          resultado.push({ engagement_nombre: a.engagement?.codigo ? `${a.engagement.codigo}: ${a.engagement.nombre ?? "—"}` : a.engagement?.nombre ?? "—", pct: Number(a.pct_dedicacion), tipo: "plan" });
         }
       }
 

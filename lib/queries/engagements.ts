@@ -132,8 +132,9 @@ export async function fetchEngagementsPasados(
     .order("fecha_fin_real", { ascending: false, nullsFirst: false });
 
   if (busqueda.trim()) {
+    const t = busqueda.trim();
     query = query.or(
-      `nombre.ilike.%${busqueda.trim()}%,cliente.ilike.%${busqueda.trim()}%`
+      `nombre.ilike.%${t}%,cliente.ilike.%${t}%,codigo.ilike.%${t}%,descripcion.ilike.%${t}%`
     );
   }
 

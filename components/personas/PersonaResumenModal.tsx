@@ -7,7 +7,7 @@ import { X, ChevronDown } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { getDetailedPersonAbsences, type AusenciaDetalle } from "@/lib/queries/ausencias";
 import { ProyectosPersonaDetalle } from "@/components/personas/ProyectosPersonaDetalle";
-import { TalentMatrix } from "@/components/personas/TalentMatrix";
+import { TalentMatrix, getTalentBoxName } from "@/components/personas/TalentMatrix";
 import type { Persona } from "@/lib/types/database";
 
 const COLORES: Record<string, string> = {
@@ -250,13 +250,19 @@ export function PersonaResumenModal({ personaId, onClose }: Props) {
                 )}
               </div>
               {(persona.talento_potencial != null || persona.talento_desempeno != null) && (
-                <div className="flex justify-between items-center">
-                  <span className="text-gray-400 text-xs">Talento</span>
+                <div className="flex flex-col gap-2">
+                  <span className="text-gray-400 text-xs">
+                    Talento{getTalentBoxName(persona.talento_potencial, persona.talento_desempeno) && (
+                      <span className="text-[#1a1a2e] font-semibold ml-1">
+                        : {getTalentBoxName(persona.talento_potencial, persona.talento_desempeno)}
+                      </span>
+                    )}
+                  </span>
                   <TalentMatrix
                     potencial={persona.talento_potencial}
                     desempeno={persona.talento_desempeno}
                     isEditable={false}
-                    size="compact"
+                    size="full"
                   />
                 </div>
               )}

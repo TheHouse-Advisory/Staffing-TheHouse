@@ -90,7 +90,7 @@ interface ReqData {
   pct_dedicacion: number;
 }
 interface EngRow {
-  id: string; nombre: string; cliente: string | null; tipo: string;
+  id: string; codigo: string | null; nombre: string; cliente: string | null; tipo: string;
   fecha_inicio: string; fecha_fin: string | null;
   personas: PersonaAsig[];
   reqs: ReqData[];
@@ -187,7 +187,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
       const [engRes, asigRes, ausRes] = await Promise.all([
         sb.from("engagement")
-          .select("id, nombre, cliente, tipo, estado, descripcion, fecha_inicio, fecha_fin_estimada, fecha_fin_real, industria_id")
+          .select("id, codigo, nombre, cliente, tipo, estado, descripcion, fecha_inicio, fecha_fin_estimada, fecha_fin_real, industria_id")
           .eq("estado", "activo")
           .eq("is_deleted", false)
           .lte("fecha_inicio", finStr)
@@ -209,7 +209,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       const engMap = new Map<string, EngRow>();
       for (const e of (engRes.data ?? []) as any[]) {
         engMap.set(e.id, {
-          id: e.id, nombre: e.nombre, cliente: e.cliente,
+          id: e.id, codigo: e.codigo ?? null, nombre: e.nombre, cliente: e.cliente,
           tipo: e.tipo ?? "proyecto",
           fecha_inicio: e.fecha_inicio,
           fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? null,
@@ -624,7 +624,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               className="font-bold text-[#1a1a2e] truncate max-w-[120px] text-[12px] text-left hover:text-[#4a90e2] hover:underline transition-colors"
                               title="Ver detalle del engagement"
                             >
-                              {eng.nombre}
+                              {eng.codigo ? `${eng.codigo}: ${eng.nombre}` : eng.nombre}
                             </button>
                             {eng.cliente && <p className="text-[10px] text-gray-400 truncate max-w-[120px]">{eng.cliente}</p>}
                           </div>
@@ -948,7 +948,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                       {engModal.tipo === "proyecto" ? "Proyecto" : engModal.tipo === "propuesta" ? "Propuesta" : "Ayuda interna"}
                     </span>
                   </div>
-                  <h3 className="font-bold text-[#1a1a2e] text-sm leading-tight">{engModal.nombre}</h3>
+                  <h3 className="font-bold text-[#1a1a2e] text-sm leading-tight">{engModal.codigo ? `${engModal.codigo}: ${engModal.nombre}` : engModal.nombre}</h3>
                   {engModal.cliente && (
                     <p className="text-xs text-gray-400 mt-0.5">{engModal.cliente}</p>
                   )}

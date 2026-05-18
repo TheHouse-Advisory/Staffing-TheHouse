@@ -5,6 +5,7 @@ import { Plus, Trash2, ChevronDown, ChevronUp, Users } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
 import { FieldWrapper, Input, Select, Textarea } from "@/components/ui/FormField";
 import { MultiSelect } from "@/components/ui/MultiSelect";
 import { CARGOS_OPTIONS } from "@/lib/constants";
@@ -29,7 +30,7 @@ interface EngagementFormProps {
 }
 
 const EMPTY_ENG = {
-  nombre: "", cliente: "", tipo: "proyecto", estado: "activo",
+  codigo: "", nombre: "", cliente: "", tipo: "proyecto", estado: "activo",
   descripcion: "", fecha_inicio: "", fecha_fin_estimada: "", industria_id: "",
   capacidades: [] as string[],
   tematicas: [] as string[],
@@ -51,6 +52,32 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
   const [tematicasOpts, setTematicasOpts] = useState<{ value: string; label: string }[]>([]);
 
   const [extOpen, setExtOpen] = useState(false);
+  const [nuevaIndustriaOpen, setNuevaIndustriaOpen] = useState(false);
+  const [nuevaIndustriaNombre, setNuevaIndustriaNombre] = useState("");
+  const [nuevaIndustriaLoading, setNuevaIndustriaLoading] = useState(false);
+  const [nuevaIndustriaError, setNuevaIndustriaError] = useState<string | null>(null);
+  const [showEliminarLista, setShowEliminarLista] = useState(false);
+  const [eliminarCandidata, setEliminarCandidata] = useState<{ value: string; label: string } | null>(null);
+  const [eliminarCheck, setEliminarCheck] = useState<{ loading: boolean; count: number }>({ loading: false, count: 0 });
+  const [eliminarLoading, setEliminarLoading] = useState(false);
+  // Capacidades
+  const [nuevaCapacidadOpen, setNuevaCapacidadOpen] = useState(false);
+  const [nuevaCapacidadNombre, setNuevaCapacidadNombre] = useState("");
+  const [nuevaCapacidadLoading, setNuevaCapacidadLoading] = useState(false);
+  const [nuevaCapacidadError, setNuevaCapacidadError] = useState<string | null>(null);
+  const [showEliminarCapLista, setShowEliminarCapLista] = useState(false);
+  const [eliminarCapCandidata, setEliminarCapCandidata] = useState<{ value: string; label: string } | null>(null);
+  const [eliminarCapCheck, setEliminarCapCheck] = useState<{ loading: boolean; count: number }>({ loading: false, count: 0 });
+  const [eliminarCapLoading, setEliminarCapLoading] = useState(false);
+  // Temáticas
+  const [nuevaTematicaOpen, setNuevaTematicaOpen] = useState(false);
+  const [nuevaTematicaNombre, setNuevaTematicaNombre] = useState("");
+  const [nuevaTematicaLoading, setNuevaTematicaLoading] = useState(false);
+  const [nuevaTematicaError, setNuevaTematicaError] = useState<string | null>(null);
+  const [showEliminarTemLista, setShowEliminarTemLista] = useState(false);
+  const [eliminarTemCandidata, setEliminarTemCandidata] = useState<{ value: string; label: string } | null>(null);
+  const [eliminarTemCheck, setEliminarTemCheck] = useState<{ loading: boolean; count: number }>({ loading: false, count: 0 });
+  const [eliminarTemLoading, setEliminarTemLoading] = useState(false);
 
   useEffect(() => {
     if (!open) {
@@ -76,6 +103,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
           (supabase as any).from("engagement_tematica").select("tematica_id").eq("engagement_id", engagement.id),
         ]);
         setForm({
+          codigo: engagement.codigo ?? "",
           nombre: engagement.nombre,
           cliente: engagement.cliente,
           tipo: engagement.tipo,
@@ -105,6 +133,111 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm((f) => ({ ...f, [field]: e.target.value }));
 
+  async function guardarNuevaIndustria() {
+    const nombre = nuevaIndustriaNombre.trim();
+    if (!nombre) { setNuevaIndustriaError("El nombre es obligatorio."); return; }
+    setNuevaIndustriaLoading(true);
+    setNuevaIndustriaError(null);
+    const supabase = createAnyClient();
+    const { data, error } = await supabase
+      .from("cat_industria")
+      .insert({ nombre, activo: true })
+      .select("id, nombre")
+      .single();
+    setNuevaIndustriaLoading(false);
+    if (error || !data) {
+      setNuevaIndustriaError(error?.message ?? "Error al guardar.");
+      return;
+    }
+    const nueva = { value: (data as any).id, label: (data as any).nombre };
+    setIndustrias((prev) => [...prev, nueva].sort((a, b) => a.label.localeCompare(b.label, "es")));
+    setForm((f) => ({ ...f, industria_id: (data as any).id }));
+    setNuevaIndustriaNombre("");
+    setNuevaIndustriaOpen(false);
+  }
+
+  async function abrirEliminarIndustria(ind: { value: string; label: string }) {
+    setEliminarCandidata(ind);
+    setEliminarCheck({ loading: true, count: 0 });
+    const supabase = createAnyClient();
+    const { count } = await (supabase as any)
+      .from("engagement")
+      .select("id", { count: "exact", head: true })
+      .eq("industria_id", ind.value);
+    setEliminarCheck({ loading: false, count: count ?? 0 });
+  }
+
+  async function confirmarEliminarIndustria() {
+    if (!eliminarCandidata) return;
+    setEliminarLoading(true);
+    const supabase = createAnyClient();
+    await (supabase as any).from("cat_industria").update({ activo: false }).eq("id", eliminarCandidata.value);
+    setIndustrias((prev) => prev.filter((i) => i.value !== eliminarCandidata.value));
+    if (form.industria_id === eliminarCandidata.value) setForm((f) => ({ ...f, industria_id: "" }));
+    setEliminarLoading(false);
+    setEliminarCandidata(null);
+  }
+
+  // ── Capacidades ─────────────────────────────────────────────
+  async function guardarNuevaCapacidad() {
+    const nombre = nuevaCapacidadNombre.trim();
+    if (!nombre) { setNuevaCapacidadError("El nombre es obligatorio."); return; }
+    setNuevaCapacidadLoading(true); setNuevaCapacidadError(null);
+    const supabase = createAnyClient();
+    const { data, error } = await (supabase as any).from("cat_capacidad").insert({ nombre, activo: true }).select("id,nombre").single();
+    setNuevaCapacidadLoading(false);
+    if (error || !data) { setNuevaCapacidadError(error?.message ?? "Error al guardar."); return; }
+    const nueva = { value: (data as any).id, label: (data as any).nombre };
+    setCapacidadesOpts((prev) => [...prev, nueva].sort((a, b) => a.label.localeCompare(b.label, "es")));
+    setForm((f) => ({ ...f, capacidades: [...f.capacidades, (data as any).id] }));
+    setNuevaCapacidadNombre(""); setNuevaCapacidadOpen(false);
+  }
+  async function abrirEliminarCapacidad(opt: { value: string; label: string }) {
+    setEliminarCapCandidata(opt); setEliminarCapCheck({ loading: true, count: 0 });
+    const supabase = createAnyClient();
+    const { count } = await (supabase as any).from("engagement_capacidad").select("engagement_id", { count: "exact", head: true }).eq("capacidad_id", opt.value);
+    setEliminarCapCheck({ loading: false, count: count ?? 0 });
+  }
+  async function confirmarEliminarCapacidad() {
+    if (!eliminarCapCandidata) return;
+    setEliminarCapLoading(true);
+    const supabase = createAnyClient();
+    await (supabase as any).from("cat_capacidad").update({ activo: false }).eq("id", eliminarCapCandidata.value);
+    setCapacidadesOpts((prev) => prev.filter((i) => i.value !== eliminarCapCandidata.value));
+    setForm((f) => ({ ...f, capacidades: f.capacidades.filter((id) => id !== eliminarCapCandidata.value) }));
+    setEliminarCapLoading(false); setEliminarCapCandidata(null);
+  }
+
+  // ── Temáticas ────────────────────────────────────────────────
+  async function guardarNuevaTematica() {
+    const nombre = nuevaTematicaNombre.trim();
+    if (!nombre) { setNuevaTematicaError("El nombre es obligatorio."); return; }
+    setNuevaTematicaLoading(true); setNuevaTematicaError(null);
+    const supabase = createAnyClient();
+    const { data, error } = await (supabase as any).from("cat_tematica").insert({ nombre, activo: true }).select("id,nombre").single();
+    setNuevaTematicaLoading(false);
+    if (error || !data) { setNuevaTematicaError(error?.message ?? "Error al guardar."); return; }
+    const nueva = { value: (data as any).id, label: (data as any).nombre };
+    setTematicasOpts((prev) => [...prev, nueva].sort((a, b) => a.label.localeCompare(b.label, "es")));
+    setForm((f) => ({ ...f, tematicas: [...f.tematicas, (data as any).id] }));
+    setNuevaTematicaNombre(""); setNuevaTematicaOpen(false);
+  }
+  async function abrirEliminarTematica(opt: { value: string; label: string }) {
+    setEliminarTemCandidata(opt); setEliminarTemCheck({ loading: true, count: 0 });
+    const supabase = createAnyClient();
+    const { count } = await (supabase as any).from("engagement_tematica").select("engagement_id", { count: "exact", head: true }).eq("tematica_id", opt.value);
+    setEliminarTemCheck({ loading: false, count: count ?? 0 });
+  }
+  async function confirmarEliminarTematica() {
+    if (!eliminarTemCandidata) return;
+    setEliminarTemLoading(true);
+    const supabase = createAnyClient();
+    await (supabase as any).from("cat_tematica").update({ activo: false }).eq("id", eliminarTemCandidata.value);
+    setTematicasOpts((prev) => prev.filter((i) => i.value !== eliminarTemCandidata.value));
+    setForm((f) => ({ ...f, tematicas: f.tematicas.filter((id) => id !== eliminarTemCandidata.value) }));
+    setEliminarTemLoading(false); setEliminarTemCandidata(null);
+  }
+
   const addReq = () =>
     setReqs((r) => [...r, {
       ...EMPTY_REQ,
@@ -121,30 +254,36 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
 
   const validate = () => {
     const e: Record<string, string> = {};
-    if (!form.nombre.trim()) e.nombre = "Requerido";
-    if (form.tipo !== "ayuda_interna" && !form.cliente.trim()) e.cliente = "Requerido";
+    const esPropuesta = form.tipo === "propuesta";
+
+    if (!esPropuesta) {
+      if (!form.nombre.trim()) e.nombre = "Requerido";
+      if (form.tipo !== "ayuda_interna" && !form.cliente.trim()) e.cliente = "Requerido";
+    }
     if (form.fecha_fin_estimada && form.fecha_inicio && form.fecha_fin_estimada < form.fecha_inicio) {
       e.fecha_fin_estimada = "No puede ser anterior a la fecha de inicio";
     }
-    reqs.forEach((r, i) => {
-      if (!r.pct_dedicacion || isNaN(Number(r.pct_dedicacion))) {
-        e[`req_${i}_pct`] = "% inválido";
-      }
-      if (!r.fecha_inicio) {
-        e[`req_${i}_inicio`] = "Requerida";
-      } else if (form.fecha_inicio && r.fecha_inicio < form.fecha_inicio) {
-        e[`req_${i}_inicio`] = `No puede ser antes del ${form.fecha_inicio}`;
-      } else if (form.fecha_fin_estimada && r.fecha_inicio > form.fecha_fin_estimada) {
-        e[`req_${i}_inicio`] = `No puede ser después del ${form.fecha_fin_estimada}`;
-      }
-      if (!r.fecha_fin) {
-        e[`req_${i}_fin`] = "Requerida";
-      } else if (r.fecha_inicio && r.fecha_fin < r.fecha_inicio) {
-        e[`req_${i}_fin`] = "No puede ser anterior a la fecha de inicio";
-      } else if (form.fecha_fin_estimada && r.fecha_fin > form.fecha_fin_estimada) {
-        e[`req_${i}_fin`] = `No puede ser después del ${form.fecha_fin_estimada}`;
-      }
-    });
+    if (!esPropuesta) {
+      reqs.forEach((r, i) => {
+        if (!r.pct_dedicacion || isNaN(Number(r.pct_dedicacion))) {
+          e[`req_${i}_pct`] = "% inválido";
+        }
+        if (!r.fecha_inicio) {
+          e[`req_${i}_inicio`] = "Requerida";
+        } else if (form.fecha_inicio && r.fecha_inicio < form.fecha_inicio) {
+          e[`req_${i}_inicio`] = `No puede ser antes del ${form.fecha_inicio}`;
+        } else if (form.fecha_fin_estimada && r.fecha_inicio > form.fecha_fin_estimada) {
+          e[`req_${i}_inicio`] = `No puede ser después del ${form.fecha_fin_estimada}`;
+        }
+        if (!r.fecha_fin) {
+          e[`req_${i}_fin`] = "Requerida";
+        } else if (r.fecha_inicio && r.fecha_fin < r.fecha_inicio) {
+          e[`req_${i}_fin`] = "No puede ser anterior a la fecha de inicio";
+        } else if (form.fecha_fin_estimada && r.fecha_fin > form.fecha_fin_estimada) {
+          e[`req_${i}_fin`] = `No puede ser después del ${form.fecha_fin_estimada}`;
+        }
+      });
+    }
     setErrors(e);
     return Object.keys(e).length === 0;
   };
@@ -159,6 +298,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
       cliente: form.cliente.trim(),
       tipo: form.tipo as "propuesta" | "proyecto" | "ayuda_interna",
       estado: form.estado as "activo" | "terminado",
+      codigo: form.codigo.trim() || null,
       descripcion: form.descripcion.trim() || null,
       fecha_inicio: form.fecha_inicio || null,
       fecha_fin_estimada: form.fecha_fin_estimada || null,
@@ -245,14 +385,17 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
         )}
 
         <div className="grid grid-cols-2 gap-4">
-          <FieldWrapper label="Nombre" required error={errors.nombre} className="col-span-2">
+          <FieldWrapper label="Nombre" required={form.tipo !== "propuesta"} error={errors.nombre} className="col-span-2">
             <Input value={form.nombre} onChange={setField("nombre")} placeholder="Transformación Operacional..." error={!!errors.nombre} />
+          </FieldWrapper>
+          <FieldWrapper label="Código identificador" className="col-span-2">
+            <Input value={form.codigo} onChange={setField("codigo")} placeholder="Ej: PRJ-2026" />
           </FieldWrapper>
           <FieldWrapper
             label="Cliente"
-            required={form.tipo !== "ayuda_interna"}
+            required={form.tipo !== "ayuda_interna" && form.tipo !== "propuesta"}
             error={errors.cliente}
-            hint={form.tipo === "ayuda_interna" ? "Opcional para ayuda interna" : undefined}
+            hint={form.tipo === "ayuda_interna" || form.tipo === "propuesta" ? "Opcional" : undefined}
           >
             <Input
               value={form.cliente}
@@ -262,8 +405,110 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
             />
           </FieldWrapper>
           <FieldWrapper label="Industria">
-            <Select value={form.industria_id} onChange={setField("industria_id")} options={industrias} placeholder="Sin industria" />
+            <Select value={form.industria_id} onChange={setField("industria_id")} options={industrias} placeholder="Sin industria" allowEmpty />
+            <div className="mt-1 flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => { setNuevaIndustriaNombre(""); setNuevaIndustriaError(null); setNuevaIndustriaOpen(true); }}
+                className="flex items-center gap-1 text-[11px] text-[#2563eb] hover:underline"
+              >
+                <Plus className="w-3 h-3" /> Nueva industria
+              </button>
+              {industrias.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setShowEliminarLista((s) => !s)}
+                  className="flex items-center gap-1 text-[11px] text-[#888] hover:text-red-500 hover:underline"
+                >
+                  <Trash2 className="w-3 h-3" /> Eliminar industria
+                </button>
+              )}
+            </div>
+            {showEliminarLista && (
+              <div className="mt-2 border border-[#e8e8e8] rounded-lg overflow-hidden max-h-44 overflow-y-auto">
+                {industrias.map((ind) => (
+                  <div key={ind.value} className="flex items-center justify-between px-3 py-1.5 hover:bg-[#fafafa] border-b border-[#f0f0f0] last:border-0">
+                    <span className="text-[12px] text-[#333]">{ind.label}</span>
+                    <button
+                      type="button"
+                      onClick={() => abrirEliminarIndustria(ind)}
+                      className="p-1 rounded hover:bg-[#fee2e2] text-[#ccc] hover:text-[#dc2626] transition-colors"
+                    >
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </FieldWrapper>
+
+          <Modal
+            open={nuevaIndustriaOpen}
+            onClose={() => setNuevaIndustriaOpen(false)}
+            title="Nueva industria"
+            footer={
+              <>
+                <Button variant="secondary" onClick={() => setNuevaIndustriaOpen(false)} disabled={nuevaIndustriaLoading}>
+                  Cancelar
+                </Button>
+                <Button onClick={guardarNuevaIndustria} loading={nuevaIndustriaLoading}>
+                  Guardar
+                </Button>
+              </>
+            }
+          >
+            <div className="space-y-2">
+              <label className="text-[11px] font-semibold text-[#888] uppercase tracking-wide">Nombre</label>
+              <input
+                autoFocus
+                type="text"
+                value={nuevaIndustriaNombre}
+                onChange={(e) => setNuevaIndustriaNombre(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); guardarNuevaIndustria(); } }}
+                placeholder="Ej. Tecnología"
+                className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#2563eb] focus:ring-1 focus:ring-[#2563eb]"
+              />
+              {nuevaIndustriaError && (
+                <p className="text-[11px] text-red-500">{nuevaIndustriaError}</p>
+              )}
+            </div>
+          </Modal>
+
+          <Modal
+            open={!!eliminarCandidata}
+            onClose={() => { if (!eliminarLoading) setEliminarCandidata(null); }}
+            title="Eliminar industria"
+            footer={
+              eliminarCheck.loading || eliminarCheck.count > 0 ? (
+                <Button variant="secondary" onClick={() => setEliminarCandidata(null)}>Cerrar</Button>
+              ) : (
+                <>
+                  <Button variant="secondary" onClick={() => setEliminarCandidata(null)} disabled={eliminarLoading}>
+                    Cancelar
+                  </Button>
+                  <Button variant="danger" onClick={confirmarEliminarIndustria} loading={eliminarLoading}>
+                    Sí, eliminar
+                  </Button>
+                </>
+              )
+            }
+          >
+            {eliminarCheck.loading ? (
+              <p className="text-sm text-[#888]">Verificando usos...</p>
+            ) : eliminarCheck.count > 0 ? (
+              <div className="space-y-2">
+                <p className="text-sm font-semibold text-red-600">No se puede eliminar la industria.</p>
+                <p className="text-sm text-[#555]">
+                  Hay <strong>{eliminarCheck.count}</strong> engagement{eliminarCheck.count !== 1 ? "s" : ""} asociado{eliminarCheck.count !== 1 ? "s" : ""} a <strong>{eliminarCandidata?.label}</strong>.
+                </p>
+              </div>
+            ) : (
+              <p className="text-sm text-[#555]">
+                ¿Estás seguro de que deseas eliminar <strong>{eliminarCandidata?.label}</strong>? Esta acción no se puede deshacer y afectará a los formularios de creación/edición.
+              </p>
+            )}
+          </Modal>
+
           <FieldWrapper label="Tipo">
             <Select value={form.tipo} onChange={setField("tipo")}
               options={[
@@ -294,6 +539,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
         </FieldWrapper>
 
         <div className="grid grid-cols-2 gap-4">
+          {/* ── Capacidades ── */}
           <FieldWrapper label="Capacidades" hint="Habilidades técnicas requeridas">
             <MultiSelect
               options={capacidadesOpts}
@@ -301,7 +547,34 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
               onChange={(v) => setForm((f) => ({ ...f, capacidades: v }))}
               placeholder="Agregar capacidades..."
             />
+            <div className="mt-1 flex items-center gap-3">
+              <button type="button" onClick={() => { setNuevaCapacidadNombre(""); setNuevaCapacidadError(null); setNuevaCapacidadOpen(true); }}
+                className="flex items-center gap-1 text-[11px] text-[#2563eb] hover:underline">
+                <Plus className="w-3 h-3" /> Nueva capacidad
+              </button>
+              {capacidadesOpts.length > 0 && (
+                <button type="button" onClick={() => setShowEliminarCapLista((s) => !s)}
+                  className="flex items-center gap-1 text-[11px] text-[#888] hover:text-red-500 hover:underline">
+                  <Trash2 className="w-3 h-3" /> Eliminar
+                </button>
+              )}
+            </div>
+            {showEliminarCapLista && (
+              <div className="mt-2 border border-[#e8e8e8] rounded-lg overflow-hidden max-h-44 overflow-y-auto">
+                {capacidadesOpts.map((opt) => (
+                  <div key={opt.value} className="flex items-center justify-between px-3 py-1.5 hover:bg-[#fafafa] border-b border-[#f0f0f0] last:border-0">
+                    <span className="text-[12px] text-[#333]">{opt.label}</span>
+                    <button type="button" onClick={() => abrirEliminarCapacidad(opt)}
+                      className="p-1 rounded hover:bg-[#fee2e2] text-[#ccc] hover:text-[#dc2626] transition-colors">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </FieldWrapper>
+
+          {/* ── Temáticas ── */}
           <FieldWrapper label="Temáticas" hint="Áreas temáticas del engagement">
             <MultiSelect
               options={tematicasOpts}
@@ -309,8 +582,107 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
               onChange={(v) => setForm((f) => ({ ...f, tematicas: v }))}
               placeholder="Agregar temáticas..."
             />
+            <div className="mt-1 flex items-center gap-3">
+              <button type="button" onClick={() => { setNuevaTematicaNombre(""); setNuevaTematicaError(null); setNuevaTematicaOpen(true); }}
+                className="flex items-center gap-1 text-[11px] text-[#2563eb] hover:underline">
+                <Plus className="w-3 h-3" /> Nueva temática
+              </button>
+              {tematicasOpts.length > 0 && (
+                <button type="button" onClick={() => setShowEliminarTemLista((s) => !s)}
+                  className="flex items-center gap-1 text-[11px] text-[#888] hover:text-red-500 hover:underline">
+                  <Trash2 className="w-3 h-3" /> Eliminar
+                </button>
+              )}
+            </div>
+            {showEliminarTemLista && (
+              <div className="mt-2 border border-[#e8e8e8] rounded-lg overflow-hidden max-h-44 overflow-y-auto">
+                {tematicasOpts.map((opt) => (
+                  <div key={opt.value} className="flex items-center justify-between px-3 py-1.5 hover:bg-[#fafafa] border-b border-[#f0f0f0] last:border-0">
+                    <span className="text-[12px] text-[#333]">{opt.label}</span>
+                    <button type="button" onClick={() => abrirEliminarTematica(opt)}
+                      className="p-1 rounded hover:bg-[#fee2e2] text-[#ccc] hover:text-[#dc2626] transition-colors">
+                      <Trash2 className="w-3 h-3" />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
           </FieldWrapper>
         </div>
+
+        {/* ── Modal nueva capacidad ── */}
+        <Modal open={nuevaCapacidadOpen} onClose={() => setNuevaCapacidadOpen(false)} title="Nueva capacidad"
+          footer={<>
+            <Button variant="secondary" onClick={() => setNuevaCapacidadOpen(false)} disabled={nuevaCapacidadLoading}>Cancelar</Button>
+            <Button onClick={guardarNuevaCapacidad} loading={nuevaCapacidadLoading}>Guardar</Button>
+          </>}>
+          <div className="space-y-2">
+            <label className="text-[11px] font-semibold text-[#888] uppercase tracking-wide">Nombre</label>
+            <input autoFocus type="text" value={nuevaCapacidadNombre}
+              onChange={(e) => setNuevaCapacidadNombre(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); guardarNuevaCapacidad(); } }}
+              placeholder="Ej. Análisis de datos"
+              className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#2563eb] focus:ring-1 focus:ring-[#2563eb]" />
+            {nuevaCapacidadError && <p className="text-[11px] text-red-500">{nuevaCapacidadError}</p>}
+          </div>
+        </Modal>
+
+        {/* ── Modal eliminar capacidad ── */}
+        <Modal open={!!eliminarCapCandidata} onClose={() => { if (!eliminarCapLoading) setEliminarCapCandidata(null); }} title="Eliminar capacidad"
+          footer={eliminarCapCheck.loading || eliminarCapCheck.count > 0
+            ? <Button variant="secondary" onClick={() => setEliminarCapCandidata(null)}>Cerrar</Button>
+            : <>
+                <Button variant="secondary" onClick={() => setEliminarCapCandidata(null)} disabled={eliminarCapLoading}>Cancelar</Button>
+                <Button variant="danger" onClick={confirmarEliminarCapacidad} loading={eliminarCapLoading}>Sí, eliminar</Button>
+              </>}>
+          {eliminarCapCheck.loading ? (
+            <p className="text-sm text-[#888]">Verificando usos...</p>
+          ) : eliminarCapCheck.count > 0 ? (
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-red-600">No se puede eliminar.</p>
+              <p className="text-sm text-[#555]">Hay <strong>{eliminarCapCheck.count}</strong> proyecto{eliminarCapCheck.count !== 1 ? "s" : ""} asociado{eliminarCapCheck.count !== 1 ? "s" : ""} a <strong>{eliminarCapCandidata?.label}</strong>.</p>
+            </div>
+          ) : (
+            <p className="text-sm text-[#555]">¿Estás seguro de eliminar <strong>{eliminarCapCandidata?.label}</strong>? Esta acción no se puede deshacer.</p>
+          )}
+        </Modal>
+
+        {/* ── Modal nueva temática ── */}
+        <Modal open={nuevaTematicaOpen} onClose={() => setNuevaTematicaOpen(false)} title="Nueva temática"
+          footer={<>
+            <Button variant="secondary" onClick={() => setNuevaTematicaOpen(false)} disabled={nuevaTematicaLoading}>Cancelar</Button>
+            <Button onClick={guardarNuevaTematica} loading={nuevaTematicaLoading}>Guardar</Button>
+          </>}>
+          <div className="space-y-2">
+            <label className="text-[11px] font-semibold text-[#888] uppercase tracking-wide">Nombre</label>
+            <input autoFocus type="text" value={nuevaTematicaNombre}
+              onChange={(e) => setNuevaTematicaNombre(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); guardarNuevaTematica(); } }}
+              placeholder="Ej. Transformación digital"
+              className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#2563eb] focus:ring-1 focus:ring-[#2563eb]" />
+            {nuevaTematicaError && <p className="text-[11px] text-red-500">{nuevaTematicaError}</p>}
+          </div>
+        </Modal>
+
+        {/* ── Modal eliminar temática ── */}
+        <Modal open={!!eliminarTemCandidata} onClose={() => { if (!eliminarTemLoading) setEliminarTemCandidata(null); }} title="Eliminar temática"
+          footer={eliminarTemCheck.loading || eliminarTemCheck.count > 0
+            ? <Button variant="secondary" onClick={() => setEliminarTemCandidata(null)}>Cerrar</Button>
+            : <>
+                <Button variant="secondary" onClick={() => setEliminarTemCandidata(null)} disabled={eliminarTemLoading}>Cancelar</Button>
+                <Button variant="danger" onClick={confirmarEliminarTematica} loading={eliminarTemLoading}>Sí, eliminar</Button>
+              </>}>
+          {eliminarTemCheck.loading ? (
+            <p className="text-sm text-[#888]">Verificando usos...</p>
+          ) : eliminarTemCheck.count > 0 ? (
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-red-600">No se puede eliminar.</p>
+              <p className="text-sm text-[#555]">Hay <strong>{eliminarTemCheck.count}</strong> proyecto{eliminarTemCheck.count !== 1 ? "s" : ""} asociado{eliminarTemCheck.count !== 1 ? "s" : ""} a <strong>{eliminarTemCandidata?.label}</strong>.</p>
+            </div>
+          ) : (
+            <p className="text-sm text-[#555]">¿Estás seguro de eliminar <strong>{eliminarTemCandidata?.label}</strong>? Esta acción no se puede deshacer.</p>
+          )}
+        </Modal>
 
         {/* Requerimientos */}
         <div className="border-t border-[#f0f0f0] pt-5">
@@ -351,7 +723,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
                       options={CARGOS_OPTIONS} placeholder="Cualquier cargo" />
                   </FieldWrapper>
                   <FieldWrapper label="% Dedicación" required error={errors[`req_${i}_pct`]}>
-                    <Input type="number" min="1" max="100" value={r.pct_dedicacion}
+                    <Input type="number" min="1" max="100" step="0.5" value={r.pct_dedicacion}
                       onChange={setReqField(i, "pct_dedicacion")} placeholder="100"
                       error={!!errors[`req_${i}_pct`]} />
                   </FieldWrapper>

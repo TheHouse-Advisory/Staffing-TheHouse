@@ -9,7 +9,7 @@ import { getDetailedPersonAbsences, type DetalleAusenciasPersona, COLOR_AUSENCIA
 import { ProyectosPersonaDetalle } from "./ProyectosPersonaDetalle";
 import { Button } from "@/components/ui/Button";
 import { PersonaForm } from "./PersonaForm";
-import { TalentMatrix } from "./TalentMatrix";
+import { TalentMatrix, getTalentBoxName } from "./TalentMatrix";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import type { Persona } from "@/lib/types/database";
 
@@ -180,6 +180,7 @@ export function PersonaProfile({ id }: Props) {
   const pctTotal = asignaciones.reduce((sum, a) => sum + a.pct_dedicacion, 0);
   const { bg: bgOcp, text: textOcp } = colorOcupacion(pctTotal);
   const cargoColor = CARGO_COLORS[persona.cargo_actual ?? ""] ?? CARGO_COLOR_DEFAULT;
+  const talentBoxName = getTalentBoxName(persona.talento_potencial, persona.talento_desempeno);
 
   return (
     <>
@@ -198,6 +199,11 @@ export function PersonaProfile({ id }: Props) {
                 <h2 className="text-xl font-bold">
                   {persona.nombre} {persona.apellido}
                 </h2>
+                {talentBoxName && (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#f0f4ff] text-[#3b5bdb] border border-[#c5d0fa] font-medium">
+                    {talentBoxName}
+                  </span>
+                )}
                 {!persona.activo && (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-[#f0f0f0] text-[#888]">
                     Inactivo

@@ -7,7 +7,6 @@ import {
   eachWeekOfInterval, startOfWeek, endOfWeek, isSameMonth,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import type { Persona } from "@/lib/types/database";
 
@@ -92,12 +91,19 @@ function columnasMes(base: Date): Columna[] {
   });
 }
 
-export function GanttAusencias({ onVerPersona }: { onVerPersona: (p: Persona) => void }) {
-  const [vista, setVista] = useState<Vista>("semana");
-  const [base, setBase] = useState<Date>(new Date());
+interface GanttAusenciasProps {
+  onVerPersona: (p: Persona) => void;
+  vistaExterna?: Vista;
+  baseExterna?: Date;
+}
+
+export function GanttAusencias({ onVerPersona, vistaExterna, baseExterna }: GanttAusenciasProps) {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [ausencias, setAusencias] = useState<AusenciaRaw[]>([]);
   const [loading, setLoading] = useState(true);
+
+  const vista: Vista = vistaExterna ?? "semana";
+  const base: Date = baseExterna ?? new Date();
 
   useEffect(() => {
     async function load() {
@@ -118,17 +124,6 @@ export function GanttAusencias({ onVerPersona }: { onVerPersona: (p: Persona) =>
     vista === "semana" ? columnasSemana(base) :
     columnasMes(base);
 
-  function navAnterior() {
-    if (vista === "dia")    setBase((b) => addDays(startOfISOWeek(b), -7));
-    if (vista === "semana") setBase((b) => subWeeks(b, 5));
-    if (vista === "mes")    setBase((b) => subMonths(b, 4));
-  }
-  function navSiguiente() {
-    if (vista === "dia")    setBase((b) => addDays(startOfISOWeek(b), 7));
-    if (vista === "semana") setBase((b) => addWeeks(b, 5));
-    if (vista === "mes")    setBase((b) => addMonths(b, 4));
-  }
-
   function ausentesEnColumna(col: Columna): Persona[] {
     const ids = new Set(
       ausencias
@@ -140,36 +135,6 @@ export function GanttAusencias({ onVerPersona }: { onVerPersona: (p: Persona) =>
 
   return (
     <div className="flex flex-col h-full">
-      {/* ── Header ─────────────────────────────── */}
-      <div className="flex items-center justify-between mb-3 flex-shrink-0">
-        <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Resúmen</p>
-        <div className="flex items-center gap-1">
-          {/* Toggle vista */}
-          <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
-            {(["dia", "semana", "mes"] as Vista[]).map((v) => (
-              <button
-                key={v}
-                onClick={() => setVista(v)}
-                className="px-2.5 py-1 transition-colors"
-                style={
-                  vista === v
-                    ? { background: "#4a90e2", color: "#fff" }
-                    : { background: "#f9f9f9", color: "#888" }
-                }
-              >
-                {v === "dia" ? "Día" : v === "semana" ? "Semana" : "Mes"}
-              </button>
-            ))}
-          </div>
-          {/* Navegación */}
-          <button onClick={navAnterior} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-            <ChevronLeft className="w-3.5 h-3.5" />
-          </button>
-          <button onClick={navSiguiente} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
 
       {/* ── Gantt ──────────────────────────────── */}
       {loading ? (

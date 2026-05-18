@@ -75,9 +75,11 @@ interface SelectProps extends SelectHTMLAttributes<HTMLSelectElement> {
   error?: boolean;
   options: Array<{ value: string; label: string }>;
   placeholder?: string;
+  /** Si true, el placeholder se puede seleccionar (para restablecer a vacío/null) */
+  allowEmpty?: boolean;
 }
 
-export function Select({ error, options, placeholder, className, ...props }: SelectProps) {
+export function Select({ error, options, placeholder, allowEmpty, className, ...props }: SelectProps) {
   return (
     <select
       {...props}
@@ -89,7 +91,7 @@ export function Select({ error, options, placeholder, className, ...props }: Sel
       )}
     >
       {placeholder && (
-        <option value="" disabled>
+        <option value="" disabled={!allowEmpty}>
           {placeholder}
         </option>
       )}

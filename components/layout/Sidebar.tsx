@@ -1,7 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutDashboard,
   Briefcase,
@@ -14,9 +15,11 @@ import {
   Bell,
   BarChart3,
   ShieldCheck,
+  Plus,
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { EngagementForm } from "@/components/engagements/EngagementForm";
 import type { RolSistema } from "@/lib/types/database";
 
 interface SidebarProps {
@@ -64,6 +67,8 @@ export function Sidebar({
   onSignOut,
 }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [engDrawerOpen, setEngDrawerOpen] = useState(false);
 
   const initiales = nombreCompleto
     .split(" ")
@@ -82,7 +87,7 @@ export function Sidebar({
       </div>
 
       {/* Navegación */}
-      <nav className="flex-1 overflow-y-auto py-2">
+      <nav className="flex-1 overflow-y-auto py-2 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: "none" }}>
         {navItems.map((group) => (
           <div key={group.section}>
             <p className="px-3 pt-4 pb-1.5 text-[10px] font-bold text-white/30 uppercase tracking-widest">
@@ -95,22 +100,36 @@ export function Sidebar({
                 pathname === item.href ||
                 (item.href !== "/tablero" && pathname.startsWith(item.href));
               const Icon = item.icon;
+              const showPlus = item.href === "/engagements" && rol === "admin";
 
               return (
-                <Link
+                <div
                   key={item.href}
-                  href={item.href}
                   className={cn(
-                    "flex items-center gap-2.5 px-4 py-2.5 mx-2 my-px rounded-[7px]",
+                    "group flex items-center mx-2 my-px rounded-[7px]",
                     "text-[13px] transition-all duration-150",
                     isActive
                       ? "bg-[#4a90e2]/20 text-white"
                       : "text-[#a0a8c0] hover:bg-white/[0.07] hover:text-white"
                   )}
                 >
-                  <Icon className="w-4 h-4 flex-shrink-0" />
-                  <span>{item.label}</span>
-                </Link>
+                  <Link
+                    href={item.href}
+                    className="flex items-center gap-2.5 px-4 py-2.5 flex-1 min-w-0"
+                  >
+                    <Icon className="w-4 h-4 flex-shrink-0" />
+                    <span>{item.label}</span>
+                  </Link>
+                  {showPlus && (
+                    <button
+                      onClick={(e) => { e.preventDefault(); e.stopPropagation(); setEngDrawerOpen(true); }}
+                      title="Nuevo engagement"
+                      className="opacity-0 group-hover:opacity-100 transition-opacity pr-3 py-2.5 hover:text-white"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                    </button>
+                  )}
+                </div>
               );
             })}
           </div>
@@ -143,6 +162,12 @@ export function Sidebar({
           </button>
         </div>
       </div>
+
+      <EngagementForm
+        open={engDrawerOpen}
+        onClose={() => setEngDrawerOpen(false)}
+        onSuccess={() => { router.refresh(); }}
+      />
     </aside>
   );
 }
