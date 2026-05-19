@@ -20,8 +20,7 @@ export type CargoNombre = typeof CARGOS[number];
 /** Para usar en selects de formularios — Asociado y Consultor Senior son la misma categoría */
 export const CARGOS_OPTIONS = [
   { value: "Socio",                       label: "Socio" },
-  { value: "Director de Proyectos",       label: "Director de Proyectos" },
-  { value: "Gerente de Proyectos",        label: "Gerente de Proyectos" },
+  { value: "Director / Gerente de Proyectos", label: "Director / Gerente de Proyectos" },
   { value: "Asociado / Consultor Senior", label: "Asociado / Consultor Senior" },
   { value: "Consultor de Proyectos",      label: "Consultor de Proyectos" },
   { value: "Consultor Analista",          label: "Consultor Analista" },
@@ -32,8 +31,7 @@ export const CARGOS_OPTIONS = [
 /** Color por cargo — fuente única para toda la app */
 export const CARGO_COLORS: Record<string, string> = {
   "Socio":                   "#1a1a2e",
-  "Director de Proyectos":   "#4a90e2",
-  "Gerente de Proyectos":    "#7c5cbf",
+  "Director / Gerente de Proyectos": "#4a90e2",
   "Asociado":                       "#e2884a",
   "Consultor Senior":               "#4ab89a",
   "Asociado / Consultor Senior":    "#e2884a",

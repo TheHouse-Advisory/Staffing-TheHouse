@@ -238,10 +238,10 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
                   </tr>
                 );
 
-                const filasProyectos = persona.proyectos.map((proy) => {
+                const filasProyectos = persona.proyectos.map((proy, pi) => {
                   const { dias, esFuturo } = calcDiasEngagement(proy.inicio, proy.fin);
                   return (
-                  <tr key={`proy-${persona.id}-${proy.id}`}>
+                  <tr key={`proy-${persona.id}-${proy.id}-${pi}`}>
                     <td className="pr-3 py-0.5 sticky left-0 bg-white z-10">
                       <div className="flex items-center justify-between gap-1 pl-2 max-w-[130px]">
                         <p className="text-gray-500 truncate text-xs min-w-0">

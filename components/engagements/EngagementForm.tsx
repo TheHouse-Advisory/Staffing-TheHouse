@@ -353,7 +353,65 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
       }
     }
 
+    // ── Cascada de extensión automática ───────────────────────
+    // Si estamos editando y se extendió la fecha_fin, propagar en cascada:
+    // 1. Extender reqs que aún tienen la fecha_fin anterior
+    // 2. Insertar tramo PLAN para la persona CONFIRMADA que cubría el tramo final
+    if (engagement && form.fecha_fin_estimada && engagement.fecha_fin_estimada) {
+      const oldFin = engagement.fecha_fin_estimada;
+      const newFin = form.fecha_fin_estimada;
+      if (newFin > oldFin) {
+        const { data: reqsAExtender } = await supabase
+          .from("requerimiento_engagement")
+          .select("id, cargo_requerido, pct_dedicacion")
+          .eq("engagement_id", engId)
+          .eq("fecha_fin", oldFin) as { data: { id: string; cargo_requerido: string | null; pct_dedicacion: number }[] | null };
+
+        if (reqsAExtender && reqsAExtender.length > 0) {
+          // 1. Extender fecha_fin de los reqs
+          await supabase
+            .from("requerimiento_engagement")
+            .update({ fecha_fin: newFin })
+            .in("id", reqsAExtender.map((r) => r.id));
+
+          // Inicio del tramo de extensión = día siguiente del fin anterior
+          const dExt = new Date(oldFin + "T00:00:00");
+          dExt.setDate(dExt.getDate() + 1);
+          const extensionStart = dExt.toISOString().split("T")[0];
+
+          // 2. Por cada req, buscar la última asignación CONFIRMADO que llegaba hasta oldFin
+          for (const req of reqsAExtender) {
+            const { data: ultimaAsig } = await (supabase as any)
+              .from("asignacion")
+              .select("persona_id, cargo_al_momento, pct_dedicacion")
+              .eq("requerimiento_id", req.id)
+              .eq("estado_staffing", "CONFIRMADO")
+              .eq("estado", "activa")
+              .eq("fecha_fin", oldFin)
+              .order("fecha_fin", { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (ultimaAsig) {
+              await supabase.from("asignacion").insert({
+                engagement_id: engId,
+                requerimiento_id: req.id,
+                persona_id: (ultimaAsig as any).persona_id,
+                cargo_al_momento: (ultimaAsig as any).cargo_al_momento,
+                pct_dedicacion: (ultimaAsig as any).pct_dedicacion,
+                fecha_inicio: extensionStart,
+                fecha_fin: newFin,
+                estado: "activa",
+                estado_staffing: "PLAN",
+              });
+            }
+          }
+        }
+      }
+    }
+
     setLoading(false);
+    window.dispatchEvent(new CustomEvent("engagementChanged", { detail: { engagementId: engId } }));
     onSuccess();
     onClose();
   };
