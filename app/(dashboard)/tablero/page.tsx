@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths, addDays, format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -12,7 +12,8 @@ import { cn } from "@/lib/utils";
 type VistaPrincipal = "proyectos" | "perfil";
 type Periodo = "dia" | "semana" | "mes";
 
-export default function TableroPage() {
+// Componente interno que lee useSearchParams — debe estar dentro de <Suspense>
+function TableroContent() {
   const searchParams = useSearchParams();
   const openEngagementId = searchParams.get("openEngagementId") ?? undefined;
   const [vistaPrincipal, setVistaPrincipal] = useState<VistaPrincipal>("proyectos");
@@ -111,5 +112,13 @@ export default function TableroPage() {
 
       </div>
     </div>
+  );
+}
+
+export default function TableroPage() {
+  return (
+    <Suspense fallback={null}>
+      <TableroContent />
+    </Suspense>
   );
 }
