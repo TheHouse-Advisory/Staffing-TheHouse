@@ -249,6 +249,7 @@ export interface Asignacion {
   fecha_inicio: string;
   fecha_fin: string | null;
   estado: EstadoAsignacion;
+  estado_staffing: "CONFIRMADO" | "PLAN";
   propuesta_origen_id: string | null;
   aprobada_por: string | null;
   fecha_aprobacion: string | null;

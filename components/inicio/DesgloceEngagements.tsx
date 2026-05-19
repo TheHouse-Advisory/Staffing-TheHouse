@@ -16,8 +16,11 @@ import type { Engagement } from "@/lib/types/database";
 // ── Cargos Asociado y Consultor Senior son la misma categoría visual ──
 const GRUPO_SENIOR = ["Asociado", "Consultor Senior", "Asociado / Consultor Senior"];
 const LABEL_SENIOR = "Asociado / Consultor Senior";
+const GRUPO_DIR = ["Director de Proyectos", "Gerente de Proyectos", "Director / Gerente de Proyectos", "Director", "Gerente"];
+const LABEL_DIR = "Director / Gerente de Proyectos";
 
 function normalizeCargoDisplay(cargo: string): string {
+  if (GRUPO_DIR.includes(cargo)) return LABEL_DIR;
   return GRUPO_SENIOR.includes(cargo) ? LABEL_SENIOR : cargo;
 }
 function matchesCargo(reqCargo: string | null, rowCargo: string): boolean {
@@ -27,8 +30,9 @@ function matchesCargo(reqCargo: string | null, rowCargo: string): boolean {
 }
 
 const JERARQUIA: Record<string, number> = {
-  "Socio": 1, "Director de Proyectos": 2, "Director": 2,
-  "Gerente de Proyectos": 3, "Gerente": 3,
+  "Socio": 1,
+  "Director / Gerente de Proyectos": 2, "Director de Proyectos": 2, "Director": 2,
+  "Gerente de Proyectos": 2, "Gerente": 2,
   "Asociado / Consultor Senior": 4,
   "Asociado": 4, "Consultor Senior": 4,
   "Consultor de Proyectos": 5, "Consultor Proyecto": 5,
@@ -37,8 +41,9 @@ const JERARQUIA: Record<string, number> = {
 };
 
 const COLORES: Record<string, string> = {
-  "Socio": "#1a1a2e", "Director de Proyectos": "#4a90e2", "Director": "#4a90e2",
-  "Gerente de Proyectos": "#7c5cbf", "Gerente": "#7c5cbf",
+  "Socio": "#1a1a2e",
+  "Director / Gerente de Proyectos": "#4a90e2", "Director de Proyectos": "#4a90e2", "Director": "#4a90e2",
+  "Gerente de Proyectos": "#4a90e2", "Gerente": "#4a90e2",
   "Asociado / Consultor Senior": "#e2884a",
   "Asociado": "#e2884a", "Consultor Senior": "#4ab89a",
   "Consultor de Proyectos": "#e24a6a",
@@ -83,6 +88,8 @@ interface PersonaAsig {
   cargo: string | null; pct: number;
   fecha_inicio: string; fecha_fin: string;
   asignacionId: string;
+  estado_staffing: "CONFIRMADO" | "PLAN";
+  requerimiento_id: string | null;
 }
 interface ReqData {
   id: string; cargo_requerido: string | null;
@@ -109,10 +116,12 @@ interface Props {
   baseExterna?: Date;
   /** Si se provee, delega el clic de avatar al padre (ej. inicio/page.tsx usa su propio modal) */
   onPersonaClick?: (personaId: string) => void;
+  /** Si se provee, expande y hace scroll hasta ese engagement al cargar */
+  openEngagementId?: string;
 }
 
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick }: Props) {
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
   const [baseInterna, setBaseInterna] = useState<Date>(new Date());
 
@@ -133,8 +142,48 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const [modalIndustria, setModalIndustria] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
 
+  // Toast de alertas
+  const [toast, setToast] = useState<string | null>(null);
+  const showToast = (msg: string) => {
+    setToast(msg);
+    setTimeout(() => setToast(null), 6000);
+  };
+
+  // Confirmación de planes
+  const [confirmando, setConfirmando] = useState<string | null>(null);
+
+  // Resize de PLAN por manillas
+  const [resizing, setResizing] = useState<{ p: PersonaAsig; edge: "start" | "end" } | null>(null);
+  const [resizeHoverIdx, setResizeHoverIdx] = useState<number | null>(null);
+  const resizeHoverRef = useRef<number | null>(null);
+
+  async function confirmarPlan(p: PersonaAsig, engId?: string) {
+    setConfirmando(p.asignacionId);
+    const sb = createAnyClient();
+    await sb.from("asignacion")
+      .update({ estado_staffing: "CONFIRMADO" })
+      .eq("id", p.asignacionId);
+    if (p.requerimiento_id) {
+      const { data: competidores } = await sb.from("asignacion")
+        .select("id")
+        .eq("requerimiento_id", p.requerimiento_id)
+        .eq("estado_staffing", "PLAN")
+        .neq("id", p.asignacionId)
+        .lte("fecha_inicio", p.fecha_fin)
+        .gte("fecha_fin", p.fecha_inicio);
+      if (competidores && competidores.length > 0) {
+        await sb.from("asignacion")
+          .delete()
+          .in("id", (competidores as { id: string }[]).map((c) => c.id));
+      }
+    }
+    setConfirmando(null);
+    refresh(engId);
+  }
+
   // Drag & Drop
   const [dragOverReqId, setDragOverReqId] = useState<string | null>(null);
+  const [dragOverEngId, setDragOverEngId] = useState<string | null>(null);
   const [desasignando, setDesasignando] = useState<string | null>(null);
   // Ghost circles (extensión)
   const [dragOverGhostKey, setDragOverGhostKey] = useState<string | null>(null);
@@ -182,7 +231,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     async function load() {
       setLoading(true);
       const sb = createAnyClient();
-      const cutoff = (() => { const d = new Date(); d.setDate(d.getDate() - 30); return d.toISOString().split("T")[0]; })();
+      const cutoff = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().split("T")[0]; })();
       const filtroCutoff = [`fecha_fin_real.gte.${cutoff}`, `and(fecha_fin_real.is.null,fecha_fin_estimada.gte.${cutoff})`, `and(fecha_fin_real.is.null,fecha_fin_estimada.is.null)`].join(",");
 
       const [engRes, asigRes, ausRes] = await Promise.all([
@@ -195,7 +244,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           .or(filtroCutoff),
 
         sb.from("asignacion")
-          .select("id, engagement_id, persona_id, pct_dedicacion, fecha_inicio, fecha_fin, persona:persona_id(nombre, apellido, cargo_actual)" as any)
+          .select("id, engagement_id, persona_id, pct_dedicacion, fecha_inicio, fecha_fin, estado_staffing, requerimiento_id, persona:persona_id(nombre, apellido, cargo_actual)" as any)
           .eq("estado", "activa")
           .lte("fecha_inicio", finStr)
           .gte("fecha_fin", lookbackStr),
@@ -229,6 +278,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           fecha_inicio: a.fecha_inicio,
           fecha_fin: a.fecha_fin,
           asignacionId: a.id,
+          estado_staffing: (a.estado_staffing ?? "CONFIRMADO") as "CONFIRMADO" | "PLAN",
+          requerimiento_id: a.requerimiento_id ?? null,
         });
       }
 
@@ -310,7 +361,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     if (vista === "mes")    setBaseInterna((b) => addMonths(b, 4));
   }
 
-  function refresh() {
+  function refresh(focusId?: string) {
+    if (focusId) focusEngIdRef.current = focusId;
     setReloadKey((k) => k + 1);
     onAsignacionChange?.();
     window.dispatchEvent(new CustomEvent("asignacionChanged"));
@@ -323,8 +375,52 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     setAvatarPopup({ personaId: p.id, x: e.clientX, y: e.clientY });
   }
 
+  // Drop directo sobre el título del engagement — crea req + asignación CONFIRMADO automáticamente
+  async function handleDropOnEngagement(e: React.DragEvent, eng: EngRow) {
+    e.preventDefault();
+    setDragOverEngId(null);
+    let data: { personaId: string; nombre: string; apellido: string; cargo_actual: string } | null = null;
+    try { data = JSON.parse(e.dataTransfer.getData("persona")); } catch { return; }
+    if (!data?.personaId) return;
+
+    const sb = createAnyClient();
+    const cargoRequerido = data.cargo_actual || null;
+    const fechaInicio = eng.fecha_inicio;
+    const fechaFin = eng.fecha_fin ?? eng.fecha_inicio;
+
+    const { data: newReq, error: reqErr } = await (sb as any)
+      .from("requerimiento_engagement")
+      .insert({
+        engagement_id: eng.id,
+        cargo_requerido: cargoRequerido,
+        fase_nombre: null,
+        pct_dedicacion: 100,
+        fecha_inicio: fechaInicio,
+        fecha_fin: fechaFin,
+        descripcion: null,
+      })
+      .select("id")
+      .single();
+
+    if (reqErr || !newReq) return;
+
+    await (sb as any).from("asignacion").insert({
+      engagement_id: eng.id,
+      requerimiento_id: (newReq as any).id,
+      persona_id: data.personaId,
+      cargo_al_momento: cargoRequerido,
+      pct_dedicacion: 100,
+      fecha_inicio: fechaInicio,
+      fecha_fin: fechaFin,
+      estado: "activa",
+      estado_staffing: "PLAN",
+    });
+
+    refresh(eng.id);
+  }
+
   // Drop de persona desde cuadrante EQUIPO sobre un slot vacío
-  async function handleDrop(e: React.DragEvent, eng: EngRow, req: ReqData) {
+  async function handleDrop(e: React.DragEvent, eng: EngRow, req: ReqData, forcePlan = false) {
     e.preventDefault();
     setDragOverReqId(null);
     let data: { personaId: string; nombre: string; apellido: string; cargo_actual: string } | null = null;
@@ -332,18 +428,65 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     if (!data?.personaId) return;
 
     const sb = createAnyClient();
-    await (sb as any).from("asignacion").insert({
+    const nombre = `${data.nombre} ${data.apellido}`.trim();
+
+    // Consultar ausencias de la persona dentro del rango del requerimiento
+    const { data: ausPersona } = await sb
+      .from("ausencia")
+      .select("fecha_inicio, fecha_fin")
+      .eq("persona_id", data.personaId)
+      .lte("fecha_inicio", req.fecha_fin ?? req.fecha_inicio)
+      .gte("fecha_fin", req.fecha_inicio)
+      .order("fecha_inicio");
+
+    const baseInsert = {
       engagement_id: eng.id,
       requerimiento_id: req.id,
       persona_id: data.personaId,
       cargo_al_momento: data.cargo_actual,
       pct_dedicacion: req.pct_dedicacion,
-      fecha_inicio: req.fecha_inicio,
-      fecha_fin: req.fecha_fin,
-      estado: "activa",
-    });
-    refresh();
-    onOpenPanel?.(null); // cierra panel lateral al llenar el slot por drag & drop
+      estado: "activa" as const,
+      estado_staffing: (forcePlan ? "PLAN" : "CONFIRMADO") as "CONFIRMADO" | "PLAN",
+    };
+
+    if (!ausPersona || ausPersona.length === 0) {
+      // Sin ausencias: inserción normal
+      await sb.from("asignacion").insert({
+        ...baseInsert,
+        fecha_inicio: req.fecha_inicio,
+        fecha_fin: req.fecha_fin,
+      });
+    } else {
+      // Auto-split: insertar segmentos libres entre ausencias
+      const segments: { fecha_inicio: string; fecha_fin: string }[] = [];
+      let cursor = req.fecha_inicio;
+      const reqFin = req.fecha_fin ?? req.fecha_inicio;
+
+      for (const aus of ausPersona as { fecha_inicio: string; fecha_fin: string }[]) {
+        const ausIni = aus.fecha_inicio > cursor ? aus.fecha_inicio : cursor;
+        const ausFin = aus.fecha_fin;
+        // Segmento antes de la ausencia
+        const segFin = format(addDays(new Date(ausIni + "T00:00:00"), -1), "yyyy-MM-dd");
+        if (cursor <= segFin) segments.push({ fecha_inicio: cursor, fecha_fin: segFin });
+        // Avanzar cursor al día siguiente del fin de la ausencia
+        cursor = format(addDays(new Date(ausFin + "T00:00:00"), 1), "yyyy-MM-dd");
+      }
+      // Segmento final tras la última ausencia
+      if (cursor <= reqFin) segments.push({ fecha_inicio: cursor, fecha_fin: reqFin });
+
+      for (const seg of segments) {
+        await sb.from("asignacion").insert({ ...baseInsert, ...seg });
+      }
+
+      // Toast informativo
+      const msgs = (ausPersona as { fecha_inicio: string; fecha_fin: string }[]).map(
+        (a) => `del ${a.fecha_inicio} al ${a.fecha_fin}`
+      ).join(", ");
+      showToast(`${nombre} tiene ausencias ${msgs}. Asignación ajustada automáticamente.`);
+    }
+
+    refresh(eng.id);
+    onOpenPanel?.(null);
   }
 
   // Crea requerimiento para el período de extensión y asigna a personaId
@@ -388,7 +531,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       estado: "activa",
     });
 
-    refresh();
+    refresh(eng.id);
   }
 
   // Click en ghost → extiende a la misma persona
@@ -411,12 +554,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   }
 
   // Eliminar asignación (botón X en avatar)
-  async function handleDesasignar(asignacionId: string) {
+  async function handleDesasignar(asignacionId: string, engId?: string) {
     setDesasignando(asignacionId);
     const sb = createAnyClient();
     await sb.from("asignacion").delete().eq("id", asignacionId);
     setDesasignando(null);
-    refresh();
+    refresh(engId);
   }
 
   // Mover engagement a papelera
@@ -452,6 +595,71 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     window.addEventListener("diaCriticoChanged", handler);
     return () => window.removeEventListener("diaCriticoChanged", handler);
   }, []);
+
+  // ID del último engagement editado — para scroll post-reload
+  const focusEngIdRef = useRef<string | null>(null);
+
+  // Recarga al guardar cualquier engagement; captura el ID para el scroll posterior
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const id = (e as CustomEvent).detail?.engagementId as string | undefined;
+      if (id) focusEngIdRef.current = id;
+      setReloadKey((k) => k + 1);
+    };
+    window.addEventListener("engagementChanged", handler);
+    return () => window.removeEventListener("engagementChanged", handler);
+  }, []);
+
+  // Cuando el reload termina, expande y hace scroll al engagement editado
+  useEffect(() => {
+    if (loading) return;
+    const id = focusEngIdRef.current ?? openEngagementId;
+    if (!id) return;
+    // Asegurar expansión
+    setColapsados((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    const timer = setTimeout(() => {
+      document.querySelector(`[data-eng-id="${id}"]`)
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
+      focusEngIdRef.current = null; // limpiar tras el scroll
+    }, 200);
+    return () => clearTimeout(timer);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loading]);
+
+  // Cursor global durante resize
+  useEffect(() => {
+    document.body.style.cursor = resizing ? "ew-resize" : "";
+    return () => { document.body.style.cursor = ""; };
+  }, [resizing]);
+
+  // Mouseup global: aplica resize al soltar
+  useEffect(() => {
+    if (!resizing) return;
+    const onUp = async () => {
+      const idx = resizeHoverRef.current;
+      if (idx !== null) {
+        const col = columnas[idx];
+        const newDate = resizing.edge === "start"
+          ? format(col.inicio, "yyyy-MM-dd")
+          : format(col.fin, "yyyy-MM-dd");
+        const sb = createAnyClient();
+        await sb.from("asignacion")
+          .update({ [resizing.edge === "start" ? "fecha_inicio" : "fecha_fin"]: newDate })
+          .eq("id", resizing.p.asignacionId);
+        refresh();
+      }
+      setResizing(null);
+      setResizeHoverIdx(null);
+      resizeHoverRef.current = null;
+    };
+    document.addEventListener("mouseup", onUp);
+    return () => document.removeEventListener("mouseup", onUp);
+  }, [resizing, columnas]);
 
   function resolverIntensidad(eng: EngRow, col: Columna): string {
     const dcs = diasCriticosMap.get(eng.id) ?? [];
@@ -494,6 +702,16 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
   return (
     <div className="flex flex-col h-full relative">
+      {/* Toast de alertas staffing */}
+      {toast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] max-w-lg w-full px-4">
+          <div className="flex items-start gap-3 bg-amber-50 border border-amber-300 text-amber-900 rounded-xl shadow-lg px-4 py-3 text-sm">
+            <span className="text-amber-500 text-base leading-none mt-0.5">⚠</span>
+            <p className="flex-1 leading-snug">{toast}</p>
+            <button onClick={() => setToast(null)} className="text-amber-400 hover:text-amber-600 leading-none text-base font-bold">×</button>
+          </div>
+        </div>
+      )}
       {/* Barra de controles — se oculta cuando la navegación es controlada externamente */}
       <div className="flex items-center justify-between mb-3 flex-shrink-0">
         <div className="flex items-center gap-2">
@@ -605,7 +823,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                   ) : null;
 
                   const filaHdr = (
-                    <tr key={`hdr-${eng.id}`}>
+                    <tr key={`hdr-${eng.id}`} data-eng-id={eng.id}>
                       <td className="pr-3 pt-2 pb-1 sticky left-0 bg-white z-10">
                         <div className="flex items-center gap-1 group">
                           {/* Chevron colapso */}
@@ -644,19 +862,29 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                       {columnas.map((col, i) => {
                         const esHoy = col.inicio <= hoy && hoy <= col.fin;
                         const activo = rangoSolapan(eng.fecha_inicio, eng.fecha_fin, col.inicio, col.fin);
-                        if (!activo) return <td key={i} className="py-1 px-1" />;
+                        const isDragTarget = dragOverEngId === eng.id;
 
-                        // Barra de intensidad (tanto expandido como colapsado)
+                        if (!activo) return (
+                          <td key={i} className="py-1 px-1"
+                            onDragOver={(ev) => { ev.preventDefault(); setDragOverEngId(eng.id); }}
+                            onDragLeave={() => setDragOverEngId(null)}
+                            onDrop={(ev) => handleDropOnEngagement(ev, eng)} />
+                        );
+
                         const intensidad = resolverIntensidad(eng, col);
                         const barColor = INTENSIDAD_COLOR[intensidad] ?? "#f59e0b";
 
                         if (!estaColapsado) {
                           return (
-                            <td key={i} className="py-1 px-1">
+                            <td key={i} className="py-1 px-1"
+                              style={{ background: isDragTarget ? "#dbeafe" : undefined, borderRadius: 6, transition: "background 0.15s" }}
+                              onDragOver={(ev) => { ev.preventDefault(); setDragOverEngId(eng.id); }}
+                              onDragLeave={() => setDragOverEngId(null)}
+                              onDrop={(ev) => handleDropOnEngagement(ev, eng)}>
                               <div
                                 className="h-1.5 rounded-full cursor-pointer hover:h-2.5 transition-all"
                                 style={{ background: barColor, opacity: esHoy ? 1 : 0.5 }}
-                                title={`${intensidad.charAt(0).toUpperCase() + intensidad.slice(1)} · Clic para cambiar`}
+                                title={`${intensidad.charAt(0).toUpperCase() + intensidad.slice(1)} · Clic para cambiar · Arrastra una persona para asignar`}
                                 onClick={(ev) => {
                                   ev.stopPropagation();
                                   setQuickEdit({
@@ -672,11 +900,15 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                         }
 
                         return (
-                          <td key={i} className="py-1 px-0.5">
+                          <td key={i} className="py-1 px-0.5"
+                            style={{ background: isDragTarget ? "#dbeafe" : undefined, borderRadius: 6, transition: "background 0.15s" }}
+                            onDragOver={(ev) => { ev.preventDefault(); setDragOverEngId(eng.id); }}
+                            onDragLeave={() => setDragOverEngId(null)}
+                            onDrop={(ev) => handleDropOnEngagement(ev, eng)}>
                             <div
                               className="h-5 rounded-full cursor-pointer hover:opacity-100 transition-opacity"
-                              style={{ background: barColor, opacity: esHoy ? 1 : 0.75 }}
-                              title={`${intensidad.charAt(0).toUpperCase() + intensidad.slice(1)} · Clic para cambiar`}
+                              style={{ background: barColor, opacity: isDragTarget ? 1 : esHoy ? 1 : 0.75 }}
+                              title={`${intensidad.charAt(0).toUpperCase() + intensidad.slice(1)} · Arrastra una persona para asignar`}
                               onClick={(ev) => {
                                 ev.stopPropagation();
                                 setQuickEdit({
@@ -693,156 +925,189 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                     </tr>
                   );
 
-                  const filasCargo = cargosUnicos.map((cargo) => {
-                    // Personas que coinciden con este row (normalizado)
+                  const filasCargo = cargosUnicos.flatMap((cargo) => {
                     const personas = eng.personas.filter((p) =>
                       normalizeCargoDisplay(p.cargo ?? "Sin cargo") === cargo
                     );
                     const cargoColor = COLORES[cargo] ?? COLOR_DEFAULT;
+                    const confirmados = personas.filter((p) => p.estado_staffing === "CONFIRMADO");
 
-                    return (
-                      <tr key={`cargo-${eng.id}-${cargo}`}>
-                        <td className="pr-3 py-0.5 sticky left-0 bg-white z-10">
-                          <p className="text-gray-400 truncate max-w-[150px] pl-3 text-[11px]">{cargo}</p>
-                        </td>
-                        {columnas.map((col, i) => {
-                          const esHoy = col.inicio <= hoy && hoy <= col.fin;
-                          const colIniStr = format(col.inicio, "yyyy-MM-dd");
-                          const activos = personas.filter((p) =>
-                            rangoSolapan(p.fecha_inicio, p.fecha_fin, col.inicio, col.fin)
-                          );
-                          // Requerimientos de este cargo en este periodo (sin cubrir)
-                          const reqsEnCol = eng.reqs.filter((r) =>
-                            matchesCargo(r.cargo_requerido, cargo) &&
-                            rangoSolapan(r.fecha_inicio, r.fecha_fin, col.inicio, col.fin)
-                          );
-                          const unfilledReqs = reqsEnCol.slice(activos.length);
+                    const barEdge = (p: PersonaAsig, colIdx: number) => {
+                      const prev = columnas[colIdx - 1];
+                      const next = columnas[colIdx + 1];
+                      return {
+                        isFirst: !prev || !rangoSolapan(p.fecha_inicio, p.fecha_fin, prev.inicio, prev.fin),
+                        isLast:  !next || !rangoSolapan(p.fecha_inicio, p.fecha_fin, next.inicio, next.fin),
+                      };
+                    };
 
-                          // Ghost circles para ayuda_interna: último asignado cuando el
-                          // engagement sigue activo pero la asignación anterior ya venció
-                          const esColActiva = rangoSolapan(eng.fecha_inicio, eng.fecha_fin, col.inicio, col.fin);
-                          const ghostPersonas = (
-                            eng.tipo === "ayuda_interna" &&
-                            esColActiva &&
-                            activos.length === 0 &&
-                            unfilledReqs.length === 0
-                          )
-                            ? personas
-                                .filter((p) => p.fecha_fin < colIniStr)
-                                .sort((a, b) => b.fecha_fin.localeCompare(a.fecha_fin))
-                                .filter((p, i, arr) => arr.findIndex((q) => q.id === p.id) === i)
-                            : [];
+                    const planesAll = personas.filter((p) => p.estado_staffing === "PLAN");
+                    const totalRowSpan = Math.max(confirmados.length, 1) + Math.max(planesAll.length, 1);
 
-                          return (
-                            <td key={i} className="py-0.5 px-1">
-                              <div className="flex flex-wrap gap-1 justify-center min-h-[36px] items-center">
-                                {/* Personas asignadas con botón X */}
-                                {activos.map((p) => (
-                                  <div key={p.asignacionId}
-                                    title={`${p.nombre} ${p.apellido} · ${p.pct}% · Clic para ver resumen`}
-                                    className="flex flex-col items-center gap-0.5 relative group/persona">
-                                    <div
-                                      onClick={(e) => handleAvatarClick(e, p)}
-                                      className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold shadow-sm cursor-pointer hover:scale-110 transition-transform"
+                    const labelCell = (
+                      <td rowSpan={totalRowSpan} className="pr-2 py-0 sticky left-0 bg-white z-10 align-top border-r border-gray-100" style={{ minWidth: 110 }}>
+                        <p className="text-gray-400 truncate pl-3 text-[11px] font-medium pt-1.5" style={{ maxWidth: 110 }}>{cargo}</p>
+                      </td>
+                    );
+
+                    // ── Una fila por persona CONFIRMADA ────────────────────
+                    const confRows: React.ReactElement[] = confirmados.length > 0
+                      ? confirmados.map((p, pi) => (
+                          <tr key={`conf-${eng.id}-${cargo}-${pi}`}>
+                            {pi === 0 && labelCell}
+                            {columnas.map((col, i) => {
+                              const esHoy = col.inicio <= hoy && hoy <= col.fin;
+                              const isActive = rangoSolapan(p.fecha_inicio, p.fecha_fin, col.inicio, col.fin);
+                              const { isFirst, isLast } = barEdge(p, i);
+                              return (
+                                <td key={i} className="p-0" style={{ height: 28 }}>
+                                  {isActive && (
+                                    <div className="relative group/bar flex items-center h-6 w-full cursor-pointer overflow-visible"
                                       style={{
                                         backgroundColor: cargoColor,
-                                        opacity: desasignando === p.asignacionId ? 0.4 : esHoy ? 1 : 0.75,
-                                        outline: esHoy ? `2px solid ${cargoColor}` : "none",
-                                        outlineOffset: "2px",
-                                      }}>
-                                      {iniciales(p.nombre, p.apellido)}
-                                    </div>
-                                    {/* X para desasignar */}
-                                    <button
-                                      onClick={() => handleDesasignar(p.asignacionId)}
-                                      title="Desasignar"
-                                      className="absolute -top-1 -right-1 w-3.5 h-3.5 rounded-full bg-red-500 text-white opacity-0 group-hover/persona:opacity-100 flex items-center justify-center transition-opacity z-10 hover:bg-red-600"
-                                    >
-                                      <span className="text-[9px] leading-none font-bold">×</span>
-                                    </button>
-                                    <span className="text-[9px] font-bold px-1 rounded-full leading-tight"
-                                      style={{
-                                        background: esHoy ? "#dbeafe" : "#f1f5f9",
-                                        color: esHoy ? "#1d4ed8" : "#64748b",
-                                      }}>
-                                      {p.pct}%
-                                    </span>
-                                  </div>
-                                ))}
-
-                                {/* Slots vacíos — clicables y drop targets */}
-                                {unfilledReqs.map((req) => {
-                                  const isDragOver = dragOverReqId === req.id;
-                                  return (
-                                    <div
-                                      key={`vacio-${req.id}`}
-                                      title="Clic para asignar · Arrastra una persona aquí"
-                                      onClick={() => onOpenPanel?.({
-                                        reqId: req.id,
-                                        engId: eng.id,
-                                        engNombre: eng.nombre,
-                                        engCliente: eng.cliente ?? "",
-                                      })}
-                                      onDragOver={(e) => { e.preventDefault(); setDragOverReqId(req.id); }}
-                                      onDragLeave={() => setDragOverReqId(null)}
-                                      onDrop={(e) => handleDrop(e, eng, req)}
-                                      className="w-7 h-7 rounded-full flex items-center justify-center cursor-pointer transition-all duration-150"
-                                      style={{
-                                        border: `2px dashed ${cargoColor}`,
-                                        opacity: isDragOver ? 1 : 0.6,
-                                        background: isDragOver ? `${cargoColor}22` : "transparent",
-                                        transform: isDragOver ? "scale(1.15)" : "scale(1)",
+                                        opacity: desasignando === p.asignacionId ? 0.3 : esHoy ? 1 : 0.85,
+                                        borderRadius: `${isFirst ? 6 : 0}px ${isLast ? 6 : 0}px ${isLast ? 6 : 0}px ${isFirst ? 6 : 0}px`,
+                                        marginLeft: isFirst ? 2 : 0, marginRight: isLast ? 2 : 0,
                                       }}
-                                    >
-                                      <span className="text-[10px] font-bold" style={{ color: cargoColor }}>+</span>
+                                      onClick={(e) => handleAvatarClick(e, p)}
+                                      title={`${p.nombre} ${p.apellido} · ${p.pct}%`}>
+                                      {isFirst && <span className="pl-2 text-white text-[10px] font-bold truncate select-none">{iniciales(p.nombre, p.apellido)} <span className="opacity-80 font-normal">{p.apellido}</span></span>}
+                                      {isLast  && <span className="ml-auto pr-1.5 text-white text-[9px] opacity-80 select-none">{p.pct}%</span>}
+                                      <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
+                                        title="Desasignar"
+                                        className="absolute top-0 right-0 bottom-0 w-5 flex items-center justify-center opacity-0 group-hover/bar:opacity-100 bg-red-500 transition-opacity z-10"
+                                        style={{ borderRadius: `0 ${isLast ? 6 : 0}px ${isLast ? 6 : 0}px 0` }}>
+                                        <span className="text-white text-[9px] font-bold">×</span>
+                                      </button>
+                                      {/* Manillas resize — CONFIRMADO */}
+                                      {isFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "start" }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-l hover:bg-white/30 transition-colors" />}
+                                      {isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r hover:bg-white/30 transition-colors" />}
                                     </div>
-                                  );
-                                })}
-
-                                {/* Ghost circles: última persona asignada en período extendido.
-                                    Clic → extiende a la misma persona.
-                                    Drop → extiende a quien se suelte. */}
-                                {ghostPersonas.map((p) => {
-                                  const ghostKey = `${eng.id}-${cargo}-${p.id}`;
-                                  const isLoadingGhost = ghostLoading === ghostKey;
-                                  const isDragOverGhost = dragOverGhostKey === ghostKey;
-                                  return (
-                                    <div
-                                      key={`ghost-${p.asignacionId}`}
-                                      title={`${p.nombre} ${p.apellido} · ${p.pct}% · Clic para extender · Arrastra otra persona para reemplazar`}
-                                      className="flex flex-col items-center gap-0.5 cursor-pointer"
-                                      onClick={() => handleGhostClick(eng, cargo, p)}
-                                      onDragOver={(e) => { e.preventDefault(); setDragOverGhostKey(ghostKey); }}
-                                      onDragLeave={() => setDragOverGhostKey(null)}
-                                      onDrop={(e) => handleGhostDrop(e, eng, cargo, p)}
-                                    >
-                                      <div
-                                        className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold transition-all"
-                                        style={{
-                                          border: `2px dashed ${cargoColor}`,
-                                          color: isLoadingGhost ? "transparent" : cargoColor,
-                                          opacity: isDragOverGhost ? 1 : 0.65,
-                                          background: isDragOverGhost ? `${cargoColor}22` : "transparent",
-                                          transform: isDragOverGhost ? "scale(1.15)" : "scale(1)",
-                                        }}
-                                      >
-                                        {isLoadingGhost
-                                          ? <Loader2 className="w-3 h-3 animate-spin" style={{ color: cargoColor }} />
-                                          : iniciales(p.nombre, p.apellido)
-                                        }
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))
+                      : [(
+                          <tr key={`conf-${eng.id}-${cargo}-empty`}>
+                            {labelCell}
+                            {columnas.map((col, i) => {
+                              const colIniStr = format(col.inicio, "yyyy-MM-dd");
+                              const reqsEnCol = eng.reqs.filter((r) =>
+                                matchesCargo(r.cargo_requerido, cargo) &&
+                                rangoSolapan(r.fecha_inicio, r.fecha_fin, col.inicio, col.fin)
+                              );
+                              const esColActiva = rangoSolapan(eng.fecha_inicio, eng.fecha_fin, col.inicio, col.fin);
+                              const ghostPersonas = (eng.tipo === "ayuda_interna" && esColActiva && reqsEnCol.length === 0)
+                                ? personas.filter((p) => p.fecha_fin < colIniStr)
+                                    .sort((a, b) => b.fecha_fin.localeCompare(a.fecha_fin))
+                                    .filter((p, _, arr) => arr.findIndex((q) => q.id === p.id) === 0)
+                                : [];
+                              return (
+                                <td key={i} className="p-0 align-middle" style={{ height: 28 }}
+                                  onDragOver={(e) => { e.preventDefault(); if (reqsEnCol[0]) setDragOverReqId(reqsEnCol[0].id + "-conf"); }}
+                                  onDragLeave={() => setDragOverReqId(null)}
+                                  onDrop={(e) => { setDragOverReqId(null); if (reqsEnCol[0]) handleDrop(e, eng, reqsEnCol[0], false); }}>
+                                  {ghostPersonas.map((p) => {
+                                    const { isFirst, isLast } = barEdge(p, i);
+                                    const ghostKey = `${eng.id}-${cargo}-${p.id}`;
+                                    return (
+                                      <div key={`ghost-${p.asignacionId}`}
+                                        className="flex items-center h-6 w-full cursor-pointer"
+                                        style={{ border: `2px dashed ${cargoColor}80`, borderRadius: `${isFirst ? 6 : 0}px ${isLast ? 6 : 0}px ${isLast ? 6 : 0}px ${isFirst ? 6 : 0}px`, marginLeft: isFirst ? 2 : 0, marginRight: isLast ? 2 : 0, opacity: dragOverGhostKey === ghostKey ? 1 : 0.6 }}
+                                        onClick={() => handleGhostClick(eng, cargo, p)}
+                                        onDragOver={(e) => { e.preventDefault(); setDragOverGhostKey(ghostKey); }}
+                                        onDragLeave={() => setDragOverGhostKey(null)}
+                                        onDrop={(e) => handleGhostDrop(e, eng, cargo, p)}>
+                                        {isFirst && <span className="pl-2 text-[10px] font-bold" style={{ color: cargoColor }}>{iniciales(p.nombre, p.apellido)}</span>}
                                       </div>
-                                      <span className="text-[9px] px-1 rounded-full leading-tight" style={{ background: "#f1f5f9", color: "#94a3b8" }}>
-                                        {p.pct}%
-                                      </span>
+                                    );
+                                  })}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        )];
+
+                    // ── Una fila exclusiva por persona PLAN ───────────────
+                    const planRows: React.ReactElement[] = planesAll.length > 0
+                      ? planesAll.map((p, pi) => (
+                          <tr key={`plan-${eng.id}-${cargo}-${pi}`}>
+                            {columnas.map((col, i) => {
+                              const isActive = rangoSolapan(p.fecha_inicio, p.fecha_fin, col.inicio, col.fin);
+                              const { isFirst, isLast } = barEdge(p, i);
+                              const isResizeHover = resizing?.p.asignacionId === p.asignacionId && resizeHoverIdx === i;
+                              const reqsEnCol = eng.reqs.filter((r) =>
+                                matchesCargo(r.cargo_requerido, cargo) &&
+                                rangoSolapan(r.fecha_inicio, r.fecha_fin, col.inicio, col.fin)
+                              );
+                              return (
+                                <td key={i} className="p-0"
+                                  style={{ height: 26, borderTop: "1px dashed #e2e8f0", background: isResizeHover ? "#dbeafe" : "transparent" }}
+                                  onMouseEnter={() => { if (resizing) { setResizeHoverIdx(i); resizeHoverRef.current = i; } }}
+                                  onDragOver={(e) => { e.preventDefault(); if (!isActive && reqsEnCol[0]) setDragOverReqId(reqsEnCol[0].id + "-plan"); }}
+                                  onDragLeave={() => setDragOverReqId(null)}
+                                  onDrop={(e) => { setDragOverReqId(null); if (!isActive && reqsEnCol[0]) handleDrop(e, eng, reqsEnCol[0], true); }}>
+                                  {isActive && (
+                                    <div className="relative group/bar flex items-center overflow-visible"
+                                      style={{
+                                        height: 20, marginTop: 3,
+                                        backgroundColor: `${cargoColor}55`,
+                                        border: `1.5px dashed ${cargoColor}`,
+                                        borderRadius: `${isFirst ? 5 : 0}px ${isLast ? 5 : 0}px ${isLast ? 5 : 0}px ${isFirst ? 5 : 0}px`,
+                                        marginLeft: isFirst ? 2 : 0, marginRight: isLast ? 2 : 0,
+                                        opacity: desasignando === p.asignacionId ? 0.2 : 1,
+                                      }}
+                                      title={`PLAN · ${p.nombre} ${p.apellido} · ${p.pct}%`}>
+                                      {isFirst && <span className="pl-2 text-[9px] font-bold truncate select-none" style={{ color: cargoColor }}>{iniciales(p.nombre, p.apellido)} <span className="opacity-70 font-normal">{p.apellido}</span></span>}
+                                      {isFirst && (
+                                        <button onClick={() => confirmarPlan(p, eng.id)} disabled={confirmando === p.asignacionId}
+                                          title="Confirmar — sube a Línea Oficial"
+                                          className="absolute -top-1.5 left-0 h-3.5 px-1 rounded-sm bg-green-500 text-white flex items-center z-10 hover:bg-green-600 disabled:opacity-50 text-[8px] font-bold">
+                                          ✓
+                                        </button>
+                                      )}
+                                      <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
+                                        title="Quitar del plan"
+                                        className="absolute top-0 right-0 bottom-0 w-4 flex items-center justify-center opacity-0 group-hover/bar:opacity-100 bg-red-400 transition-opacity z-10"
+                                        style={{ borderRadius: `0 ${isLast ? 5 : 0}px ${isLast ? 5 : 0}px 0` }}>
+                                        <span className="text-white text-[8px] font-bold">×</span>
+                                      </button>
+                                      {isFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "start" }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-l-sm hover:bg-blue-400 transition-colors" />}
+                                      {isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r-sm hover:bg-blue-400 transition-colors" />}
                                     </div>
-                                  );
-                                })}
-                              </div>
-                            </td>
-                          );
-                        })}
-                      </tr>
-                    );
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        ))
+                      : [(
+                          <tr key={`plan-${eng.id}-${cargo}-empty`}>
+                            {columnas.map((col, i) => {
+                              const reqsEnCol = eng.reqs.filter((r) =>
+                                matchesCargo(r.cargo_requerido, cargo) &&
+                                rangoSolapan(r.fecha_inicio, r.fecha_fin, col.inicio, col.fin)
+                              );
+                              const hayReq = reqsEnCol.length > 0;
+                              return (
+                                <td key={i} className="p-0 align-middle" style={{ height: 26, borderTop: "1px dashed #e2e8f0" }}
+                                  onDragOver={(e) => { e.preventDefault(); if (reqsEnCol[0]) setDragOverReqId(reqsEnCol[0].id + "-plan"); }}
+                                  onDragLeave={() => setDragOverReqId(null)}
+                                  onDrop={(e) => { setDragOverReqId(null); if (reqsEnCol[0]) handleDrop(e, eng, reqsEnCol[0], true); }}>
+                                  {hayReq && (
+                                    <div className="flex items-center justify-center w-full" style={{ height: 20, border: `1px dashed ${cargoColor}40`, borderRadius: 4, margin: "3px 2px 0" }}>
+                                      <span className="text-[9px]" style={{ color: `${cargoColor}60` }}>sim</span>
+                                    </div>
+                                  )}
+                                </td>
+                              );
+                            })}
+                          </tr>
+                        )];
+
+                    return [...confRows, ...planRows];
                   });
 
                   const filaAusentes = (

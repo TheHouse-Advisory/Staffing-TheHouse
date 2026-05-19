@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths, addDays, format } from "date-fns";
 import { es } from "date-fns/locale";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -12,6 +13,8 @@ type VistaPrincipal = "proyectos" | "perfil";
 type Periodo = "dia" | "semana" | "mes";
 
 export default function TableroPage() {
+  const searchParams = useSearchParams();
+  const openEngagementId = searchParams.get("openEngagementId") ?? undefined;
   const [vistaPrincipal, setVistaPrincipal] = useState<VistaPrincipal>("proyectos");
 
   // ── Estado de fecha COMPARTIDO entre ambas vistas ──
@@ -95,7 +98,7 @@ export default function TableroPage() {
         {/* Vista Proyectos: controles de fecha manejados por el header */}
         {vistaPrincipal === "proyectos" && (
           <div className="bg-white rounded-xl shadow-md flex-1 min-h-0 overflow-hidden flex flex-col p-6">
-            <DesgloceEngagements vistaExterna={periodo} baseExterna={base} />
+            <DesgloceEngagements vistaExterna={periodo} baseExterna={base} openEngagementId={openEngagementId} />
           </div>
         )}
 
