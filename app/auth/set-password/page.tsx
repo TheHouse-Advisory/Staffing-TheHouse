@@ -23,6 +23,21 @@ import { confirmarCuenta } from "@/lib/auth/actions";
 
 const MIN_LENGTH = 8;
 
+/** Traduce los errores frecuentes de updateUser a mensajes claros en español. */
+function traducirError(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes("different from the old password")) {
+    return "La nueva contraseña debe ser distinta de la actual.";
+  }
+  if (m.includes("weak") || m.includes("at least")) {
+    return `La contraseña es muy débil. Usa al menos ${MIN_LENGTH} caracteres.`;
+  }
+  if (m.includes("session") || m.includes("jwt")) {
+    return "La sesión del enlace expiró. Solicita un nuevo enlace desde el login.";
+  }
+  return message;
+}
+
 export default function SetPasswordPage() {
   const router = useRouter();
   const [checkingSession, setCheckingSession] = useState(true);
@@ -63,7 +78,7 @@ export default function SetPasswordPage() {
     const { error: updErr } = await supabase.auth.updateUser({ password });
 
     if (updErr) {
-      setError(updErr.message);
+      setError(traducirError(updErr.message));
       setLoading(false);
       return;
     }
