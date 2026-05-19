@@ -43,7 +43,7 @@ const navItems: { section: string; items: NavItem[] }[] = [
     items: [
       { href: "/inicio",    label: "Inicio",    icon: Home },
       { href: "/tablero",   label: "Tablero",   icon: LayoutDashboard },
-      { href: "/engagements", label: "Engagements", icon: Briefcase },
+      { href: "/engagements", label: "Proyectos", icon: Briefcase },
       { href: "/personas",  label: "Personas",  icon: Users },
       { href: "/ausencias", label: "Ausencias", icon: CalendarOff },
       { href: "/alertas",   label: "Alertas",   icon: Bell },

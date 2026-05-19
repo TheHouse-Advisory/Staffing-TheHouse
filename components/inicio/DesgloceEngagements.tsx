@@ -721,7 +721,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
             style={{ background: "#4a90e2" }}
           >
             <Plus className="w-3 h-3" />
-            Nuevo Engagement
+            Nuevo proyecto
           </button>
           {engs.length > 0 && (
             <button
@@ -765,7 +765,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
             <thead className="sticky top-0 bg-white z-20">
               <tr>
                 <th className="text-left pr-3 pb-2 text-gray-400 font-semibold sticky left-0 bg-white z-30" style={{ minWidth: 160 }}>
-                  Engagement
+                  Proyecto
                 </th>
                 {columnas.map((col, i) => {
                   const esHoy = col.inicio <= hoy && hoy <= col.fin;

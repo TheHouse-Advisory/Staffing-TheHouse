@@ -27,7 +27,7 @@ export default function EngagementsPage() {
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      <Topbar titulo="Engagements" />
+      <Topbar titulo="Proyectos" />
       <div className="flex-1 overflow-auto scrollbar-thin p-6">
         <EngagementsList rolActual={rol} />
       </div>

@@ -424,13 +424,13 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     <Drawer
       open={open}
       onClose={onClose}
-      title={engagement ? "Editar engagement" : "Nuevo engagement"}
+      title={engagement ? "Editar proyecto" : "Nuevo proyecto"}
       width="lg"
       footer={
         <>
           <Button variant="secondary" onClick={onClose} disabled={loading}>Cancelar</Button>
           <Button onClick={handleSubmit} loading={loading}>
-            {engagement ? "Guardar cambios" : "Crear engagement"}
+            {engagement ? "Guardar cambios" : "Crear proyecto"}
           </Button>
         </>
       }
