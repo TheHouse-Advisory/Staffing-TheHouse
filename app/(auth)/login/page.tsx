@@ -1,10 +1,13 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useSearchParams } from "next/navigation";
 
 type Mode = "login" | "forgot";
+
+/** Segundos de espera tras pedir un enlace, para no chocar con el límite de Supabase. */
+const RESET_COOLDOWN = 60;
 
 function LoginForm() {
   const searchParams = useSearchParams();
@@ -13,6 +16,7 @@ function LoginForm() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [resetSent, setResetSent] = useState(false);
+  const [cooldown, setCooldown] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
   const redirectTo = searchParams.get("redirectTo") ?? "/tablero";
@@ -26,7 +30,16 @@ function LoginForm() {
     acceso_suspendido:
       "Tu acceso al sistema fue suspendido. Contacta a un administrador.",
     auth_callback: "Error al completar el inicio de sesión. Intenta de nuevo.",
+    enlace_expirado:
+      "El enlace expiró o ya fue usado. Solicita uno nuevo con la opción de recuperar contraseña.",
   };
+
+  // Cuenta regresiva del cooldown del botón de recuperación.
+  useEffect(() => {
+    if (cooldown <= 0) return;
+    const t = setTimeout(() => setCooldown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+  }, [cooldown]);
 
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault();
@@ -53,6 +66,7 @@ function LoginForm() {
 
   async function handleForgot(e: React.FormEvent) {
     e.preventDefault();
+    if (cooldown > 0) return;
     setLoading(true);
     setError(null);
 
@@ -66,14 +80,42 @@ function LoginForm() {
       }
     );
 
-    // Respondemos siempre como si hubiera funcionado para no filtrar
-    // qué correos están registrados.
-    if (resetErr) {
-      // Solo errores de red/red local los mostramos.
-      console.error(resetErr);
-    }
-    setResetSent(true);
     setLoading(false);
+
+    // resetPasswordForEmail NUNCA revela si el correo está registrado:
+    // Supabase responde "ok" también para correos inexistentes. Por eso
+    // cualquier error que llegue aquí es operativo (límite de envíos, red,
+    // servidor) y SÍ debe mostrarse. Antes se ocultaban todos y la pantalla
+    // decía "correo enviado" aunque nunca saliera — ese era el bug.
+    if (resetErr) {
+      const status = (resetErr as { status?: number }).status;
+      const msg = resetErr.message ?? "";
+      const isRateLimit =
+        status === 429 ||
+        /rate limit|too many|seconds|security purposes/i.test(msg);
+      const isNetwork =
+        resetErr.name === "AuthRetryableFetchError" ||
+        /failed to fetch|network/i.test(msg);
+
+      if (isRateLimit) {
+        setError(
+          "Se enviaron demasiadas solicitudes. Espera un momento y vuelve a intentarlo."
+        );
+        setCooldown(RESET_COOLDOWN);
+      } else if (isNetwork) {
+        setError(
+          "No pudimos conectar con el servidor. Revisa tu conexión e inténtalo de nuevo."
+        );
+      } else {
+        setError(
+          "No se pudo enviar el enlace. Inténtalo de nuevo en unos minutos."
+        );
+      }
+      return;
+    }
+
+    setResetSent(true);
+    setCooldown(RESET_COOLDOWN);
   }
 
   function backToLogin() {
@@ -203,12 +245,18 @@ function LoginForm() {
                   />
                 </div>
 
+                {error && <p className="text-sm text-red-600">{error}</p>}
+
                 <button
                   type="submit"
-                  disabled={loading || !email}
+                  disabled={loading || !email || cooldown > 0}
                   className="w-full py-2.5 px-4 bg-[#4a90e2] text-white font-semibold rounded-lg text-sm hover:bg-[#3a7bd5] disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
                 >
-                  {loading ? "Enviando..." : "Enviar enlace"}
+                  {loading
+                    ? "Enviando..."
+                    : cooldown > 0
+                      ? `Reintentar en ${cooldown}s`
+                      : "Enviar enlace"}
                 </button>
 
                 <button

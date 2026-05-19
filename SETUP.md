@@ -25,11 +25,52 @@ SUPABASE_SERVICE_ROLE_KEY=tu_service_role_key
 
 ## 3. Configurar Auth en Supabase
 
-En el dashboard de Supabase → **Authentication → Settings**:
+En el dashboard de Supabase → **Authentication → URL Configuration**:
 
 - **Site URL**: `http://localhost:3000` (dev) / tu dominio en producción
-- **Redirect URLs**: agrega `http://localhost:3000/auth/callback`
-- En **Email**: activa "Enable Email Confirmations" y "Enable Magic Links"
+- **Redirect URLs**: agrega ambos patrones (el `*` permite el `?next=...`):
+  - `http://localhost:3000/auth/callback*`
+  - `https://TU_DOMINIO/auth/callback*` (producción)
+
+En **Authentication → Sign In / Providers → Email**: activa "Enable Email
+Confirmations".
+
+### 3.1. SMTP propio — OBLIGATORIO para que lleguen los correos
+
+> **Causa del error `email rate limit exceeded` (429).** El servicio de
+> correo integrado de Supabase es solo para pruebas y está limitado a
+> **2 correos por hora** para todo el proyecto. Al superarlo, las
+> invitaciones y los enlaces de recuperación **dejan de enviarse** aunque
+> la app diga lo contrario.
+
+Para que las invitaciones y la recuperación de contraseña funcionen de
+verdad hay que configurar un SMTP propio:
+
+1. Crea una cuenta en un proveedor de correo (Resend, SendGrid, AWS SES,
+   Postmark, etc.).
+2. En **Authentication → Emails → SMTP Settings** activa "Enable Custom
+   SMTP" y completa host, puerto, usuario, contraseña y el remitente.
+3. En **Authentication → Rate Limits** sube el límite de correos a un
+   valor razonable (p.ej. 30–50 por hora).
+
+### 3.2. Plantillas de correo (recomendado)
+
+Para que el enlace funcione de forma robusta tanto en invitaciones como en
+recuperación, en **Authentication → Emails → Templates** edita las
+plantillas **Invite user** y **Reset Password** y apunta el enlace directo
+a `/auth/callback` con `token_hash`:
+
+```
+<a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=invite&next=/auth/set-password">Aceptar invitación</a>
+```
+
+```
+<a href="{{ .SiteURL }}/auth/callback?token_hash={{ .TokenHash }}&type=recovery&next=/auth/set-password">Restablecer contraseña</a>
+```
+
+El callback (`app/auth/callback/route.ts`) también acepta el formato PKCE
+(`?code=...`) por defecto, así que con las plantillas estándar la
+recuperación desde `/login` sigue funcionando.
 
 ## 4. Instalar dependencias y correr
 

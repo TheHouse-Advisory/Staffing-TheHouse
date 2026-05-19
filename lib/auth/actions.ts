@@ -43,6 +43,29 @@ export interface ResultadoAccion {
 type ServiceClient = any;
 
 /**
+ * Traduce un error de Supabase Auth a un mensaje para el admin.
+ * Distingue el límite de envío de correos, que es la causa más común de
+ * "el correo nunca llegó": el servicio de correo integrado de Supabase
+ * está limitado y exige configurar un SMTP propio para uso real.
+ */
+function mensajeErrorCorreo(
+  err: { status?: number; message?: string } | null,
+  fallback: string
+): string {
+  if (
+    err?.status === 429 ||
+    /rate limit|too many|seconds/i.test(err?.message ?? "")
+  ) {
+    return (
+      "Límite de envío de correos alcanzado. Espera unos minutos e inténtalo " +
+      "de nuevo. Si ocurre seguido, configura un SMTP propio en Supabase " +
+      "(Authentication → Emails)."
+    );
+  }
+  return err?.message ?? fallback;
+}
+
+/**
  * Envía (o reenvía) el correo de invitación a una persona.
  * - Si el usuario de auth no existe → invitación nativa de Supabase.
  * - Si ya existe → enlace de recuperación de contraseña (mismo destino).
@@ -82,7 +105,7 @@ async function enviarCorreoInvitacion(
   if (!alreadyExists) {
     return {
       ok: false,
-      message: inviteErr?.message ?? "No se pudo enviar la invitación.",
+      message: mensajeErrorCorreo(inviteErr, "No se pudo enviar la invitación."),
     };
   }
 
@@ -92,7 +115,10 @@ async function enviarCorreoInvitacion(
   );
 
   if (resetErr) {
-    return { ok: false, message: resetErr.message ?? "No se pudo enviar el enlace." };
+    return {
+      ok: false,
+      message: mensajeErrorCorreo(resetErr, "No se pudo enviar el enlace."),
+    };
   }
 
   return {

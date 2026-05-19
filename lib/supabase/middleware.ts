@@ -40,7 +40,10 @@ export async function updateSession(request: NextRequest) {
   } = await supabase.auth.getUser();
 
   const { pathname } = request.nextUrl;
-  const publicRoutes = ["/login", "/auth/callback"];
+  // /auth/set-password es pública: la propia página valida la sesión del
+  // enlace y muestra "Enlace inválido" si no la hay. Sin esto, el middleware
+  // redirige a /login antes de que la persona vea ese mensaje.
+  const publicRoutes = ["/login", "/auth/callback", "/auth/set-password"];
   const isPublicRoute = publicRoutes.some((r) => pathname.startsWith(r));
 
   if (!user && !isPublicRoute) {
