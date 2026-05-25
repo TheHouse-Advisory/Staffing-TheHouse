@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { Plus, Trash2, ChevronDown, ChevronUp, Users } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
@@ -9,6 +10,33 @@ import { Modal } from "@/components/ui/Modal";
 import { FieldWrapper, Input, Select, Textarea } from "@/components/ui/FormField";
 import { MultiSelect } from "@/components/ui/MultiSelect";
 import { CARGOS_OPTIONS } from "@/lib/constants";
+
+// Normaliza cargo_requerido de la BD al value exacto de CARGOS_OPTIONS.
+// Reqs creados via drag-drop guardan cargos individuales ("Director de Proyectos")
+// pero CARGOS_OPTIONS usa valores combinados ("Director / Gerente de Proyectos").
+// Sin esta normalización el Select no encuentra el match y cae al primer item ("Socio").
+const CARGO_TO_OPTION: Record<string, string> = {
+  "Director de Proyectos":          "Director / Gerente de Proyectos",
+  "Gerente de Proyectos":           "Director / Gerente de Proyectos",
+  "Director":                       "Director / Gerente de Proyectos",
+  "Gerente":                        "Director / Gerente de Proyectos",
+  "Director / Gerente de Proyectos":"Director / Gerente de Proyectos",
+  "Asociado":                       "Asociado / Consultor Senior",
+  "Consultor Senior":               "Asociado / Consultor Senior",
+  "Asociado / Consultor Senior":    "Asociado / Consultor Senior",
+};
+function toCargoOption(cargo: string | null | undefined): string {
+  if (!cargo?.trim()) return "";
+  return CARGO_TO_OPTION[cargo.trim()] ?? cargo.trim();
+}
+// Reverse: opción del select → valor canónico para guardar en BD (un valor válido del FK)
+const OPTION_TO_CARGO: Record<string, string> = {
+  "Director / Gerente de Proyectos": "Director de Proyectos",
+  "Asociado / Consultor Senior":     "Asociado",
+};
+function fromCargoOption(option: string): string {
+  return OPTION_TO_CARGO[option] ?? option;
+}
 import type { Engagement, RequerimientoEngagement } from "@/lib/types/database";
 import { ExtenderProyecto } from "./ExtenderProyecto";
 
@@ -42,6 +70,7 @@ const EMPTY_REQ: ReqRow = {
 };
 
 export function EngagementForm({ open, onClose, onSuccess, engagement }: EngagementFormProps) {
+  const router = useRouter();
   const [form, setForm] = useState({ ...EMPTY_ENG });
   const [reqs, setReqs] = useState<ReqRow[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -118,11 +147,12 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
         setReqs((reqData ?? []).map((r: RequerimientoEngagement) => ({
           id: r.id,
           fase_nombre: r.fase_nombre ?? "",
-          cargo_requerido: r.cargo_requerido ?? "",
+          // toCargoOption: mapea el valor de BD al value exacto de CARGOS_OPTIONS
+          cargo_requerido: toCargoOption(r.cargo_requerido),
           descripcion: r.descripcion ?? "",
           pct_dedicacion: String(r.pct_dedicacion),
-          fecha_inicio: r.fecha_inicio,
-          fecha_fin: r.fecha_fin,
+          fecha_inicio: r.fecha_inicio ?? "",
+          fecha_fin: r.fecha_fin ?? "",
         })));
       }
     }
@@ -238,11 +268,14 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     setEliminarTemLoading(false); setEliminarTemCandidata(null);
   }
 
+  // fecha_fin_estimada puede estar vacía si el engagement usa fecha_fin_real
+  const fechaFinEfectiva = form.fecha_fin_estimada || (engagement as any)?.fecha_fin_real || "";
+
   const addReq = () =>
     setReqs((r) => [...r, {
       ...EMPTY_REQ,
       fecha_inicio: form.fecha_inicio,
-      fecha_fin: form.fecha_fin_estimada,
+      fecha_fin: fechaFinEfectiva,
     }]);
 
   const removeReq = (idx: number) =>
@@ -263,6 +296,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     if (form.fecha_fin_estimada && form.fecha_inicio && form.fecha_fin_estimada < form.fecha_inicio) {
       e.fecha_fin_estimada = "No puede ser anterior a la fecha de inicio";
     }
+    // Usa fecha_fin_real como límite cuando fecha_fin_estimada no está disponible
+    const maxFin = form.fecha_fin_estimada || (engagement as any)?.fecha_fin_real || null;
     if (!esPropuesta) {
       reqs.forEach((r, i) => {
         if (!r.pct_dedicacion || isNaN(Number(r.pct_dedicacion))) {
@@ -272,15 +307,15 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
           e[`req_${i}_inicio`] = "Requerida";
         } else if (form.fecha_inicio && r.fecha_inicio < form.fecha_inicio) {
           e[`req_${i}_inicio`] = `No puede ser antes del ${form.fecha_inicio}`;
-        } else if (form.fecha_fin_estimada && r.fecha_inicio > form.fecha_fin_estimada) {
-          e[`req_${i}_inicio`] = `No puede ser después del ${form.fecha_fin_estimada}`;
+        } else if (maxFin && r.fecha_inicio > maxFin) {
+          e[`req_${i}_inicio`] = `No puede ser después del ${maxFin}`;
         }
         if (!r.fecha_fin) {
           e[`req_${i}_fin`] = "Requerida";
         } else if (r.fecha_inicio && r.fecha_fin < r.fecha_inicio) {
           e[`req_${i}_fin`] = "No puede ser anterior a la fecha de inicio";
-        } else if (form.fecha_fin_estimada && r.fecha_fin > form.fecha_fin_estimada) {
-          e[`req_${i}_fin`] = `No puede ser después del ${form.fecha_fin_estimada}`;
+        } else if (maxFin && r.fecha_fin > maxFin) {
+          e[`req_${i}_fin`] = `No puede ser después del ${maxFin}`;
         }
       });
     }
@@ -340,16 +375,20 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
       const reqPayload = {
         engagement_id: engId,
         fase_nombre: r.fase_nombre.trim() || null,
-        cargo_requerido: r.cargo_requerido || null,
+        cargo_requerido: r.cargo_requerido ? fromCargoOption(r.cargo_requerido) : null,
         descripcion: r.descripcion.trim() || null,
         pct_dedicacion: Number(r.pct_dedicacion),
-        fecha_inicio: r.fecha_inicio,
-        fecha_fin: r.fecha_fin,
+        fecha_inicio: r.fecha_inicio || null,
+        fecha_fin: r.fecha_fin || null,
       };
       if (r.id) {
-        await supabase.from("requerimiento_engagement").update(reqPayload).eq("id", r.id);
+        const { error: updErr } = await supabase
+          .from("requerimiento_engagement").update(reqPayload).eq("id", r.id);
+        if (updErr) { setServerError(`Error en requerimiento ${i + 1}: ${updErr.message}`); setLoading(false); return; }
       } else {
-        await supabase.from("requerimiento_engagement").insert(reqPayload);
+        const { error: insErr } = await (supabase as any)
+          .from("requerimiento_engagement").insert(reqPayload);
+        if (insErr) { setServerError(`Error al crear requerimiento ${i + 1}: ${insErr.message}`); setLoading(false); return; }
       }
     }
 
@@ -411,14 +450,16 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     }
 
     setLoading(false);
+    // Invalida caché del router de Next.js (evita datos stale tras guardar requerimientos)
+    router.refresh();
     window.dispatchEvent(new CustomEvent("engagementChanged", { detail: { engagementId: engId } }));
     onSuccess();
     onClose();
   };
 
-  // Límites de fecha para requerimientos
+  // Límites de fecha para requerimientos (usa fecha_fin_real como fallback)
   const minReqDate = form.fecha_inicio || undefined;
-  const maxReqDate = form.fecha_fin_estimada || undefined;
+  const maxReqDate = form.fecha_fin_estimada || (engagement as any)?.fecha_fin_real || undefined;
 
   return (
     <Drawer

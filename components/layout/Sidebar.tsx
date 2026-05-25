@@ -14,6 +14,7 @@ import {
   Home,
   Bell,
   BarChart3,
+  BarChart2,
   ShieldCheck,
   Plus,
   type LucideIcon,
@@ -47,6 +48,7 @@ const navItems: { section: string; items: NavItem[] }[] = [
       { href: "/personas",  label: "Personas",  icon: Users },
       { href: "/ausencias", label: "Ausencias", icon: CalendarOff },
       { href: "/alertas",   label: "Alertas",   icon: Bell },
+      { href: "/reportes",  label: "Reportes",  icon: BarChart2 },
     ],
   },
   {

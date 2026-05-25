@@ -30,12 +30,24 @@ function diasEnEmpresa(f: string | null | undefined): string | null {
   return `${y} ${y === 1 ? "año" : "años"} y ${d % 365} días`;
 }
 
+interface HistorialProyecto {
+  engagement_id: string;
+  codigo: string;
+  nombre: string;
+  industria: string;
+  dias: number;
+  fechaInicioLabel: string;
+  fechaRef: string;
+  activo: boolean;
+}
+
 interface ResumenData {
   ocupacion: number; totalProyectos: number; industrias: string[];
   capacidades: string[]; tematicas: string[];
   totalDiasAnioActual: number;
   ausenciasFuturas: Pick<AusenciaDetalle, "fechaInicio" | "fechaFin" | "numDias" | "tipoLabel">[];
   mentorNombre: string | null; mentoreados: string[];
+  historialProyectos: HistorialProyecto[];
 }
 
 interface Props {
@@ -60,7 +72,9 @@ export function PersonaResumenModal({ personaId, onClose }: Props) {
       const [{ data: per }, asigRes, histRes, indRes, capRes, temRes, mentoreRes, ausDetalle] = await Promise.all([
         sb.from("persona").select("*").eq("id", personaId).single(),
         sb.from("asignacion").select("pct_dedicacion").eq("persona_id", personaId).eq("estado", "activa"),
-        sb.from("asignacion").select("engagement_id").eq("persona_id", personaId),
+        // Historial: solo asignaciones YA FINALIZADAS (fecha_fin < hoy)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        sb.from("asignacion").select("fecha_inicio, fecha_fin, engagement:engagement_id(id, codigo, nombre, cliente, industria:industria_id(nombre))" as any).eq("persona_id", personaId).not("fecha_fin", "is", null).lt("fecha_fin", new Date().toISOString().slice(0, 10)).order("fecha_inicio", { ascending: false }),
         sb.from("persona_industria").select("cat_industria(nombre)").eq("persona_id", personaId),
         sb.from("persona_capacidad").select("cat_capacidad(nombre)").eq("persona_id", personaId),
         sb.from("persona_tematica").select("cat_tematica(nombre)").eq("persona_id", personaId),
@@ -76,12 +90,39 @@ export function PersonaResumenModal({ personaId, onClose }: Props) {
       if (cancelled) return;
 
       const ocupacion = ((asigRes.data ?? []) as any[]).reduce((s: number, a: any) => s + Number(a.pct_dedicacion), 0);
-      const engUnicos = new Set(((histRes.data ?? []) as any[]).map((a: any) => a.engagement_id));
+
+      // Agrupa historial por engagement y suma días
+      const hoy = new Date();
+      const histMap = new Map<string, HistorialProyecto>();
+      ((histRes.data ?? []) as any[]).forEach((r: any) => {
+        const engId = r.engagement?.id ?? "";
+        const ini   = new Date((r.fecha_inicio as string) + "T00:00:00");
+        const fin   = r.fecha_fin ? new Date((r.fecha_fin as string) + "T00:00:00") : hoy;
+        const dias  = Math.max(0, Math.floor((fin.getTime() - ini.getTime()) / 86_400_000));
+        const prev  = histMap.get(engId);
+        if (prev) {
+          prev.dias += dias;
+          if ((r.fecha_inicio as string) > prev.fechaRef) prev.fechaRef = r.fecha_inicio as string;
+          if (!r.fecha_fin) prev.activo = true;
+        } else {
+          histMap.set(engId, {
+            engagement_id:   engId,
+            codigo:          r.engagement?.codigo  ?? "",
+            nombre:          r.engagement?.nombre  ?? "—",
+            industria:       r.engagement?.industria?.nombre ?? r.engagement?.cliente ?? "",
+            dias,
+            fechaInicioLabel: format(ini, "d MMM yyyy", { locale: es }),
+            fechaRef:        r.fecha_inicio as string,
+            activo:          !r.fecha_fin,
+          });
+        }
+      });
+      const historialProyectos = [...histMap.values()].sort((a, b) => b.fechaRef.localeCompare(a.fechaRef));
 
       setPersona(p);
       setResumen({
         ocupacion,
-        totalProyectos: engUnicos.size,
+        totalProyectos: histMap.size,
         industrias:  ((indRes.data ?? []) as any[]).map((r: any) => r.cat_industria?.nombre).filter(Boolean),
         capacidades: ((capRes.data ?? []) as any[]).map((r: any) => r.cat_capacidad?.nombre).filter(Boolean),
         tematicas:   ((temRes.data ?? []) as any[]).map((r: any) => r.cat_tematica?.nombre).filter(Boolean),
@@ -92,6 +133,7 @@ export function PersonaResumenModal({ personaId, onClose }: Props) {
           : null,
         mentoreados: ((mentoreRes.data ?? []) as { nombre: string; apellido: string }[])
           .map((m) => `${m.nombre} ${m.apellido}`),
+        historialProyectos,
       });
       setLoading(false);
     }
@@ -184,6 +226,45 @@ export function PersonaResumenModal({ personaId, onClose }: Props) {
                 <p className="text-gray-400 text-xs mb-1.5">Proyectos actuales</p>
                 <ProyectosPersonaDetalle personaId={persona.id} compact />
               </div>
+              {/* ── Historial de proyectos ── */}
+              {resumen.historialProyectos.length > 0 && (
+                <div className="border-t border-gray-100 pt-2.5">
+                  <p className="text-gray-400 text-xs mb-1.5">Historial de proyectos</p>
+                  <div className="space-y-1.5">
+                    {resumen.historialProyectos.slice(0, 3).map((h) => (
+                      <div key={h.engagement_id} className="flex items-start justify-between gap-2">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-[11px] font-semibold text-slate-800 truncate leading-tight">
+                            {h.codigo ? `${h.codigo} · ` : ""}{h.nombre}
+                          </p>
+                          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                            {h.industria && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
+                                {h.industria}
+                              </span>
+                            )}
+                            {h.activo && (
+                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#dcf5e7] text-[#1e7e45] font-medium">
+                                Activo
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex-shrink-0 text-right">
+                          <p className="text-[9px] text-slate-400 leading-tight">Inició: {h.fechaInicioLabel}</p>
+                          <p className="text-[10px] font-semibold text-[#4a90e2] mt-0.5">{h.dias} días</p>
+                        </div>
+                      </div>
+                    ))}
+                    {resumen.historialProyectos.length > 3 && (
+                      <p className="text-[10px] text-slate-400 italic pt-0.5">
+                        +{resumen.historialProyectos.length - 3} proyectos más · ver perfil completo
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {resumen.industrias.length > 0 && (
                 <div>
                   <p className="text-gray-400 mb-1 text-xs">Industrias</p>

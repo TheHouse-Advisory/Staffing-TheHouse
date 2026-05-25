@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Pencil } from "lucide-react";
+import { Pencil, Trash2 } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -10,6 +10,8 @@ import { ProyectosPersonaDetalle } from "./ProyectosPersonaDetalle";
 import { Button } from "@/components/ui/Button";
 import { PersonaForm } from "./PersonaForm";
 import { TalentMatrix, getTalentBoxName } from "./TalentMatrix";
+import { EngagementDetalleModal } from "./EngagementDetalleModal";
+import { NotebookPanel } from "./notebook/NotebookPanel";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import type { Persona } from "@/lib/types/database";
 
@@ -25,6 +27,15 @@ interface AsignacionActiva {
   cargo_al_momento: string;
   engagement_id: string;
   engagement_nombre: string;
+}
+
+interface HistorialItem {
+  engagement_id: string;
+  nombre: string;
+  cliente: string;
+  dias: number;
+  fechaRef: string; // para ordenamiento desc
+  activo: boolean;
 }
 
 interface TagItem {
@@ -70,11 +81,14 @@ export function PersonaProfile({ id }: Props) {
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(false);
   const [ausenciasDetalle, setAusenciasDetalle] = useState<DetalleAusenciasPersona | null>(null);
+  const [historial,        setHistorial]        = useState<HistorialItem[]>([]);
+  const [deletingEngId,    setDeletingEngId]    = useState<string | null>(null); // eng que se va a borrar
+  const [detalleEngId,     setDetalleEngId]     = useState<string | null>(null); // eng cuyo modal está abierto
 
   const load = async () => {
     const supabase = createAnyClient();
 
-    const [pRes, indRes, capRes, temRes, asigRes, mentoreRes] = await Promise.all([
+    const [pRes, indRes, capRes, temRes, asigRes, mentoreRes, histRes] = await Promise.all([
       supabase.from("persona").select("*").eq("id", id).single(),
 
       supabase
@@ -107,6 +121,16 @@ export function PersonaProfile({ id }: Props) {
         .eq("mentor_id", id)
         .eq("activo", true)
         .order("apellido"),
+
+      // Historial: solo asignaciones YA FINALIZADAS (fecha_fin < hoy)
+      supabase
+        .from("asignacion")
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        .select("id, fecha_inicio, fecha_fin, engagement:engagement_id(id, nombre, cliente)" as any)
+        .eq("persona_id", id)
+        .not("fecha_fin", "is", null)
+        .lt("fecha_fin", new Date().toISOString().slice(0, 10))
+        .order("fecha_inicio", { ascending: false }),
     ]);
 
     if (pRes.data) {
@@ -166,12 +190,48 @@ export function PersonaProfile({ id }: Props) {
     setMentoreados((mentoreRes.data ?? []) as Persona[]);
     const ausencias = await getDetailedPersonAbsences(supabase, id);
     setAusenciasDetalle(ausencias);
+
+    // ── Procesa historial: agrupa por engagement y suma días ──
+    const hoy = new Date();
+    const histMap = new Map<string, HistorialItem>();
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (histRes.data ?? []).forEach((r: any) => {
+      const engId  = r.engagement?.id ?? "";
+      const ini    = new Date((r.fecha_inicio as string) + "T00:00:00");
+      const fin    = r.fecha_fin ? new Date((r.fecha_fin as string) + "T00:00:00") : hoy;
+      const dias   = Math.max(0, Math.floor((fin.getTime() - ini.getTime()) / 86_400_000));
+      const prev   = histMap.get(engId);
+      if (prev) {
+        prev.dias += dias;
+        if ((r.fecha_inicio as string) > prev.fechaRef) prev.fechaRef = r.fecha_inicio as string;
+        if (!r.fecha_fin) prev.activo = true;
+      } else {
+        histMap.set(engId, {
+          engagement_id: engId,
+          nombre:        r.engagement?.nombre  ?? "—",
+          cliente:       r.engagement?.cliente ?? "",
+          dias,
+          fechaRef:      r.fecha_inicio as string,
+          activo:        !r.fecha_fin,
+        });
+      }
+    });
+    setHistorial([...histMap.values()].sort((a, b) => b.fechaRef.localeCompare(a.fechaRef)));
+
     setLoading(false);
   };
 
   useEffect(() => {
     load();
   }, [id]);
+
+  async function handleDeleteHistorial(engId: string) {
+    // Optimistic: quita del estado antes del fetch
+    setHistorial((prev) => prev.filter((h) => h.engagement_id !== engId));
+    setDeletingEngId(null);
+    const supabase = createAnyClient();
+    await supabase.from("asignacion").delete().eq("persona_id", id).eq("engagement_id", engId);
+  }
 
   if (loading) return <p className="text-sm text-[#888] p-6">Cargando...</p>;
   if (!persona) return <p className="text-sm text-red-500 p-6">Persona no encontrada.</p>;
@@ -344,6 +404,88 @@ export function PersonaProfile({ id }: Props) {
           <ProyectosPersonaDetalle personaId={id} />
         </div>
 
+        {/* ── Historial de proyectos ──────────────────────── */}
+        <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold">Historial de proyectos</h3>
+            {historial.length > 0 && (
+              <span className="text-xs text-[#888]">{historial.length} {historial.length === 1 ? "engagement" : "engagements"}</span>
+            )}
+          </div>
+
+          {historial.length === 0 ? (
+            <p className="text-sm text-[#ccc] italic">Sin proyectos registrados.</p>
+          ) : (
+            <div className="divide-y divide-[#f0f0f0]">
+              {historial.map((h) => (
+                <div key={h.engagement_id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0 gap-3 group">
+                  <div className="min-w-0 flex-1">
+                    {/* Nombre clickeable → modal de detalle */}
+                    <button
+                      onClick={() => setDetalleEngId(h.engagement_id)}
+                      className="text-sm font-medium text-[#1a1a2e] hover:underline hover:text-[#4a90e2] truncate text-left w-full transition-colors"
+                    >
+                      {h.nombre}
+                    </button>
+                    {h.cliente && (
+                      <p className="text-xs text-[#888] mt-0.5">{h.cliente}</p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    {h.activo && (
+                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#dcf5e7] text-[#1e7e45]">
+                        Activo
+                      </span>
+                    )}
+                    <span className="text-xs font-medium px-2.5 py-1 rounded bg-[#eff6ff] text-[#1d4ed8]">
+                      {h.dias} {h.dias === 1 ? "día" : "días"}
+                    </span>
+                    {/* Botón eliminar — visible en hover */}
+                    <button
+                      onClick={() => setDeletingEngId(h.engagement_id)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-50 text-slate-300 hover:text-red-500"
+                      title="Eliminar del historial"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── Pop-up de confirmación de borrado ── */}
+          {deletingEngId && (() => {
+            const h = historial.find(x => x.engagement_id === deletingEngId)!;
+            return (
+              <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50">
+                <div className="bg-white rounded-xl shadow-2xl border border-gray-100 p-6 w-full max-w-sm mx-4">
+                  <p className="text-[14px] font-semibold text-[#1a1a2e] mb-2">¿Eliminar proyecto del historial?</p>
+                  <p className="text-[12px] text-slate-500 leading-relaxed mb-5">
+                    ¿Estás seguro de que deseas eliminar <span className="font-semibold text-slate-700">{h?.nombre}</span> del historial de{" "}
+                    <span className="font-semibold text-slate-700">{persona.nombre} {persona.apellido}</span>?
+                    Esta acción eliminará todas las asignaciones de esta persona en dicho proyecto y no se puede deshacer.
+                  </p>
+                  <div className="flex gap-2 justify-end">
+                    <button
+                      onClick={() => setDeletingEngId(null)}
+                      className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      onClick={() => handleDeleteHistorial(deletingEngId)}
+                      className="px-4 py-2 text-[12px] font-bold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
+                    >
+                      Eliminar
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
+        </div>
+
         {/* ── Historial de Ausencias ───────────────────────── */}
         {ausenciasDetalle && (
           <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
@@ -499,6 +641,15 @@ export function PersonaProfile({ id }: Props) {
 
           </div>
         </div>
+        {/* ── Notebook de Desarrollo ──────────────────────── */}
+        <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold">Notebook de Desarrollo</h3>
+            <span className="text-[10px] text-slate-400 font-medium">Anotaciones privadas del colaborador</span>
+          </div>
+          <NotebookPanel personaId={id} personaNombre={`${persona.nombre} ${persona.apellido}`} />
+        </div>
+
       </div>
 
       {/* Formulario de edición */}
@@ -511,6 +662,15 @@ export function PersonaProfile({ id }: Props) {
             load();
           }}
           persona={persona}
+        />
+      )}
+
+      {/* Modal de detalle del engagement */}
+      {detalleEngId && (
+        <EngagementDetalleModal
+          engagementId={detalleEngId}
+          personaId={id}
+          onClose={() => setDetalleEngId(null)}
         />
       )}
     </>

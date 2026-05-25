@@ -5,8 +5,9 @@ import { useSearchParams } from "next/navigation";
 import { startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths, addDays, format } from "date-fns";
 import { es } from "date-fns/locale";
 import { ChevronLeft, ChevronRight } from "lucide-react";
-import { DesgloceEngagements } from "@/components/inicio/DesgloceEngagements";
+import { DesgloceEngagements, type PanelInfo } from "@/components/inicio/DesgloceEngagements";
 import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTablero";
+import { PanelFitAsignacion } from "@/components/engagements/PanelFitAsignacion";
 import { cn } from "@/lib/utils";
 
 type VistaPrincipal = "proyectos" | "perfil";
@@ -18,27 +19,37 @@ function TableroContent() {
   const openEngagementId = searchParams.get("openEngagementId") ?? undefined;
   const [vistaPrincipal, setVistaPrincipal] = useState<VistaPrincipal>("proyectos");
 
+  // ── Panel lateral de recomendaciones (mismo patrón que inicio/page.tsx) ──
+  const [panelReq,       setPanelReq]       = useState<PanelInfo | null>(null);
+  const [panelColapsado, setPanelColapsado] = useState(false);
+  const [tableroReloadKey, setTableroReloadKey] = useState(0);
+
+  function abrirPanel(info: PanelInfo | null) {
+    setPanelReq(info);
+    if (info) setPanelColapsado(false);
+  }
+
   // ── Estado de fecha COMPARTIDO entre ambas vistas ──
   const [periodo, setPeriodo] = useState<Periodo>("semana");
   const [base, setBase] = useState<Date>(() => startOfISOWeek(new Date()));
 
   // Etiqueta de rango para el header
   const rangoLabel = (() => {
-    if (periodo === "semana") return `${format(base, "d MMM", { locale: es })} – ${format(addWeeks(base, 5), "d MMM yyyy", { locale: es })}`;
-    if (periodo === "mes")    return `${format(base, "MMM", { locale: es })} – ${format(addMonths(base, 4), "MMM yyyy", { locale: es })}`;
+    if (periodo === "semana") return `${format(base, "d MMM", { locale: es })} – ${format(addWeeks(base, 9), "d MMM yyyy", { locale: es })}`;
+    if (periodo === "mes")    return `${format(base, "MMM", { locale: es })} – ${format(addMonths(base, 8), "MMM yyyy", { locale: es })}`;
     // dia: muestra la semana
     return `${format(startOfISOWeek(base), "d MMM", { locale: es })} – ${format(addDays(startOfISOWeek(base), 6), "d MMM yyyy", { locale: es })}`;
   })();
 
   function navPrev() {
     if (periodo === "dia")    setBase((b) => addDays(startOfISOWeek(b), -7));
-    if (periodo === "semana") setBase((b) => subWeeks(b, 5));
-    if (periodo === "mes")    setBase((b) => subMonths(b, 4));
+    if (periodo === "semana") setBase((b) => subWeeks(b, 9));
+    if (periodo === "mes")    setBase((b) => subMonths(b, 8));
   }
   function navNext() {
     if (periodo === "dia")    setBase((b) => addDays(startOfISOWeek(b), 7));
-    if (periodo === "semana") setBase((b) => addWeeks(b, 5));
-    if (periodo === "mes")    setBase((b) => addMonths(b, 4));
+    if (periodo === "semana") setBase((b) => addWeeks(b, 9));
+    if (periodo === "mes")    setBase((b) => addMonths(b, 8));
   }
 
   return (
@@ -96,10 +107,63 @@ function TableroContent() {
       {/* ── Contenido — p-6 uniforme en ambas vistas ── */}
       <div className="flex-1 min-h-0 p-6 flex flex-col">
 
-        {/* Vista Proyectos: controles de fecha manejados por el header */}
+        {/* Vista Proyectos — split-screen cuando el panel de recomendaciones está activo */}
         {vistaPrincipal === "proyectos" && (
-          <div className="bg-white rounded-xl shadow-md flex-1 min-h-0 overflow-hidden flex flex-col p-6">
-            <DesgloceEngagements vistaExterna={periodo} baseExterna={base} openEngagementId={openEngagementId} />
+          <div className="flex gap-4 flex-1 min-h-0">
+
+            {/* Tablero principal — se contrae limpiamente al abrir el panel */}
+            <div className="bg-white rounded-xl shadow-md flex-1 min-h-0 overflow-hidden flex flex-col p-6">
+              <DesgloceEngagements
+                vistaExterna={periodo}
+                baseExterna={base}
+                openEngagementId={openEngagementId}
+                externalReloadKey={tableroReloadKey}
+                onOpenPanel={abrirPanel}
+              />
+            </div>
+
+            {/* Panel lateral de recomendaciones — animación width 0 → 380px */}
+            <div
+              className="flex-shrink-0 overflow-hidden transition-all duration-500 ease-in-out"
+              style={{ width: !panelReq ? 0 : panelColapsado ? 40 : 380 }}
+            >
+              {panelReq && (
+                panelColapsado ? (
+                  /* Strip colapsado */
+                  <div className="w-10 h-full rounded-xl border border-gray-100 shadow-sm bg-white flex flex-col items-center py-3 gap-3">
+                    <button
+                      onClick={() => setPanelColapsado(false)}
+                      title="Expandir recomendaciones"
+                      className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors">
+                      <ChevronLeft className="w-3.5 h-3.5" />
+                    </button>
+                    <span
+                      className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex-1 flex items-center"
+                      style={{ writingMode: "vertical-rl", textOrientation: "mixed" }}>
+                      Recomendaciones
+                    </span>
+                  </div>
+                ) : (
+                  /* Panel expandido */
+                  <div className="w-[380px] h-full rounded-xl border border-gray-100 shadow-sm overflow-hidden">
+                    <PanelFitAsignacion
+                      reqId={panelReq.reqId}
+                      engagementId={panelReq.engId}
+                      engagementNombre={panelReq.engNombre}
+                      engagementCliente={panelReq.engCliente}
+                      onClose={() => setPanelReq(null)}
+                      onCollapse={() => setPanelColapsado(true)}
+                      onAsignado={() => {
+                        setPanelReq(null);
+                        setPanelColapsado(false);
+                        setTableroReloadKey((k) => k + 1);
+                      }}
+                    />
+                  </div>
+                )
+              )}
+            </div>
+
           </div>
         )}
 

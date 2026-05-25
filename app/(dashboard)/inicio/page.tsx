@@ -6,7 +6,7 @@ import {
   format, isSameDay, parseISO,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell, BarChart2 } from "lucide-react";
 import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
 import { GanttAusencias } from "@/components/inicio/GanttAusencias";
@@ -199,18 +199,29 @@ export default function InicioPage() {
           <h1 className="text-[22px] font-bold text-[#1a1a2e]">Menú Principal</h1>
           <p className="text-sm text-gray-400 mt-0.5">Resumen general del equipo</p>
         </div>
-        <Link
-          href="/alertas"
-          className="relative flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#4a90e2] transition-colors text-sm font-semibold text-[#1a1a2e] shadow-sm"
-        >
-          <Bell className="w-4 h-4 text-[#4a90e2]" />
-          Alertas
-          {alertasHoy > 0 && (
-            <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
-              {alertasHoy}
-            </span>
-          )}
-        </Link>
+        <div className="flex items-center gap-2">
+          <Link
+            href="/alertas"
+            className="relative flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#4a90e2] transition-colors text-sm font-semibold text-[#1a1a2e] shadow-sm"
+          >
+            <Bell className="w-4 h-4 text-[#4a90e2]" />
+            Alertas
+            {alertasHoy > 0 && (
+              <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                {alertasHoy}
+              </span>
+            )}
+          </Link>
+          <Link
+            href="/reportes"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#4a90e2] transition-colors text-sm font-semibold text-[#1a1a2e] shadow-sm"
+          >
+            <BarChart2 className="w-4 h-4 text-[#4a90e2]" />
+            Reportes
+          </Link>
+        </div>
       </div>
 
       {/* Layout 3 columnas: EQUIPO | TABLERO+RESUMEN | RECOMENDACIONES */}
@@ -386,10 +397,6 @@ export default function InicioPage() {
               onAsignacionChange={refreshOcupacion}
               onOpenPanel={abrirPanel}
               externalReloadKey={tableroReloadKey}
-              onPersonaClick={(id) => {
-                const p = personas.find((x) => x.id === id);
-                if (p) abrirResumen(p);
-              }}
             />
           </div>
         </div>
