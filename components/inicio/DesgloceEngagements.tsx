@@ -1283,7 +1283,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               onDragLeave={() => setDragOverEngId(null)}
                               onDrop={(ev) => handleDropOnEngagement(ev, eng)}>
                               <div
-                                className="relative h-1.5 rounded-full transition-all overflow-visible group/engbar"
+                                className="relative h-5 rounded-full transition-all overflow-visible group/engbar"
                                 style={{ background: barColor, ...rojoOutline, opacity: esHoy ? 1 : 0.5, cursor: movingEng?.eng.id === eng.id ? "grabbing" : "grab" }}
                                 title="Arrastra para mover · Borde para redimensionar · Clic para intensidad"
                                 onMouseDown={(ev) => {
@@ -1314,7 +1314,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                             onDragLeave={() => setDragOverEngId(null)}
                             onDrop={(ev) => handleDropOnEngagement(ev, eng)}>
                             <div
-                              className="relative h-3 rounded-full hover:opacity-100 transition-opacity overflow-visible group/engbar"
+                              className="relative h-7 rounded-full hover:opacity-100 transition-opacity overflow-visible group/engbar"
                               style={{ background: barColor, ...rojoOutline, opacity: movePreviewActive ? 1 : isDragTarget ? 1 : esHoy ? 1 : 0.75, cursor: movingEng?.eng.id === eng.id ? "grabbing" : "grab" }}
                               title="Arrastra para mover · Borde para redimensionar · Clic para intensidad"
                               onMouseDown={(ev) => {
