@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { X, Loader2, Plus, ChevronDown, ChevronRight, Calendar, Clock, RotateCcw, Pencil, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { createClient } from "@/lib/supabase/client";
@@ -64,18 +65,29 @@ interface TooltipProps {
   eliminando: boolean;
   onEditar: () => void;
   onCerrar: () => void;
+  anchorRect: DOMRect; // posición del botón para portal fixed
 }
 
-function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar, onCerrar }: TooltipProps) {
+function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar, onCerrar, anchorRect }: TooltipProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const cfg = COLOR_AUSENCIA[celda.tipo];
   const labelFecha = new Date(fecha + "T00:00:00").toLocaleDateString("es-CL", {
     weekday: "long", day: "numeric", month: "long",
   });
 
-  return (
+  return createPortal(
     <>
-    <div className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-52 rounded-xl bg-white border border-[#e8e8e8] shadow-lg p-3 text-left pointer-events-auto">
+    {/* Portal: renderiza en body para escapar overflow:auto y stacking contexts */}
+    <div
+      className="w-52 rounded-xl bg-white border border-[#e8e8e8] shadow-lg p-3 text-left pointer-events-auto"
+      style={{
+        position: "fixed",
+        zIndex: 9999,
+        top: anchorRect.top,
+        left: anchorRect.left + anchorRect.width / 2,
+        transform: "translate(-50%, calc(-100% - 8px))",
+      }}
+    >
       {/* Tipo badge */}
       <div className="flex items-center justify-between mb-2">
         <span
@@ -136,7 +148,8 @@ function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar,
       confirmLabel="Confirmar eliminación"
       loading={eliminando}
     />
-    </>
+    </>,
+    document.body
   );
 }
 
@@ -528,7 +541,7 @@ export function HeatmapAusencias({
   const [totalesAnio, setTotalesAnio] = useState<Record<string, number>>({});
 
   // Tooltip activo: { personaId, fecha }
-  const [tooltip, setTooltip] = useState<{ personaId: string; fecha: string } | null>(null);
+  const [tooltip, setTooltip] = useState<{ personaId: string; fecha: string; rect: DOMRect } | null>(null);
   const [eliminando, setEliminando] = useState<string | null>(null);
   type AusenciaSnapshot = { persona_id: string; tipo: TipoAusencia; fecha_inicio: string; fecha_fin: string; descripcion: string | null };
   const [undoStack, setUndoStack] = useState<AusenciaSnapshot[]>([]);
@@ -695,37 +708,39 @@ export function HeatmapAusencias({
         </div>
       ) : (
         <>
-        {/* Barra de acciones */}
-        <div className="flex items-center justify-between px-4 py-2 border-b border-[#f0f0f0] flex-shrink-0">
-          <button
-            onClick={handleUndo}
-            disabled={undoStack.length === 0 || undoing}
-            title="Deshacer última eliminación"
-            className="flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-lg border border-[#e8e8e8] text-[#888] hover:text-[#555] hover:bg-[#f5f5f5] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
-          >
-            {undoing
-              ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              : <RotateCcw className="w-3.5 h-3.5" />}
-          </button>
-          <button
-            onClick={cargoColapsados.size >= grupos.length ? expandirTodo : colapsarTodo}
-            className="text-[11px] px-2.5 py-1 rounded-lg border border-[#e8e8e8] text-[#888] hover:text-[#555] hover:bg-[#f5f5f5] transition-colors"
-          >
-            {cargoColapsados.size >= grupos.length ? "Expandir todo" : "Colapsar todo"}
-          </button>
-        </div>
-
         <div className="flex-1 overflow-auto">
-          <table className="border-collapse w-full text-[12px]" style={{ minWidth: `${200 + dias.length * 36}px` }}>
+          <table className="border-collapse w-full text-[12px]" style={{ minWidth: `${140 + dias.length * 20}px` }}>
 
             {/* ── Encabezado ── */}
             <thead className="sticky top-0 z-20">
               <tr>
                 <th
-                  className="sticky left-0 z-30 bg-[#fafafa] border-b border-r border-[#ebebeb] px-4 py-2.5 text-left text-[11px] font-semibold text-[#888] uppercase tracking-wide"
-                  style={{ minWidth: 200, width: 200 }}
+                  className="sticky left-0 z-30 bg-[#fafafa] border-b border-r border-[#ebebeb] px-2 py-0.5 text-left text-[10px] font-semibold text-[#888] uppercase tracking-wide"
+                  style={{ minWidth: 140, width: 140 }}
                 >
-                  Persona
+                  {/* Controles fusionados: eliminan la barra intermedia */}
+                  <div className="flex items-center justify-between gap-1">
+                    <span>Persona</span>
+                    <div className="flex items-center gap-1">
+                      <button
+                        onClick={handleUndo}
+                        disabled={undoStack.length === 0 || undoing}
+                        title="Deshacer última eliminación"
+                        className="p-0.5 rounded hover:bg-[#e8e8e8] text-[#bbb] hover:text-[#555] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                      >
+                        {undoing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
+                      </button>
+                      <button
+                        onClick={cargoColapsados.size >= grupos.length ? expandirTodo : colapsarTodo}
+                        title={cargoColapsados.size >= grupos.length ? "Expandir todo" : "Colapsar todo"}
+                        className="p-0.5 rounded hover:bg-[#e8e8e8] text-[#bbb] hover:text-[#555] transition-colors"
+                      >
+                        {cargoColapsados.size >= grupos.length
+                          ? <ChevronRight className="w-3 h-3" />
+                          : <ChevronDown  className="w-3 h-3" />}
+                      </button>
+                    </div>
+                  </div>
                 </th>
                 {dias.map((fecha) => {
                   const esLunes   = isMonday(fecha);
@@ -733,12 +748,12 @@ export function HeatmapAusencias({
                   return (
                     <th
                       key={fecha}
-                      className={`border-b border-[#ebebeb] px-0 py-1.5 text-center ${esLunes ? "border-l border-[#ddd]" : ""} ${esFeriado ? "bg-gray-200" : "bg-[#fafafa]"}`}
-                      style={{ minWidth: 34, width: 34 }}
+                      className={`border-b border-[#ebebeb] px-0 py-0.5 text-center ${esLunes ? "border-l border-[#ddd]" : ""} ${esFeriado ? "bg-gray-200" : "bg-[#fafafa]"}`}
+                      style={{ minWidth: 20, width: 20 }}
                       title={esFeriado ? "Feriado" : undefined}
                     >
-                      <div className={`text-[9px] font-medium ${esFeriado ? "text-gray-400" : "text-[#bbb]"}`}>{getDow(fecha)}</div>
-                      <div className={`text-[11px] font-semibold ${esFeriado ? "text-gray-400" : "text-[#555]"}`}>{getDia(fecha)}</div>
+                      <div className={`text-[8px] font-medium leading-none ${esFeriado ? "text-gray-400" : "text-[#bbb]"}`}>{getDow(fecha)}</div>
+                      <div className={`text-[9px] font-semibold leading-none ${esFeriado ? "text-gray-400" : "text-[#555]"}`}>{getDia(fecha)}</div>
                     </th>
                   );
                 })}
@@ -805,8 +820,8 @@ export function HeatmapAusencias({
 
                           {/* Nombre + chevron persona */}
                           <td
-                            className="sticky left-0 z-10 bg-inherit border-r border-[#ebebeb] px-2 py-1"
-                            style={{ minWidth: 200, width: 200 }}
+                            className="sticky left-0 z-10 bg-inherit border-r border-[#ebebeb] px-1.5 py-0"
+                            style={{ minWidth: 140, width: 140 }}
                           >
                             <div className="flex items-center gap-1">
                               <button
@@ -823,7 +838,7 @@ export function HeatmapAusencias({
                                   <button
                                     type="button"
                                     onClick={(e) => { e.stopPropagation(); setPopoverPersona(fila.persona); }}
-                                    className="text-[12px] font-semibold text-[#1a1a1a] truncate hover:text-[#2563eb] hover:underline transition-colors text-left"
+                                    className="text-[11px] font-medium leading-tight text-[#1a1a1a] truncate hover:text-[#2563eb] hover:underline transition-colors text-left"
                                     title="Ver resumen de ausencias"
                                   >
                                     {fila.persona.nombre} {fila.persona.apellido}
@@ -837,14 +852,17 @@ export function HeatmapAusencias({
                                       d >= 10 ? { background: "#fff7ed", color: "#ea580c" } :
                                                { background: "#eff6ff", color: "#2563eb" };
                                     return (
-                                      <span className="flex-shrink-0 text-[9px] font-bold px-1.5 py-0.5 rounded-full" style={style}>
-                                        {d}d
+                                      <span
+                                        className="flex-shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200"
+                                        title="Total de días de ausencia consumidos en el período seleccionado"
+                                      >
+                                        {d === 1 ? "1 día ya tomado" : `${d} días ya tomados`}
                                       </span>
                                     );
                                   })()}
                                 </div>
                                 {!estaColapsadaPersona && fila.persona.cargo_actual && (
-                                  <div className="text-[10px] text-[#999] truncate">{fila.persona.cargo_actual}</div>
+                                  <div className="text-[9px] leading-none text-[#999] truncate">{fila.persona.cargo_actual}</div>
                                 )}
                               </div>
                             </div>
@@ -859,8 +877,8 @@ export function HeatmapAusencias({
                             if (estaColapsadaPersona) {
                               return (
                                 <td key={fecha}
-                                  className={`py-1.5 px-0.5 border-b border-[#f5f5f5] ${esLunes ? "border-l border-[#ddd]" : ""} ${esFeriado ? "bg-gray-200" : ""}`}
-                                  style={{ minWidth: 34, width: 34 }}
+                                  className={`py-px px-px border-b border-[#f5f5f5] ${esLunes ? "border-l border-[#ddd]" : ""} ${esFeriado ? "bg-gray-200" : ""}`}
+                                  style={{ minWidth: 20, width: 20 }}
                                   title={esFeriado ? "Feriado" : celda ? COLOR_AUSENCIA[celda.tipo]?.label : undefined}
                                 >
                                   {celda
@@ -876,14 +894,18 @@ export function HeatmapAusencias({
                             const isActive = tooltip?.personaId === fila.persona.id && tooltip?.fecha === fecha;
                             return (
                               <td key={fecha}
-                                className={`py-1 px-0.5 border-b border-[#f5f5f5] relative ${esLunes ? "border-l border-[#ddd]" : ""} ${esFeriado ? "bg-gray-200" : ""}`}
-                                style={{ minWidth: 34, width: 34 }}
+                                className={`py-px px-px border-b border-[#f5f5f5] relative ${esLunes ? "border-l border-[#ddd]" : ""} ${esFeriado ? "bg-gray-200" : ""}`}
+                                style={{ minWidth: 20, width: 20 }}
                               >
                                 {celda ? (
                                   <div className="relative">
                                     <button type="button"
-                                      onClick={() => setTooltip(isActive ? null : { personaId: fila.persona.id, fecha })}
-                                      className="w-full h-7 rounded transition-opacity hover:opacity-75"
+                                      onClick={(e) => {
+                                        if (isActive) { setTooltip(null); return; }
+                                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                        setTooltip({ personaId: fila.persona.id, fecha, rect });
+                                      }}
+                                      className="w-full h-4 rounded transition-opacity hover:opacity-75"
                                       style={{ background: COLOR_AUSENCIA[celda.tipo]?.bg ?? "#ccc" }}
                                       title={COLOR_AUSENCIA[celda.tipo]?.label}
                                     />
@@ -892,19 +914,20 @@ export function HeatmapAusencias({
                                         onEliminar={handleEliminar} eliminando={eliminando === celda.ausencia_id}
                                         onEditar={() => handleAbrirEditar(celda.ausencia_id, fila.persona)}
                                         onCerrar={() => setTooltip(null)}
+                                        anchorRect={tooltip!.rect}
                                       />
                                     )}
                                   </div>
                                 ) : esFeriado ? (
                                   /* Celda feriado: visible con gris, sin interacción */
-                                  <div className="w-full h-7 rounded bg-gray-400 opacity-40" title="Feriado" />
+                                  <div className="w-full h-4 rounded bg-gray-400 opacity-40" title="Feriado" />
                                 ) : (
                                   <button type="button"
-                                    className="w-full h-7 rounded hover:bg-[#f0f0f0] transition-colors group"
+                                    className="w-full h-4 rounded hover:bg-[#f0f0f0] transition-colors group"
                                     onClick={() => { setModalPersona(fila.persona.id); setModalFecha(fecha); setModalOpen(true); }}
                                     title="Agregar ausencia"
                                   >
-                                    <Plus className="w-3 h-3 text-[#ddd] group-hover:text-[#bbb] mx-auto transition-colors" />
+                                    <Plus className="w-2 h-2 text-[#ddd] group-hover:text-[#bbb] mx-auto transition-colors" />
                                   </button>
                                 )}
                               </td>
@@ -918,8 +941,8 @@ export function HeatmapAusencias({
                     {!estaColapsadoCargo && (
                       <tr className="bg-[#f4f4f4] border-t border-b border-[#e0e0e0]">
                         <td
-                          className="sticky left-0 z-10 bg-[#f4f4f4] border-r border-[#e0e0e0] px-4 py-1.5"
-                          style={{ minWidth: 200, width: 200 }}
+                          className="sticky left-0 z-10 bg-[#f4f4f4] border-r border-[#e0e0e0] px-2 py-0.5"
+                          style={{ minWidth: 140, width: 140 }}
                         >
                           <div className="text-[10px] font-bold text-[#555] uppercase tracking-wide truncate">
                             Resumen · {cargo}
@@ -936,15 +959,15 @@ export function HeatmapAusencias({
                           const esLunes  = isMonday(fecha);
                           return (
                             <td key={fecha}
-                              className={`px-0.5 py-1 text-center ${esLunes ? "border-l border-[#ddd]" : ""}`}
-                              style={{ minWidth: 34, width: 34 }}
+                              className={`px-px py-px text-center ${esLunes ? "border-l border-[#ddd]" : ""}`}
+                              style={{ minWidth: 20, width: 20 }}
                               title={pct > 0 ? `${ausentes} de ${total} ausentes (${pct}%)` : "Sin ausencias"}
                             >
                               {estilo ? (
-                                <div className="w-full h-6 rounded flex items-center justify-center" style={{ background: estilo.bg }}>
+                                <div className="w-full h-3 rounded flex items-center justify-center" style={{ background: estilo.bg }}>
                                   <span className="text-[9px] font-bold leading-none" style={{ color: estilo.text }}>{pct}%</span>
                                 </div>
-                              ) : <div className="w-full h-6" />}
+                              ) : <div className="w-full h-3" />}
                             </td>
                           );
                         })}

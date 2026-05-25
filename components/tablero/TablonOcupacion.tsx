@@ -750,8 +750,8 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
   if (filasProyecto.length === 0) {
     return (
       <div className="p-6 flex flex-col items-center justify-center h-48 text-[#888] gap-1">
-        <p className="text-sm font-medium">Sin engagements con requerimientos esta semana.</p>
-        <p className="text-xs">Define requerimientos en tus engagements para ver la cobertura.</p>
+        <p className="text-sm font-medium">Sin proyectos con requerimientos esta semana.</p>
+        <p className="text-xs">Define requerimientos en tus proyectos para ver la cobertura.</p>
       </div>
     );
   }
@@ -794,7 +794,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
                 </tr>
               )}
               <tr className="border-b border-[#e8e8e8] bg-[#f9f9f9]">
-                <th className="text-left px-4 py-3 font-semibold text-[#555] w-52 sticky left-0 bg-[#f9f9f9] z-10">Engagement</th>
+                <th className="text-left px-4 py-3 font-semibold text-[#555] w-52 sticky left-0 bg-[#f9f9f9] z-10">Proyecto</th>
                 <th className="text-left px-3 py-3 font-semibold text-[#555] w-36">Cliente</th>
                 {columnas.map((col, i) => {
                   if (pv === "semana") {

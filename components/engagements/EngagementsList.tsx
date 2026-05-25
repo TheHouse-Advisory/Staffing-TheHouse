@@ -82,7 +82,7 @@ function SeccionesTablaEngagements({
   if (engagements.length === 0 && !hayBusqueda) return (
     <div className="text-center py-12 text-[#888]">
       <Circle className="w-10 h-10 mx-auto mb-3 opacity-20" />
-      <p className="text-sm font-medium">No hay engagements activos.</p>
+      <p className="text-sm font-medium">No hay proyectos activos.</p>
     </div>
   );
 
@@ -810,7 +810,7 @@ export function EngagementsList({ rolActual }: Props) {
             <p className="text-sm text-[#888]">
               {engagementsFiltrados.length !== engagements.length
                 ? <>{engagementsFiltrados.length} <span className="text-[#bbb]">/ {engagements.length}</span></>
-                : <>{engagements.length} engagement{engagements.length !== 1 ? "s" : ""}</>
+                : <>{engagements.length} proyecto{engagements.length !== 1 ? "s" : ""}</>
               }
             </p>
             <button onClick={() => setVista("historico")}
@@ -831,7 +831,7 @@ export function EngagementsList({ rolActual }: Props) {
           </div>
           {isAdmin && (
             <Button onClick={() => setDrawerOpen(true)} size="sm">
-              <Plus className="w-3.5 h-3.5" /> Nuevo engagement
+              <Plus className="w-3.5 h-3.5" /> Nuevo proyecto
             </Button>
           )}
         </div>
@@ -860,7 +860,7 @@ export function EngagementsList({ rolActual }: Props) {
               type="text"
               value={principalBusqueda}
               onChange={(e) => setPrincipalBusqueda(e.target.value)}
-              placeholder={principalColumna === "todas" ? "Buscar engagements..." : `Buscar por ${principalColumna}...`}
+              placeholder={principalColumna === "todas" ? "Buscar proyectos..." : `Buscar por ${principalColumna}...`}
               className="pl-8 pr-3 py-1.5 text-xs border border-[#e8e8e8] rounded-lg focus:outline-none focus:border-[#4a90e2] w-52"
             />
           </div>

@@ -154,6 +154,11 @@ export function ResumenVacaciones({ open, onClose }: Props) {
           <p className="text-[11px] text-gray-400">
             Contabiliza: vacaciones confirmadas, por confirmar, día administrativo y permiso sin goce
           </p>
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-orange-400 bg-orange-50 my-1">
+            <span className="text-[11px] text-orange-700 font-medium leading-tight">
+              Días consumidos acumulados en el rango seleccionado
+            </span>
+          </div>
         </div>
 
         {/* Lista */}
@@ -208,7 +213,7 @@ export function ResumenVacaciones({ open, onClose }: Props) {
                                   color: p.dias === 0 ? "#9ca3af" : p.dias === maxDias && equipo.length > 1 ? "#ea580c" : "#2563eb",
                                 }}
                               >
-                                {p.dias} {p.dias === 1 ? "día" : "días"}
+                                {p.dias === 1 ? "1 día ya tomado" : `${p.dias} días ya tomados`}
                               </span>
                             </div>
                             {/* Barra comparativa */}

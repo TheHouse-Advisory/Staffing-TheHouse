@@ -123,22 +123,22 @@ export function HeatmapAusenciasMes({ year }: Props) {
 
   return (
     <div className="overflow-auto h-full">
-      <table className="text-xs border-collapse" style={{ minWidth: 820 }}>
+      <table className="text-xs border-collapse" style={{ minWidth: 680 }}>
         <thead>
           <tr className="sticky top-0 bg-white z-10">
             {/* Columna persona */}
             <th
-              className="sticky left-0 bg-white z-20 text-left px-4 py-3 text-[11px] font-bold text-gray-400 uppercase tracking-widest border-b border-r border-[#f0f0f0]"
-              style={{ minWidth: 180 }}
+              className="sticky left-0 bg-white z-20 text-left px-3 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b border-r border-[#f0f0f0]"
+              style={{ minWidth: 150 }}
             >
               Persona
             </th>
             {MESES_CORTO.map((mes, i) => (
               <th
                 key={i}
-                className="text-center px-2 py-3 font-bold border-b border-[#f0f0f0]"
+                className="text-center px-1 py-1.5 font-bold border-b border-[#f0f0f0]"
                 style={{
-                  minWidth: 72,
+                  minWidth: 56,
                   color: i === mesActual ? "#4a90e2" : "#aaa",
                   background: i === mesActual ? "#f0f7ff" : "white",
                 }}
@@ -156,14 +156,14 @@ export function HeatmapAusenciasMes({ year }: Props) {
               className={pi % 2 === 0 ? "bg-white" : "bg-[#fafafa]"}
             >
               {/* Nombre */}
-              <td className="sticky left-0 z-10 px-4 py-2.5 border-r border-[#f0f0f0]"
+              <td className="sticky left-0 z-10 px-3 py-1 border-r border-[#f0f0f0]"
                 style={{ background: pi % 2 === 0 ? "white" : "#fafafa" }}
               >
-                <p className="font-semibold text-[#1a1a2e] truncate max-w-[165px]">
+                <p className="font-semibold text-[#1a1a2e] truncate max-w-[140px] text-[11px]">
                   {persona.nombre} {persona.apellido}
                 </p>
                 {persona.cargo && (
-                  <p className="text-[10px] text-gray-400 truncate max-w-[165px]">{persona.cargo}</p>
+                  <p className="text-[9px] text-gray-400 truncate max-w-[140px]">{persona.cargo}</p>
                 )}
               </td>
 
@@ -174,11 +174,11 @@ export function HeatmapAusenciasMes({ year }: Props) {
                 return (
                   <td
                     key={m}
-                    className="px-1.5 py-2 text-center align-middle"
+                    className="px-1 py-0.5 text-center align-middle"
                     style={{ background: esActual ? "#f0f7ff" : undefined }}
                   >
                     {tipos.length === 0 ? (
-                      <div className="h-8" />
+                      <div className="h-5" />
                     ) : (
                       <div className="flex flex-col gap-0.5 items-stretch">
                         {tipos.map(({ tipo, dias }) => {
