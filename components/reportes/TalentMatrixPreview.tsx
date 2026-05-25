@@ -77,7 +77,8 @@ export function TalentMatrixPreview() {
       .eq("activo", true)
       .not("talento_potencial", "is", null)
       .not("talento_desempeno",  "is", null)
-      .then(({ data }) => { setPersonas((data ?? []) as PersonaData[]); setLoading(false); });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .then(({ data }: { data: any }) => { setPersonas((data ?? []) as PersonaData[]); setLoading(false); });
   }, []);
 
   const grupo = GRUPOS.find(g => g.id === grupoActivo)!;

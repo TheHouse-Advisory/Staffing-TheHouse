@@ -119,7 +119,8 @@ export default function MatrizTalentosPage() {
       .from("persona")
       .select("id, nombre, apellido, cargo_actual, talento_potencial, talento_desempeno")
       .eq("activo", true)
-      .then(({ data }) => { setPersonas((data ?? []) as Persona[]); setLoading(false); });
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .then(({ data }: { data: any }) => { setPersonas((data ?? []) as Persona[]); setLoading(false); });
   }, []);
 
   const grupo = GRUPOS.find(g => g.id === grupoActivo)!;

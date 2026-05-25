@@ -134,8 +134,9 @@ function ModalAusencia({ personas, fechaInicial, personaInicial, editarId, onClo
   // En modo edición: carga datos previos
   useEffect(() => {
     if (!editarId) return;
-    supabase.from("ausencia").select("persona_id,tipo,fecha_inicio,fecha_fin,descripcion")
-      .eq("id", editarId).single().then(({ data }) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any).from("ausencia").select("persona_id,tipo,fecha_inicio,fecha_fin,descripcion")
+      .eq("id", editarId).single().then(({ data }: { data: any }) => {
         if (data) {
           setPersonaId(data.persona_id);
           setTipo(data.tipo as TipoAusencia);

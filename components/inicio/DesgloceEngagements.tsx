@@ -1201,7 +1201,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                         {/* relative+overflow-hidden: los botones de acción son absolute y no afectan el ancho */}
                         <div className="relative flex items-center gap-0.5 group overflow-hidden">
                           {/* Grip — visible on hover, señaliza que la fila es arrastrable */}
-                          <GripVertical className="w-3 h-3 flex-shrink-0 text-gray-200 group-hover:text-gray-400 cursor-grab transition-colors" title="Arrastrar para reordenar" />
+                          <span title="Arrastrar para reordenar">
+                            <GripVertical className="w-3 h-3 flex-shrink-0 text-gray-200 group-hover:text-gray-400 cursor-grab transition-colors" />
+                          </span>
                           <button
                             onClick={() => toggleColapso(eng.id)}
                             title={estaColapsado ? "Expandir" : "Colapsar"}
