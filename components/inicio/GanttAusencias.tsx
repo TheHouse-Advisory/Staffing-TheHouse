@@ -31,7 +31,8 @@ type Vista = "dia" | "semana" | "mes";
 
 interface AusenciaRaw { persona_id: string; fecha_inicio: string; fecha_fin: string; }
 
-function iniciales(nombre: string, apellido: string) {
+function iniciales(nombre: string, apellido: string, custom?: string | null) {
+  if (custom?.trim()) return custom.trim().toUpperCase().slice(0, 3);
   return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
 }
 
@@ -186,7 +187,7 @@ export function GanttAusencias({ onVerPersona, vistaExterna, baseExterna }: Gant
                             className="w-7 h-7 rounded-full flex items-center justify-center text-white text-[10px] font-bold flex-shrink-0 hover:scale-110 transition-transform"
                             style={{ backgroundColor: COLORES[p.cargo_actual ?? ""] ?? COLOR_DEFAULT }}
                           >
-                            {iniciales(p.nombre, p.apellido)}
+                            {iniciales(p.nombre, p.apellido, p.iniciales)}
                           </button>
                         ))}
                       </div>

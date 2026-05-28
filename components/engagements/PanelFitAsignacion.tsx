@@ -41,7 +41,8 @@ function nivelEmoji(nivel: FitNivel) {
   }
 }
 
-function iniciales(nombre: string, apellido: string) {
+function iniciales(nombre: string, apellido: string, custom?: string | null) {
+  if (custom?.trim()) return custom.trim().toUpperCase().slice(0, 3);
   return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
 }
 
@@ -196,7 +197,7 @@ function PopupPerfil({ persona, resumen, loading, popupRef, onClose }: PopupPerf
               className="w-12 h-12 rounded-full flex items-center justify-center text-white text-lg font-bold flex-shrink-0"
               style={{ backgroundColor: color }}
             >
-              {iniciales(persona.nombre, persona.apellido)}
+              {iniciales(persona.nombre, persona.apellido, persona.iniciales)}
             </div>
             <div>
               <p className="font-bold text-[#1a1a2e]">
@@ -549,7 +550,7 @@ export function PanelFitAsignacion({
               {req ? (
                 <>
                   <h3 className="text-sm font-bold text-[#1a1a1a]">
-                    {req.cargo_requerido ?? "Sin cargo"}{" "}
+                    {req.cargo_requerido === "Director de Proyectos" ? "Director / Gerente de Proyectos" : req.cargo_requerido === "Asociado" ? "Asociados / Consultores Senior" : (req.cargo_requerido ?? "Sin cargo")}{" "}
                     <span className="font-normal text-[#888]">{req.pct_dedicacion}%</span>
                   </h3>
                   <p className="text-[10px] text-[#888] mt-1">
@@ -641,7 +642,7 @@ export function PanelFitAsignacion({
                           className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white text-xs hover:scale-110 hover:shadow-md transition-transform"
                           style={{ background: avatarColor(p.persona_id) }}
                         >
-                          {iniciales(p.nombre, p.apellido)}
+                          {iniciales(p.nombre, p.apellido, p.iniciales)}
                         </button>
                         <span className="absolute -top-1 -left-1 w-4 h-4 rounded-full bg-[#e8e8e8] text-[9px] font-bold text-[#888] flex items-center justify-center">
                           {idx + 1}

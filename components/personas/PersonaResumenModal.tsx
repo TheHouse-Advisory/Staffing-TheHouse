@@ -19,7 +19,10 @@ const COLORES: Record<string, string> = {
 const COLOR_DEFAULT = "#94a3b8";
 
 
-function iniciales(n: string, a: string) { return `${n[0] ?? ""}${a[0] ?? ""}`.toUpperCase(); }
+function iniciales(n: string, a: string, custom?: string | null) {
+  if (custom?.trim()) return custom.trim().toUpperCase().slice(0, 3);
+  return `${n[0] ?? ""}${a[0] ?? ""}`.toUpperCase();
+}
 
 function diasEnEmpresa(f: string | null | undefined): string | null {
   if (!f) return null;
@@ -174,7 +177,7 @@ export function PersonaResumenModal({ personaId, onClose }: Props) {
                 className="w-10 h-10 rounded-full flex items-center justify-center text-white text-base font-bold flex-shrink-0"
                 style={{ backgroundColor: color }}
               >
-                {iniciales(persona.nombre, persona.apellido)}
+                {iniciales(persona.nombre, persona.apellido, persona.iniciales)}
               </div>
               <div>
                 <p className="font-bold text-[#1a1a2e] text-sm">{persona.nombre} {persona.apellido}</p>

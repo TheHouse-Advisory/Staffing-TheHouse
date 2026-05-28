@@ -18,7 +18,10 @@ const COLORES: Record<string, string> = {
   "Consultor Analista": "#a0b84a", "Consultor Trainee": "#c07c4a",
 };
 const COLOR_DEFAULT = "#94a3b8";
-function iniciales(n: string, a: string) { return `${n[0] ?? ""}${a[0] ?? ""}`.toUpperCase(); }
+function iniciales(n: string, a: string, custom?: string | null) {
+  if (custom?.trim()) return custom.trim().toUpperCase().slice(0, 3);
+  return `${n[0] ?? ""}${a[0] ?? ""}`.toUpperCase();
+}
 function diasEnEmpresa(f: string | null | undefined): string | null {
   if (!f) return null;
   const d = Math.floor((Date.now() - new Date(f + "T00:00:00").getTime()) / 86_400_000);
@@ -324,7 +327,7 @@ export function ColaboradorModal({
                       className="w-12 h-12 rounded-full flex items-center justify-center text-white text-lg font-bold flex-shrink-0"
                       style={{ backgroundColor: COLORES[persona.cargo_actual ?? ""] ?? COLOR_DEFAULT }}
                     >
-                      {iniciales(persona.nombre, persona.apellido)}
+                      {iniciales(persona.nombre, persona.apellido, persona.iniciales)}
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="font-bold text-[#1a1a2e] text-sm">{persona.nombre} {persona.apellido}</p>

@@ -54,13 +54,15 @@ function jitter(id: string): { dx: number; dy: number } {
   };
 }
 
-function iniciales(n: string, a: string) {
+function iniciales(n: string, a: string, custom?: string | null) {
+  if (custom?.trim()) return custom.trim().toUpperCase().slice(0, 3);
   return `${n[0] ?? ""}${a[0] ?? ""}`.toUpperCase();
 }
 
 interface PersonaData {
   id: string; nombre: string; apellido: string;
   cargo_actual: string | null;
+  iniciales?: string | null;
   talento_potencial: number | null;
   talento_desempeno: number | null;
 }
@@ -73,7 +75,7 @@ export function TalentMatrixPreview() {
   useEffect(() => {
     createAnyClient()
       .from("persona")
-      .select("id, nombre, apellido, cargo_actual, talento_potencial, talento_desempeno")
+      .select("id, nombre, apellido, cargo_actual, iniciales, talento_potencial, talento_desempeno")
       .eq("activo", true)
       .not("talento_potencial", "is", null)
       .not("talento_desempeno",  "is", null)
@@ -157,7 +159,7 @@ export function TalentMatrixPreview() {
                   }}
                 >
                   <span className="text-[7px] font-bold text-white leading-none select-none">
-                    {iniciales(p.nombre, p.apellido)}
+                    {iniciales(p.nombre, p.apellido, p.iniciales)}
                   </span>
                 </div>
               );

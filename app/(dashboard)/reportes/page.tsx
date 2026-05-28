@@ -1,4 +1,4 @@
-import { BarChart2, Grid2X2 } from "lucide-react";
+import { BarChart2, Grid2X2, Layers } from "lucide-react";
 import { ReportCard } from "@/components/reportes/ReportCard";
 import { TalentMatrixPreview } from "@/components/reportes/TalentMatrixPreview";
 
@@ -14,7 +14,24 @@ const REPORTES = [
     iconBg: "bg-[#f3f0ff]",
     href: "/reportes/matriz-talento",
   },
-  // Próximos reportes → agregar aquí
+  {
+    id: "resumen-proyectos",
+    titulo: "Resumen de Proyectos",
+    categoria: "Proyectos",
+    icon: BarChart2,
+    iconColor: "#4a90e2",
+    iconBg: "bg-[#f0f6ff]",
+    href: "/reportes/resumen-proyectos",
+  },
+  {
+    id: "capacity-proyectos",
+    titulo: "Capacity de Proyectos",
+    categoria: "Recursos",
+    icon: Layers,
+    iconColor: "#0ea5e9",
+    iconBg: "bg-[#f0fbff]",
+    href: "/reportes/capacity-proyectos",
+  },
 ] as const;
 
 export default function ReportesPage() {

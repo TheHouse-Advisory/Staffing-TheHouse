@@ -6,6 +6,7 @@ import { createAnyClient } from "@/lib/supabase/client";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { getDetailedPersonAbsences, type DetalleAusenciasPersona, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
+import { getIniciales } from "@/lib/utils/iniciales";
 import { ProyectosPersonaDetalle } from "./ProyectosPersonaDetalle";
 import { Button } from "@/components/ui/Button";
 import { PersonaForm } from "./PersonaForm";
@@ -236,7 +237,7 @@ export function PersonaProfile({ id }: Props) {
   if (loading) return <p className="text-sm text-[#888] p-6">Cargando...</p>;
   if (!persona) return <p className="text-sm text-red-500 p-6">Persona no encontrada.</p>;
 
-  const initials = `${persona.nombre[0]}${persona.apellido[0]}`.toUpperCase();
+  const initials = getIniciales(persona.nombre, persona.apellido, persona.iniciales);
   const pctTotal = asignaciones.reduce((sum, a) => sum + a.pct_dedicacion, 0);
   const { bg: bgOcp, text: textOcp } = colorOcupacion(pctTotal);
   const cargoColor = CARGO_COLORS[persona.cargo_actual ?? ""] ?? CARGO_COLOR_DEFAULT;

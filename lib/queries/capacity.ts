@@ -38,6 +38,7 @@ export interface PersonaCapacity {
   nombre: string;
   apellido: string;
   cargo_actual: string | null;
+  iniciales: string | null;
   seniority_order: number;
 }
 
@@ -65,24 +66,27 @@ function seniorityIdx(cargo: string | null): number {
   return idx === -1 ? SENIORITY_ORDER.length : idx;
 }
 
-/** Genera todos los lunes del año dado como fechas ISO */
+/** Formatea una Date como "yyyy-MM-dd" usando la fecha LOCAL (no UTC) */
+function toLocalISO(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
+}
+
+/** Genera todos los lunes del año dado como fechas ISO (usando fecha local, no UTC) */
 export function semanasDelAnio(year: number): string[] {
   const semanas: string[] = [];
-  // Busca el primer lunes del año (o del año anterior si el año empieza en mitad de semana)
+  // Busca el primer lunes del año
   const start = new Date(year, 0, 1);
-  // Avanza hasta el primer lunes
-  const dow = start.getDay(); // 0=dom, 1=lun...
+  const dow = start.getDay(); // 0=dom, 1=lun…
   const diff = dow === 0 ? 1 : dow === 1 ? 0 : 8 - dow;
   start.setDate(start.getDate() + diff);
 
   const cur = new Date(start);
   while (cur.getFullYear() <= year) {
-    const iso = cur.toISOString().split("T")[0];
-    if (new Date(iso).getFullYear() === year || semanas.length === 0) {
-      semanas.push(iso);
-    }
+    semanas.push(toLocalISO(cur));
     cur.setDate(cur.getDate() + 7);
-    if (cur.getFullYear() > year) break;
   }
   return semanas;
 }
@@ -115,17 +119,13 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
   const inicioAnio = `${year}-01-01`;
   const finAnio    = `${year}-12-31`;
 
-  const [persRes, capRes, ausRes] = await Promise.all([
+  // Personas y ausencias no tienen problema de límite de filas
+  const [persRes, ausRes] = await Promise.all([
     supabase
       .from("persona")
-      .select("id, nombre, apellido, cargo_actual")
+      .select("id, nombre, apellido, cargo_actual, iniciales")
       .eq("activo", true)
       .order("apellido"),
-    supabase
-      .from("capacity_planning")
-      .select("persona_id, semana_inicio, capacidad")
-      .gte("semana_inicio", primeraSemana)
-      .lte("semana_inicio", ultimaSemana),
     supabase
       .from("ausencia")
       .select("persona_id, fecha_inicio, fecha_fin")
@@ -133,12 +133,31 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
       .gte("fecha_fin", inicioAnio),
   ]);
 
+  // Capacity: paginación explícita para superar el límite de 1000 filas de PostgREST.
+  // Con ~25 personas × 52 semanas = 1300 filas, sin paginación se pierde el final.
+  const PAGE_SIZE = 1000;
+  let capRows: { persona_id: string; semana_inicio: string; capacidad: unknown }[] = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from("capacity_planning")
+      .select("persona_id, semana_inicio, capacidad")
+      .gte("semana_inicio", primeraSemana)
+      .lte("semana_inicio", ultimaSemana)
+      .range(from, from + PAGE_SIZE - 1);
+    if (error || !data || data.length === 0) break;
+    capRows = capRows.concat(data);
+    if (data.length < PAGE_SIZE) break;   // última página: terminamos
+    from += PAGE_SIZE;
+  }
+
   const personas: PersonaCapacity[] = ((persRes.data ?? []) as any[])
     .map((p) => ({
       id: p.id,
       nombre: p.nombre,
       apellido: p.apellido,
       cargo_actual: p.cargo_actual,
+      iniciales: (p as any).iniciales ?? null,
       seniority_order: seniorityIdx(p.cargo_actual),
     }))
     .sort((a, b) =>
@@ -151,9 +170,10 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
   const valores: Record<string, Record<string, number>> = {};
   for (const p of personas) valores[p.id] = {};
 
-  for (const row of (capRes.data ?? []) as { persona_id: string; semana_inicio: string; capacidad: number }[]) {
+  for (const row of capRows) {
     if (valores[row.persona_id]) {
-      valores[row.persona_id][row.semana_inicio] = row.capacidad;
+      const parsed = parseFloat(String(row.capacidad));
+      valores[row.persona_id][row.semana_inicio] = isNaN(parsed) ? 1 : parsed;
     }
   }
 
@@ -207,15 +227,25 @@ export async function upsertCapacityBulkAll(
   personaIds: string[],
   semanas: string[],
   capacidad: number
-): Promise<void> {
-  const rows = personaIds.flatMap((pid) =>
-    semanas.map((sem) => ({ persona_id: pid, semana_inicio: sem, capacidad }))
-  );
-  // Supabase admite hasta ~500 filas por upsert; particionamos si es necesario
-  const CHUNK = 400;
-  for (let i = 0; i < rows.length; i += CHUNK) {
-    await supabase
+): Promise<string | null> {
+  // Iteración secuencial estricta: una persona a la vez.
+  // NO se corta ante el primer error — se procesan TODAS las personas
+  // para evitar que un fallo puntual deje a las demás sin actualizar.
+  const errores: string[] = [];
+
+  for (const pid of personaIds) {
+    const rows = semanas.map((sem) => ({
+      persona_id: pid,
+      semana_inicio: sem,
+      capacidad,
+    }));
+    const { error } = await supabase
       .from("capacity_planning")
-      .upsert(rows.slice(i, i + CHUNK), { onConflict: "persona_id,semana_inicio" });
+      .upsert(rows, { onConflict: "persona_id,semana_inicio" });
+    if (error) {
+      errores.push(`pid=${pid}: ${error.message}`);
+    }
   }
+
+  return errores.length > 0 ? errores.join(" | ") : null;
 }

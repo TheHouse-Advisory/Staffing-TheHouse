@@ -6,7 +6,8 @@ import {
   subWeeks, subMonths, format, startOfMonth, endOfMonth,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, ChevronDown, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2, GripVertical, RotateCcw } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2, GripVertical, RotateCcw, Diamond, Plane, BarChart2, Search } from "lucide-react";
+import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
 import { ColaboradorModal } from "@/components/engagements/ColaboradorModal";
@@ -84,12 +85,14 @@ function rangoSolapan(aIni: string, aFin: string | null, cIni: Date, cFin: Date)
   if (!aFin) return parseLocal(aIni) <= cFin;
   return parseLocal(aIni) <= cFin && parseLocal(aFin) >= cIni;
 }
-function iniciales(nombre: string, apellido: string) {
+function iniciales(nombre: string, apellido: string, custom?: string | null) {
+  if (custom?.trim()) return custom.trim().toUpperCase().slice(0, 3);
   return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
 }
 
 interface PersonaAsig {
   id: string; nombre: string; apellido: string;
+  iniciales?: string | null;
   cargo: string | null; pct: number;
   fecha_inicio: string; fecha_fin: string;
   asignacionId: string;
@@ -101,13 +104,16 @@ interface ReqData {
   fecha_inicio: string; fecha_fin: string;
   pct_dedicacion: number;
 }
+interface ActividadEng { tipo: "Viajes" | "Taller"; titulo: string; descripcion: string | null; fecha_inicio: string; fecha_fin: string; }
+
 interface EngRow {
   id: string; codigo: string | null; nombre: string; cliente: string | null; tipo: string;
   fecha_inicio: string; fecha_fin: string | null;
   personas: PersonaAsig[];
   reqs: ReqData[];
+  actividades: ActividadEng[];
   raw: Engagement;
-  sort_order: number | null; // orden manual del usuario
+  sort_order: number | null;
 }
 
 export interface PanelInfo {
@@ -145,6 +151,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const [ausencias, setAusencias] = useState<{ persona_id: string; fecha_inicio: string; fecha_fin: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
+  const [searchTerm, setSearchTerm] = useState("");
 
   // Form crear/editar engagement
   const [formOpen, setFormOpen] = useState(false);
@@ -382,12 +389,11 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           .select("id, codigo, nombre, cliente, tipo, estado, descripcion, fecha_inicio, fecha_fin_estimada, fecha_fin_real, industria_id, sort_order")
           .eq("estado", "activo")
           .eq("is_deleted", false)
-          .lte("fecha_inicio", finStr)
-          .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null`)
+          .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null,fecha_inicio.gte.${inicioStr}`)
           .or(filtroCutoff),
 
         sb.from("asignacion")
-          .select("id, engagement_id, persona_id, pct_dedicacion, fecha_inicio, fecha_fin, estado_staffing, requerimiento_id, persona:persona_id(nombre, apellido, cargo_actual)" as any)
+          .select("id, engagement_id, persona_id, pct_dedicacion, fecha_inicio, fecha_fin, estado_staffing, requerimiento_id, persona:persona_id(nombre, apellido, cargo_actual, iniciales)" as any)
           .eq("estado", "activa")
           .lte("fecha_inicio", finStr)
           .gte("fecha_fin", lookbackStr),
@@ -405,7 +411,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           tipo: e.tipo ?? "proyecto",
           fecha_inicio: e.fecha_inicio,
           fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? null,
-          personas: [], reqs: [], raw: e as Engagement,
+          personas: [], reqs: [], actividades: [], raw: e as Engagement,
           sort_order: e.sort_order ?? null,
         });
       }
@@ -417,6 +423,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           id: a.persona_id,
           nombre: a.persona?.nombre ?? "?",
           apellido: a.persona?.apellido ?? "",
+          iniciales: a.persona?.iniciales ?? null,
           cargo: a.persona?.cargo_actual ?? null,
           pct: Number(a.pct_dedicacion),
           fecha_inicio: a.fecha_inicio,
@@ -438,7 +445,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       // Requerimientos + días críticos en paralelo
       const engIds = [...engMap.keys()];
       if (engIds.length > 0) {
-        const [{ data: reqData }, { data: dcData }] = await Promise.all([
+        const [{ data: reqData }, { data: dcData }, { data: actData }] = await Promise.all([
           sb.from("requerimiento_engagement")
             .select("id, engagement_id, cargo_requerido, fecha_inicio, fecha_fin, pct_dedicacion")
             .in("engagement_id", engIds),
@@ -446,7 +453,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
             .select("engagement_id, fecha, fecha_fin, intensidad")
             .in("engagement_id", engIds)
             .order("created_at", { ascending: false }),
+          (sb as any).from("engagement_actividades")
+            .select("engagement_id, tipo, titulo, descripcion, fecha_inicio, fecha_fin")
+            .in("engagement_id", engIds),
         ]);
+        for (const a of (actData ?? []) as any[]) {
+          const eng = engMap.get(a.engagement_id);
+          if (eng) eng.actividades.push({ tipo: a.tipo, titulo: a.titulo, descripcion: a.descripcion ?? null, fecha_inicio: a.fecha_inicio, fecha_fin: a.fecha_fin });
+        }
         for (const r of (reqData ?? []) as any[]) {
           const eng = engMap.get(r.engagement_id);
           if (eng) eng.reqs.push({
@@ -1014,57 +1028,82 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         </div>
       )}
       {/* Barra de controles — se oculta cuando la navegación es controlada externamente */}
-      <div className="flex items-center justify-between mb-3 flex-shrink-0">
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => { setEngToEdit(undefined); setFormOpen(true); }}
-            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white transition-colors hover:opacity-90"
-            style={{ background: "#4a90e2" }}
-          >
-            <Plus className="w-3 h-3" />
-            Nuevo proyecto
-          </button>
-          {engs.length > 0 && (
+      <div className="flex flex-col gap-1.5 mb-3 flex-shrink-0">
+        {/* Fila 1: acciones principales + Resumen */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-2">
             <button
-              onClick={colapsados.size === engs.length ? expandirTodos : colapsarTodos}
-              className="text-[11px] px-2.5 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
+              onClick={() => { setEngToEdit(undefined); setFormOpen(true); }}
+              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white transition-colors hover:opacity-90"
+              style={{ background: "#4a90e2" }}
             >
-              {colapsados.size === engs.length ? "Expandir todos" : "Colapsar todos"}
+              <Plus className="w-3 h-3" />
+              Nuevo proyecto
             </button>
-          )}
-          {/* Botón Deshacer — activo solo cuando hay acciones en el stack */}
-          <button
-            onClick={handleUndo}
-            disabled={!undoStack.length || undoing}
-            title={undoStack.length ? `Deshacer: ${undoStack[undoStack.length - 1]?.label}` : "Sin acciones para deshacer"}
-            className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/30 hover:bg-blue-50 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400 disabled:hover:border-gray-100 transition-all"
-          >
-            {undoing
-              ? <Loader2 className="w-3 h-3 animate-spin" />
-              : <RotateCcw className="w-3 h-3" />}
-            <span>Deshacer{undoStack.length > 1 ? ` (${undoStack.length})` : ""}</span>
-          </button>
-        </div>
-        {/* Controles internos: solo visibles cuando no hay control externo */}
-        {!vistaExterna && (
-          <div className="flex items-center gap-1">
-            <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
-              {(["dia", "semana", "mes"] as Vista[]).map((v) => (
-                <button key={v} onClick={() => setVistaInterna(v)}
-                  className="px-2.5 py-1 transition-colors"
-                  style={vistaInterna === v ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
-                  {v === "dia" ? "Día" : v === "semana" ? "Semana" : "Mes"}
-                </button>
-              ))}
-            </div>
-            <button onClick={navAnterior} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-              <ChevronLeft className="w-3.5 h-3.5" />
-            </button>
-            <button onClick={navSiguiente} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-              <ChevronRight className="w-3.5 h-3.5" />
+            {engs.length > 0 && (
+              <button
+                onClick={colapsados.size === engs.length ? expandirTodos : colapsarTodos}
+                className="text-[11px] px-2.5 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                {colapsados.size === engs.length ? "Expandir todos" : "Colapsar todos"}
+              </button>
+            )}
+            {/* Botón Deshacer */}
+            <button
+              onClick={handleUndo}
+              disabled={!undoStack.length || undoing}
+              title={undoStack.length ? `Deshacer: ${undoStack[undoStack.length - 1]?.label}` : "Sin acciones para deshacer"}
+              className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/30 hover:bg-blue-50 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400 disabled:hover:border-gray-100 transition-all"
+            >
+              {undoing
+                ? <Loader2 className="w-3 h-3 animate-spin" />
+                : <RotateCcw className="w-3 h-3" />}
+              <span>Deshacer{undoStack.length > 1 ? ` (${undoStack.length})` : ""}</span>
             </button>
           </div>
-        )}
+          {/* Resumen — compacto, a la derecha */}
+          <Link
+            href="/reportes/resumen-proyectos"
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-gray-200 text-[10px] text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/40 hover:bg-blue-50 transition-all"
+          >
+            <BarChart2 className="w-2.5 h-2.5" />
+            <span>Resumen</span>
+          </Link>
+        </div>
+        {/* Fila 2: buscador + controles de vista */}
+        <div className="flex items-center justify-between">
+          {/* Buscador multi-criterio */}
+          <div className="relative flex items-center">
+            <Search className="absolute left-2 w-3 h-3 text-gray-400 pointer-events-none" />
+            <input
+              type="text"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              placeholder="Buscar por proyecto, código, cliente o persona..."
+              className="pl-6 pr-2.5 py-1 text-[11px] rounded-lg border border-gray-200 bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#4a90e2] focus:ring-1 focus:ring-[#4a90e2]/30 w-64 transition-all"
+            />
+          </div>
+          {/* Controles internos: solo visibles cuando no hay control externo */}
+          {!vistaExterna && (
+            <div className="flex items-center gap-1">
+              <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
+                {(["dia", "semana", "mes"] as Vista[]).map((v) => (
+                  <button key={v} onClick={() => setVistaInterna(v)}
+                    className="px-2.5 py-1 transition-colors"
+                    style={vistaInterna === v ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
+                    {v === "dia" ? "Día" : v === "semana" ? "Semana" : "Mes"}
+                  </button>
+                ))}
+              </div>
+              <button onClick={navAnterior} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                <ChevronLeft className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={navSiguiente} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+        </div>
       </div>
 
       {loading ? (
@@ -1103,7 +1142,19 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 { tipo: "propuesta",     label: "Propuestas comerciales", color: "#9b59b6" },
                 { tipo: "ayuda_interna", label: "Ayuda interna",          color: "#27ae60" },
               ].flatMap(({ tipo, label, color: secColor }) => {
-                const lista = engs.filter((e) => e.tipo === tipo);
+                const q = searchTerm.toLowerCase().trim();
+                const lista = engs.filter((e) => {
+                  if (e.tipo !== tipo) return false;
+                  if (!q) return true;
+                  if (e.nombre.toLowerCase().includes(q)) return true;
+                  if (e.codigo?.toLowerCase().includes(q)) return true;
+                  if (e.cliente?.toLowerCase().includes(q)) return true;
+                  return e.personas.some((p) => {
+                    const fullName = `${p.nombre} ${p.apellido}`.toLowerCase();
+                    const initials = `${p.nombre.charAt(0)}${p.apellido.charAt(0)}`.toLowerCase();
+                    return fullName.includes(q) || initials.includes(q);
+                  });
+                });
                 if (lista.length === 0) return [];
 
                 const filaSeccion = (
@@ -1259,6 +1310,17 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                         const rojoOutline: React.CSSProperties = esRojo
                           ? { outline: "2px dashed #ef4444", outlineOffset: "-1px" }
                           : {};
+                        // Actividades que solapan esta columna
+                        const colInicioStr = format(col.inicio, "yyyy-MM-dd");
+                        const colFinStr    = format(col.fin,    "yyyy-MM-dd");
+                        const actCol = eng.actividades.filter(
+                          (a) => a.fecha_inicio <= colFinStr && a.fecha_fin >= colInicioStr
+                        );
+                        const tieneViaje  = actCol.some((a) => a.tipo === "Viajes");
+                        const tieneTaller = actCol.some((a) => a.tipo === "Taller");
+                        // Textos para tooltips nativos (title HTML — sin interferir con clicks)
+                        const tallerTip = actCol.filter((a) => a.tipo === "Taller").map((a) => `Taller: ${a.titulo}${a.descripcion ? ` — ${a.descripcion}` : ""}`).join("\n");
+                        const viajeTip  = actCol.filter((a) => a.tipo === "Viajes").map((a) => `Viaje: ${a.titulo}${a.descripcion ? ` — ${a.descripcion}` : ""}`).join("\n");
                         // Detecta bordes del engagement para colocar manillas de resize
                         const prevColE = columnas[i - 1];
                         const nextColE = columnas[i + 1];
@@ -1284,7 +1346,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               onDrop={(ev) => handleDropOnEngagement(ev, eng)}>
                               <div
                                 className="relative h-5 rounded-full transition-all overflow-visible group/engbar"
-                                style={{ background: barColor, ...rojoOutline, opacity: esHoy ? 1 : 0.5, cursor: movingEng?.eng.id === eng.id ? "grabbing" : "grab" }}
+                                style={{ background: barColor, ...rojoOutline, opacity: esHoy ? 1 : 0.5, cursor: movingEng?.eng.id === eng.id ? "grabbing" : "grab", ...(tieneViaje ? { border: "3px solid #92400e" } : tieneTaller ? { border: "3px solid #2563eb" } : {}) }}
                                 title="Arrastra para mover · Borde para redimensionar · Clic para intensidad"
                                 onMouseDown={(ev) => {
                                   // Solo cuerpo (no los handles de borde que hacen stopPropagation)
@@ -1299,6 +1361,22 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                   ev.stopPropagation();
                                   setQuickEdit({ engId: eng.id, fecha: format(col.inicio, "yyyy-MM-dd"), fecha_fin: format(col.fin, "yyyy-MM-dd"), x: ev.clientX, y: ev.clientY });
                                 }}>
+                                {tieneTaller && (
+                                  <div className="group/tip absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-auto">
+                                    <Diamond className="w-5 h-5 text-blue-600 fill-sky-200 cursor-default" />
+                                    <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-[9999] opacity-0 group-hover/tip:opacity-100 transition-opacity duration-200 shadow-lg">
+                                      {tallerTip}
+                                    </div>
+                                  </div>
+                                )}
+                                {tieneViaje && (
+                                  <div className="group/tip absolute top-0.5 right-1 z-10 pointer-events-auto">
+                                    <Plane className="w-3 h-3 cursor-default" style={{ color: "#92400e" }} />
+                                    <div className="pointer-events-none absolute bottom-full right-0 mb-2 bg-slate-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-[9999] opacity-0 group-hover/tip:opacity-100 transition-opacity duration-200 shadow-lg">
+                                      {viajeTip}
+                                    </div>
+                                  </div>
+                                )}
                                 {isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/40 transition-colors" />}
                                 {isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/40 transition-colors" />}
                               </div>
@@ -1315,7 +1393,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                             onDrop={(ev) => handleDropOnEngagement(ev, eng)}>
                             <div
                               className="relative h-7 rounded-full hover:opacity-100 transition-opacity overflow-visible group/engbar"
-                              style={{ background: barColor, ...rojoOutline, opacity: movePreviewActive ? 1 : isDragTarget ? 1 : esHoy ? 1 : 0.75, cursor: movingEng?.eng.id === eng.id ? "grabbing" : "grab" }}
+                              style={{ background: barColor, ...rojoOutline, opacity: movePreviewActive ? 1 : isDragTarget ? 1 : esHoy ? 1 : 0.75, cursor: movingEng?.eng.id === eng.id ? "grabbing" : "grab", ...(tieneViaje ? { border: "3px solid #92400e" } : tieneTaller ? { border: "3px solid #2563eb" } : {}) }}
                               title="Arrastra para mover · Borde para redimensionar · Clic para intensidad"
                               onMouseDown={(ev) => {
                                 ev.stopPropagation();
@@ -1329,6 +1407,22 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 ev.stopPropagation();
                                 setQuickEdit({ engId: eng.id, fecha: format(col.inicio, "yyyy-MM-dd"), fecha_fin: format(col.fin, "yyyy-MM-dd"), x: ev.clientX, y: ev.clientY });
                               }}>
+                              {tieneTaller && (
+                                <div className="group/tip absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-auto">
+                                  <Diamond className="w-6 h-6 text-blue-600 fill-sky-200 cursor-default" />
+                                  <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-[9999] opacity-0 group-hover/tip:opacity-100 transition-opacity duration-200 shadow-lg">
+                                    {tallerTip}
+                                  </div>
+                                </div>
+                              )}
+                              {tieneViaje && (
+                                <div className="group/tip absolute top-1 right-1.5 z-10 pointer-events-auto">
+                                  <Plane className="w-3.5 h-3.5 cursor-default" style={{ color: "#92400e" }} />
+                                  <div className="pointer-events-none absolute bottom-full right-0 mb-2 bg-slate-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-[9999] opacity-0 group-hover/tip:opacity-100 transition-opacity duration-200 shadow-lg">
+                                    {viajeTip}
+                                  </div>
+                                </div>
+                              )}
                               {isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/30 transition-colors" />}
                               {isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/30 transition-colors" />}
                             </div>
@@ -1457,7 +1551,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                         onDragOver={(e) => { e.preventDefault(); setDragOverGhostKey(ghostKey); }}
                                         onDragLeave={() => setDragOverGhostKey(null)}
                                         onDrop={(e) => handleGhostDrop(e, eng, cargo, gp)}>
-                                        {gFirst && <span className="pl-2 text-[10px] font-bold" style={{ color: cargoColor }}>{iniciales(gp.nombre, gp.apellido)}</span>}
+                                        {gFirst && <span className="pl-2 text-[10px] font-bold" style={{ color: cargoColor }}>{iniciales(gp.nombre, gp.apellido, gp.iniciales)}</span>}
                                       </div>
                                     );
                                   })}
@@ -1494,7 +1588,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                           style={{ width: 14, height: 14, fontSize: 7, backgroundColor: cargoColor, border: "1.5px solid white", top: "50%", left: 2, transform: "translateY(-50%)" }}
                                           title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}
                                           onClick={(e) => { e.stopPropagation(); handleAvatarClick(e, p, eng); }}>
-                                          {iniciales(p.nombre, p.apellido)}
+                                          {iniciales(p.nombre, p.apellido, p.iniciales)}
                                         </div>
                                       )}
                                     </>
@@ -1542,7 +1636,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                         <div className="flex items-center justify-center rounded-full text-white font-bold select-none shadow-sm"
                                           style={{ width: 14, height: 14, fontSize: 7, backgroundColor: cargoColor, border: "1.5px solid white" }}
                                           title={`PLAN · ${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
-                                          {iniciales(p.nombre, p.apellido)}
+                                          {iniciales(p.nombre, p.apellido, p.iniciales)}
                                         </div>
                                       </div>
                                     )}
@@ -1588,7 +1682,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 <div key={p.id} title={`${p.nombre} ${p.apellido} — ausente`}
                                   className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold"
                                   style={{ background: "#fed7aa", color: "#c2410c" }}>
-                                  {iniciales(p.nombre, p.apellido)}
+                                  {iniciales(p.nombre, p.apellido, p.iniciales)}
                                 </div>
                               ))}
                             </div>

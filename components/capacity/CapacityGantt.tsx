@@ -20,7 +20,10 @@ import {
 // ─────────────────────────────────────────────────────────────
 
 function getVal(valores: Record<string, Record<string, number>>, pid: string, sem: string): number {
-  return valores[pid]?.[sem] ?? 1;
+  const raw = valores[pid]?.[sem];
+  if (raw === undefined || raw === null) return 1;
+  const n = parseFloat(String(raw));
+  return isNaN(n) ? 1 : n;
 }
 
 function cellColor(v: number, flash: boolean): string {
@@ -489,6 +492,18 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     const ids     = equipo.map(p => p.id);
     const semanas = semanasFiltradas;
 
+    // 0. Cancelar todos los debounces pendientes de las celdas afectadas
+    //    (evita race condition: timer antiguo sobreescribiendo el bulk update)
+    for (const pid of ids) {
+      for (const sem of semanas) {
+        const key = `${pid}:${sem}`;
+        if (timers.current[key]) {
+          clearTimeout(timers.current[key]);
+          delete timers.current[key];
+        }
+      }
+    }
+
     // 1. Actualizar estado local inmediatamente
     setValores(prev => {
       const next = { ...prev };
@@ -504,8 +519,12 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     setFlashCells(keys);
     setTimeout(() => setFlashCells(new Set()), 1200);
 
-    // 3. Persistir en Supabase (chunked upsert)
-    await upsertCapacityBulkAll(supabase, ids, semanas, capacidad);
+    // 3. Persistir en Supabase (secuencial, una persona a la vez)
+    const err = await upsertCapacityBulkAll(supabase, ids, semanas, capacidad);
+    if (err) console.error("[bulk capacity] Errores al persistir:", err);
+
+    // 4. Recargar desde DB para confirmar estado real (elimina discrepancias optimistas)
+    await cargar();
   }
 
   // ── Edición por persona con alcance (año o meses seleccionados) ──
@@ -514,6 +533,15 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     semanasFiltradas: string[],
     capacidad: number
   ) {
+    // 0. Cancelar debounces pendientes de las celdas afectadas
+    for (const sem of semanasFiltradas) {
+      const key = `${persona.id}:${sem}`;
+      if (timers.current[key]) {
+        clearTimeout(timers.current[key]);
+        delete timers.current[key];
+      }
+    }
+
     setLoadingPersona(persona.id);
 
     // 1. Actualizar estado local
@@ -529,11 +557,13 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     setTimeout(() => setFlashCells(new Set()), 1200);
 
     // 3. Persistir — reutiliza upsertCapacityBulkAll con un solo personaId
-    await upsertCapacityBulkAll(supabase, [persona.id], semanasFiltradas, capacidad);
+    const err = await upsertCapacityBulkAll(supabase, [persona.id], semanasFiltradas, capacidad);
+    if (err) console.error("[persona capacity] Error al persistir:", err);
+
+    // 4. Recargar desde DB para confirmar estado real (igual que el bulk)
+    await cargar();
 
     setLoadingPersona(null);
-    // El recálculo de totales y capacidad real se dispara automáticamente
-    // por el useEffect que observa [valores, data, grupos]
   }
 
   if (loading) {

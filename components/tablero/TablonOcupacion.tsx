@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from "react";
 import { format, isWeekend } from "date-fns";
 import { es } from "date-fns/locale";
-import { AlertTriangle, X, User, CheckCircle } from "lucide-react";
+import { AlertTriangle, X, User, CheckCircle, BarChart2, Search } from "lucide-react";
+import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import {
   fetchOcupacionDiariaPersona,
@@ -508,6 +509,7 @@ function LeyendaProyecto() {
 export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: Props) {
   const [filasPersona, setFilasPersona] = useState<FilaDia[]>([]);
   const [filasProyecto, setFilasProyecto] = useState<FilaProyecto[]>([]);
+  const [searchTerm, setSearchTerm] = useState("");
   const [dias, setDias] = useState<Date[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -604,6 +606,11 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
 
     return (
       <div className="p-6">
+        <div className="flex justify-end mb-3">
+          <Link href="/reportes/resumen-proyectos" className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/30 hover:bg-blue-50 transition-all">
+            <BarChart2 className="w-3 h-3" /><span>Resumen</span>
+          </Link>
+        </div>
         <LeyendaPersona />
         <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
           <div className="overflow-x-auto">
@@ -769,6 +776,25 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
 
   return (
     <div className="p-6">
+      <div className="flex flex-col gap-1.5 mb-3">
+        {/* Fila 1: Resumen compacto alineado a la derecha */}
+        <div className="flex justify-end">
+          <Link href="/reportes/resumen-proyectos" className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-gray-200 text-[10px] text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/40 hover:bg-blue-50 transition-all">
+            <BarChart2 className="w-2.5 h-2.5" /><span>Resumen</span>
+          </Link>
+        </div>
+        {/* Fila 2: buscador */}
+        <div className="relative flex items-center">
+          <Search className="absolute left-2 w-3 h-3 text-gray-400 pointer-events-none" />
+          <input
+            type="text"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            placeholder="Buscar por proyecto, código, cliente o persona..."
+            className="pl-6 pr-2.5 py-1 text-[11px] rounded-lg border border-gray-200 bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#4a90e2] focus:ring-1 focus:ring-[#4a90e2]/30 w-72 transition-all"
+          />
+        </div>
+      </div>
       <LeyendaProyecto />
       <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
         <div className="overflow-x-auto">
@@ -821,7 +847,14 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
                 { tipo: "propuesta",     label: "Propuestas comerciales", color: "#9b59b6" },
                 { tipo: "ayuda_interna", label: "Ayuda interna",          color: "#27ae60" },
               ].flatMap(({ tipo, label, color: secColor }) => {
-                const lista = filasProyecto.filter((f) => f.tipo === tipo);
+                const q = searchTerm.toLowerCase().trim();
+                const lista = filasProyecto.filter((f) => {
+                  if (f.tipo !== tipo) return false;
+                  if (!q) return true;
+                  if (f.engagement_nombre.toLowerCase().includes(q)) return true;
+                  if (f.cliente.toLowerCase().includes(q)) return true;
+                  return false;
+                });
                 if (lista.length === 0) return [];
                 const filaSeccion = (
                   <tr key={`sec-${tipo}`}>

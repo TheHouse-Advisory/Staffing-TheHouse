@@ -31,7 +31,8 @@ const COLORES: Record<string, string> = {
 };
 const COLOR_DEFAULT = "#94a3b8";
 
-function iniciales(nombre: string, apellido: string) {
+function iniciales(nombre: string, apellido: string, custom?: string | null) {
+  if (custom?.trim()) return custom.trim().toUpperCase().slice(0, 3);
   return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
 }
 
@@ -108,7 +109,7 @@ export default function InicioPage() {
 
       const [persRes, asigRes, asigDetalleRes] = await Promise.all([
         sb.from("persona")
-          .select("id, nombre, apellido, cargo_actual, is_leverager, fecha_ingreso")
+          .select("id, nombre, apellido, iniciales, cargo_actual, is_leverager, fecha_ingreso")
           .eq("activo", true).order("cargo_actual").order("apellido"),
         sb.from("asignacion")
           .select("persona_id, pct_dedicacion")
@@ -325,7 +326,7 @@ export default function InicioPage() {
                                 className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[12px] font-bold shadow-sm"
                                 style={{ backgroundColor: color }}
                               >
-                                {iniciales(p.nombre, p.apellido)}
+                                {iniciales(p.nombre, p.apellido, p.iniciales)}
                               </div>
                               {/* Indicador Apalancador */}
                               {p.is_leverager && (

@@ -89,6 +89,7 @@ export interface Persona {
   auth_user_id: string | null;
   nombre: string;
   apellido: string;
+  iniciales: string | null;   // personalizada (máx. 3 chars); null = auto-calculada
   email: string;
   cargo_actual: string | null;
   rol_sistema: RolSistema | null;
