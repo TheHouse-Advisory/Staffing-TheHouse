@@ -32,7 +32,7 @@ const REPORTES = [
     iconBg: "bg-[#f0fbff]",
     href: "/reportes/capacity-proyectos",
   },
-] as const;
+];
 
 export default function ReportesPage() {
   return (
