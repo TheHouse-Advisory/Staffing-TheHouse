@@ -551,6 +551,17 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
   useEffect(() => { cargar(); }, [cargar]);
   useEffect(() => { setPopover(null); }, [semanaInicio, planId, vista, periodoVista]);
 
+  // Recarga cuando cambian asignaciones o engagements (ej: extensión de proyecto)
+  useEffect(() => {
+    const handler = () => cargar();
+    window.addEventListener("asignacionChanged", handler);
+    window.addEventListener("engagementChanged", handler);
+    return () => {
+      window.removeEventListener("asignacionChanged", handler);
+      window.removeEventListener("engagementChanged", handler);
+    };
+  }, [cargar]);
+
   if (loading) return <div className="flex items-center justify-center h-48 text-sm text-[#888]">Cargando tablero...</div>;
   if (error)   return <div className="flex items-center justify-center h-48 text-sm text-red-500">Error: {error}</div>;
 

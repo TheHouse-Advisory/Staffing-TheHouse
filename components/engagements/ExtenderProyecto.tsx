@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { AlertTriangle, CalendarX, CheckCircle, Loader2, UserPlus, X } from "lucide-react";
+import { AlertTriangle, CalendarRange, CheckCircle, Loader2, Trash2, UserPlus, X } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { FieldWrapper, Input } from "@/components/ui/FormField";
@@ -85,11 +85,12 @@ interface Props {
   engagementId: string;
   engagementTipo?: string;
   onExtended?: () => void;
+  onFechaFinChange?: (fecha: string) => void; // actualiza fecha_fin_estimada del form padre
 }
 
 // ─── Component ────────────────────────────────────────────────
 
-export function ExtenderProyecto({ engagementId, engagementTipo, onExtended }: Props) {
+export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onFechaFinChange }: Props) {
   const [fechaInicio, setFechaInicio] = useState("");
   const [fechaFin, setFechaFin] = useState("");
   const [personas, setPersonas] = useState<ExtPersona[]>([]);
@@ -98,6 +99,28 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended }: P
   const [guardando, setGuardando] = useState(false);
   const [exito, setExito] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Extensiones ya guardadas para este engagement
+  const [extensionesGuardadas, setExtensionesGuardadas] = useState<{ id: string; fecha_inicio: string; fecha_fin: string }[]>([]);
+
+  async function cargarExtensiones() {
+    const sb = createAnyClient();
+    const { data } = await (sb as any)
+      .from("engagement_extension")
+      .select("id, fecha_inicio, fecha_fin")
+      .eq("engagement_id", engagementId)
+      .order("fecha_inicio");
+    setExtensionesGuardadas(data ?? []);
+  }
+
+  useEffect(() => { cargarExtensiones(); }, [engagementId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  async function eliminarExtension(id: string) {
+    const sb = createAnyClient();
+    await (sb as any).from("engagement_extension").delete().eq("id", id);
+    setExtensionesGuardadas((prev) => prev.filter((e) => e.id !== id));
+    window.dispatchEvent(new CustomEvent("engagementChanged", { detail: { engagementId } }));
+  }
 
   // Picker para añadir más personas
   const [allPersonas, setAllPersonas] = useState<PersonaOption[]>([]);
@@ -280,15 +303,21 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended }: P
   }
 
   async function guardar() {
-    if (personas.length === 0 && reqs.length === 0) return;
+    // Solo requiere fechas válidas — el equipo es opcional
+    if (!fechaInicio || !fechaFin) return;
     setGuardando(true);
     setError(null);
     const sb = createAnyClient();
 
-    // 1. Crear requerimientos primero para obtener sus IDs y poder vincular asignaciones
-    // Mapa cargo → [id, ...] para asignar uno por persona que coincida
-    const reqPool = new Map<string, string[]>();
+    // 0. Registrar el período de extensión (período independiente, sin tocar fecha_fin_estimada)
+    //    No actualizamos fecha_fin_estimada para preservar el fin original y permitir gaps visuales
+    const { error: extErr } = await (sb as any)
+      .from("engagement_extension")
+      .insert({ engagement_id: engagementId, fecha_inicio: fechaInicio, fecha_fin: fechaFin });
+    if (extErr) { setError(extErr.message); setGuardando(false); return; }
 
+    // 1. Crear requerimientos para el período extendido (solo si hay reqs que copiar)
+    const reqPool = new Map<string, string[]>();
     if (reqs.length > 0) {
       const { data: newReqs, error: reqErr } = await (sb as any)
         .from("requerimiento_engagement")
@@ -304,9 +333,7 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended }: P
           }))
         )
         .select("id, cargo_requerido");
-
       if (reqErr) { setError(reqErr.message); setGuardando(false); return; }
-
       for (const r of (newReqs ?? []) as any[]) {
         const key = r.cargo_requerido ?? "__any__";
         if (!reqPool.has(key)) reqPool.set(key, []);
@@ -314,12 +341,10 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended }: P
       }
     }
 
-    // 2. Crear asignaciones vinculadas al requerimiento correspondiente (por cargo)
-    //    → permite gestionar el equipo directamente desde el detalle del engagement
+    // 2. Crear asignaciones para el equipo del período extendido (solo si hay personas)
     if (personas.length > 0) {
       const { error: err } = await (sb as any).from("asignacion").insert(
         personas.map((p) => {
-          // Busca req del mismo cargo; si no hay, intenta req sin cargo requerido
           const pool = reqPool.get(p.cargo) ?? reqPool.get("__any__") ?? [];
           const requerimiento_id = pool.shift() ?? null;
           return {
@@ -337,9 +362,10 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended }: P
       if (err) { setError(err.message); setGuardando(false); return; }
     }
 
-    setExito(true);
     setGuardando(false);
-    window.dispatchEvent(new CustomEvent("asignacionChanged"));
+    setExito(true);
+    await cargarExtensiones();
+    // Usa el mismo camino confiable que el formulario principal: onExtended → onSuccess → refresh()
     onExtended?.();
   }
 
@@ -506,6 +532,29 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended }: P
         </>
       )}
 
+      {/* Extensiones guardadas */}
+      {extensionesGuardadas.length > 0 && (
+        <div className="space-y-1.5">
+          <p className="text-[10px] font-semibold text-[#888] uppercase tracking-widest flex items-center gap-1.5">
+            <CalendarRange className="w-3 h-3" /> Extensiones registradas
+          </p>
+          {extensionesGuardadas.map((ex) => (
+            <div key={ex.id} className="flex items-center justify-between rounded-lg border border-[#c7d9f4] bg-[#f8fbff] px-3 py-2">
+              <span className="text-xs text-[#1a1a2e]">
+                {fmtDate(ex.fecha_inicio)} → {fmtDate(ex.fecha_fin)}
+              </span>
+              <button
+                onClick={() => eliminarExtension(ex.id)}
+                title="Eliminar extensión"
+                className="text-[#ccc] hover:text-red-400 transition-colors"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* Error */}
       {error && (
         <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-xs text-red-700">
@@ -515,17 +564,30 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended }: P
 
       {/* Éxito */}
       {exito && (
-        <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-xs text-green-700 flex items-center gap-2">
-          <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
-          Extensión guardada
-          {personas.length > 0 && ` — ${personas.length} asignación${personas.length !== 1 ? "es" : ""} creada${personas.length !== 1 ? "s" : ""}`}
-          {reqs.length > 0 && ` · ${reqs.length} requerimiento${reqs.length !== 1 ? "s" : ""} copiado${reqs.length !== 1 ? "s" : ""}`}
-          .
+        <div className="p-3 rounded-lg bg-green-50 border border-green-200 text-xs text-green-700 flex items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
+            <span>
+              Extensión guardada · tablero actualizado
+              {personas.length > 0 && ` — ${personas.length} asignación${personas.length !== 1 ? "es" : ""}`}
+              {reqs.length > 0 && ` · ${reqs.length} req${reqs.length !== 1 ? "s" : ""}`}
+            </span>
+          </div>
+          <button
+            onClick={() => {
+              setExito(false);
+              setFechaInicio(""); setFechaFin("");
+              setPersonas([]); setReqs([]);
+            }}
+            className="text-[10px] font-medium underline text-green-600 hover:text-green-800 flex-shrink-0"
+          >
+            Nueva extensión
+          </button>
         </div>
       )}
 
-      {/* Botón guardar */}
-      {tieneAlgo && fechaInicio && fechaFin && !exito && !loading && (
+      {/* Botón guardar — disponible con solo tener fechas válidas */}
+      {fechaInicio && fechaFin && !exito && !loading && (
         <div className="flex justify-end pt-1">
           <Button
             onClick={guardar}

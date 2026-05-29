@@ -186,6 +186,32 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm((f) => ({ ...f, [field]: e.target.value }));
 
+  // Cambia fecha_inicio y recorta reqs cuyo inicio quedó antes del nuevo límite
+  const handleFechaInicioChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const nuevo = e.target.value;
+    setForm((f) => ({ ...f, fecha_inicio: nuevo }));
+    if (nuevo) {
+      setReqs((prev) =>
+        prev.map((r) =>
+          r.fecha_inicio && r.fecha_inicio < nuevo ? { ...r, fecha_inicio: nuevo } : r
+        )
+      );
+    }
+  };
+
+  // Cambia fecha_fin_estimada y recorta reqs cuyo fin supera el nuevo límite
+  const applyFechaFin = (nuevo: string) => {
+    setForm((f) => ({ ...f, fecha_fin_estimada: nuevo }));
+    if (nuevo) {
+      setReqs((prev) =>
+        prev.map((r) =>
+          r.fecha_fin && r.fecha_fin > nuevo ? { ...r, fecha_fin: nuevo } : r
+        )
+      );
+    }
+  };
+  const handleFechaFinChange = (e: React.ChangeEvent<HTMLInputElement>) => applyFechaFin(e.target.value);
+
   async function guardarNuevaIndustria() {
     const nombre = nuevaIndustriaNombre.trim();
     if (!nombre) { setNuevaIndustriaError("El nombre es obligatorio."); return; }
@@ -428,10 +454,70 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
         const { error: updErr } = await supabase
           .from("requerimiento_engagement").update(reqPayload).eq("id", r.id);
         if (updErr) { setServerError(`Error en requerimiento ${i + 1}: ${updErr.message}`); setLoading(false); return; }
+
+        // Cascada: sincroniza asignaciones activas vinculadas al requerimiento
+        if (reqPayload.fecha_inicio || reqPayload.fecha_fin) {
+          const asigUpdate: Record<string, string | null> = {};
+          if (reqPayload.fecha_inicio) asigUpdate.fecha_inicio = reqPayload.fecha_inicio;
+          if (reqPayload.fecha_fin)    asigUpdate.fecha_fin    = reqPayload.fecha_fin;
+          await supabase
+            .from("asignacion")
+            .update(asigUpdate)
+            .eq("requerimiento_id", r.id)
+            .eq("estado", "activa");
+        }
       } else {
         const { error: insErr } = await (supabase as any)
           .from("requerimiento_engagement").insert(reqPayload);
         if (insErr) { setServerError(`Error al crear requerimiento ${i + 1}: ${insErr.message}`); setLoading(false); return; }
+      }
+    }
+
+    // ── Sincronización masiva de fechas en requerimientos ─────
+    // Si cambia fecha_inicio o fecha_fin_estimada, alinear los reqs que
+    // tenían la fecha anterior exacta (reqs con fechas personalizadas no se tocan).
+    if (engagement) {
+      const syncOps: Promise<any>[] = [];
+
+      if (form.fecha_inicio && engagement.fecha_inicio &&
+          form.fecha_inicio !== engagement.fecha_inicio) {
+        syncOps.push(
+          supabase
+            .from("requerimiento_engagement")
+            .update({ fecha_inicio: form.fecha_inicio })
+            .eq("engagement_id", engId)
+            .eq("fecha_inicio", engagement.fecha_inicio)
+        );
+      }
+
+      // Reducción de fecha_fin (el bloque existente ya cubre la extensión)
+      if (form.fecha_fin_estimada && engagement.fecha_fin_estimada &&
+          form.fecha_fin_estimada < engagement.fecha_fin_estimada) {
+        syncOps.push(
+          supabase
+            .from("requerimiento_engagement")
+            .update({ fecha_fin: form.fecha_fin_estimada })
+            .eq("engagement_id", engId)
+            .eq("fecha_fin", engagement.fecha_fin_estimada)
+        );
+      }
+
+      if (syncOps.length > 0) await Promise.all(syncOps);
+
+      // Propaga el mismo cambio de fechas a las asignaciones activas del engagement
+      const asigMassUpdate: Record<string, string> = {};
+      if (form.fecha_inicio && engagement.fecha_inicio && form.fecha_inicio !== engagement.fecha_inicio)
+        asigMassUpdate.fecha_inicio = form.fecha_inicio;
+      if (form.fecha_fin_estimada && engagement.fecha_fin_estimada &&
+          form.fecha_fin_estimada < engagement.fecha_fin_estimada)
+        asigMassUpdate.fecha_fin = form.fecha_fin_estimada;
+
+      if (Object.keys(asigMassUpdate).length > 0) {
+        await supabase
+          .from("asignacion")
+          .update(asigMassUpdate)
+          .eq("engagement_id", engId)
+          .eq("estado", "activa");
       }
     }
 
@@ -450,11 +536,22 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
           .eq("fecha_fin", oldFin) as { data: { id: string; cargo_requerido: string | null; pct_dedicacion: number }[] | null };
 
         if (reqsAExtender && reqsAExtender.length > 0) {
+          const reqIds = reqsAExtender.map((r) => r.id);
+
           // 1. Extender fecha_fin de los reqs
           await supabase
             .from("requerimiento_engagement")
             .update({ fecha_fin: newFin })
-            .in("id", reqsAExtender.map((r) => r.id));
+            .in("id", reqIds);
+
+          // 1b. Extender todas las asignaciones activas que llegaban hasta oldFin
+          //     (cubre PLAN y cualquier otro estado_staffing sin excepción)
+          await supabase
+            .from("asignacion")
+            .update({ fecha_fin: newFin })
+            .in("requerimiento_id", reqIds)
+            .eq("estado", "activa")
+            .eq("fecha_fin", oldFin);
 
           // Inicio del tramo de extensión = día siguiente del fin anterior
           const dExt = new Date(oldFin + "T00:00:00");
@@ -667,11 +764,11 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
               ]} />
           </FieldWrapper>
           <FieldWrapper label="Fecha inicio">
-            <Input type="date" value={form.fecha_inicio} onChange={setField("fecha_inicio")}
+            <Input type="date" value={form.fecha_inicio} onChange={handleFechaInicioChange}
               max={form.fecha_fin_estimada || undefined} />
           </FieldWrapper>
           <FieldWrapper label="Fecha fin estimada" error={errors.fecha_fin_estimada}>
-            <Input type="date" value={form.fecha_fin_estimada} onChange={setField("fecha_fin_estimada")}
+            <Input type="date" value={form.fecha_fin_estimada} onChange={handleFechaFinChange}
               min={form.fecha_inicio || undefined} error={!!errors.fecha_fin_estimada} />
           </FieldWrapper>
         </div>
@@ -1073,7 +1170,11 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
             </button>
             {extOpen && (
               <div className="mt-4">
-                <ExtenderProyecto engagementId={engagement.id} engagementTipo={engagement.tipo} onExtended={onSuccess} />
+                <ExtenderProyecto
+                  engagementId={engagement.id}
+                  engagementTipo={engagement.tipo}
+                  onExtended={onSuccess}
+                />
               </div>
             )}
           </div>

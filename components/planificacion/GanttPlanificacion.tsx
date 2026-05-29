@@ -766,6 +766,17 @@ export function GanttPlanificacion() {
 
   useEffect(() => { cargar(); }, [cargar]);
 
+  // Recarga cuando cambian asignaciones o engagements (ej: extensión de proyecto)
+  useEffect(() => {
+    const handler = () => cargar();
+    window.addEventListener("asignacionChanged", handler);
+    window.addEventListener("engagementChanged", handler);
+    return () => {
+      window.removeEventListener("asignacionChanged", handler);
+      window.removeEventListener("engagementChanged", handler);
+    };
+  }, [cargar]);
+
   // ── Seleccionar req → cargar fit ───────────────────────────
 
   const handleSelectReq = useCallback(async (req: ReqConEstado) => {

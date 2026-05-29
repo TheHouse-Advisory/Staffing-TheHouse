@@ -172,6 +172,18 @@ export interface Engagement {
 }
 
 /**
+ * engagement_extension: período adicional con posible salto temporal respecto al original.
+ * fecha_inicio / fecha_fin del alargue; engagement_id FK.
+ */
+export interface EngagementExtension {
+  id: string;
+  engagement_id: string;
+  fecha_inicio: string;
+  fecha_fin: string;
+  created_at: string;
+}
+
+/**
  * requerimiento_engagement: id, engagement_id, fase_nombre,
  *   cargo_requerido (text|null), pct_dedicacion, fecha_inicio, fecha_fin,
  *   descripcion, created_at
