@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { Plus, Mail, Ban, RotateCcw, Trash2, ShieldCheck } from "lucide-react";
+import { getIniciales } from "@/lib/utils/iniciales";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
 import {
   otorgarAcceso,
@@ -167,7 +168,7 @@ export function AccesosManager() {
             const estado = (persona.acceso_estado ?? "invitada") as EstadoAcceso;
             const badge = ESTADO_BADGE[estado];
             const color = CARGO_COLORS[persona.cargo_actual ?? ""] ?? CARGO_COLOR_DEFAULT;
-            const initials = `${persona.nombre[0]}${persona.apellido[0]}`.toUpperCase();
+            const initials = getIniciales(persona.nombre, persona.apellido, persona.iniciales);
             const esYo = persona.id === miId;
             const busy = busyId === persona.id;
 

@@ -94,6 +94,7 @@ export interface PersonaFit {
   nombre: string;
   apellido: string;
   cargo_actual: string;
+  iniciales?: string | null;
   /** % ya comprometido en [hoy, req.fecha_fin] */
   pct_ocupado_en_rango: number;
   /** % total si se asignara */
@@ -152,7 +153,7 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
       pct_dedicacion,
       fecha_inicio,
       fecha_fin,
-      persona:persona_id (nombre, apellido, cargo_actual)
+      persona:persona_id (nombre, apellido, cargo_actual, iniciales)
     `)
     .eq("estado", "activa");
 
@@ -312,15 +313,18 @@ export async function fetchPersonasFit(
   // 1. Solo personas activas con cargo coincidente (regla HARD)
   let query = supabase
     .from("persona")
-    .select("id, nombre, apellido, cargo_actual")
+    .select("id, nombre, apellido, cargo_actual, iniciales")
     .eq("activo", true)
     .order("apellido");
 
   if (req.cargo_requerido) {
     // Asociado y Consultor Senior son la misma categoría de búsqueda
     const GRUPO_SENIOR = ["Asociado", "Consultor Senior", "Asociado / Consultor Senior"];
+    const GRUPO_DIRECTOR = ["Director de Proyectos"];
     if (GRUPO_SENIOR.includes(req.cargo_requerido)) {
       query = query.in("cargo_actual", ["Asociado", "Consultor Senior"]);
+    } else if (GRUPO_DIRECTOR.includes(req.cargo_requerido)) {
+      query = query.in("cargo_actual", ["Director de Proyectos", "Gerente de Proyectos"]);
     } else {
       query = query.eq("cargo_actual", req.cargo_requerido);
     }
@@ -441,7 +445,7 @@ export async function fetchPersonasFit(
     }
   }
 
-  interface PersonaRow { id: string; nombre: string; apellido: string; cargo_actual: string }
+  interface PersonaRow { id: string; nombre: string; apellido: string; cargo_actual: string; iniciales?: string | null }
   interface AsigRow    {
     id: string;
     persona_id: string;
@@ -582,6 +586,7 @@ export async function fetchPersonasFit(
       nombre: p.nombre,
       apellido: p.apellido,
       cargo_actual: p.cargo_actual,
+      iniciales: p.iniciales ?? null,
       pct_ocupado_en_rango: pctOcupado,
       pct_si_asigna: pctSiAsigna,
       alertas,

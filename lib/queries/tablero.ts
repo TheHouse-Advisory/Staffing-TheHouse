@@ -81,13 +81,13 @@ export async function fetchOcupacionDiariaPersona(
   const inicioStr = format(dias[0], "yyyy-MM-dd");
   const finStr    = format(dias[totalDias - 1], "yyyy-MM-dd");
 
-  type PersonaRaw = { id: string; nombre: string; apellido: string; cargo_actual: string | null };
+  type PersonaRaw = { id: string; nombre: string; apellido: string; cargo_actual: string | null; iniciales?: string | null };
   type AsigRaw = { persona_id: string; engagement_id: string | null; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string | null };
 
   // 1. Todas las personas activas
   const { data: personasRaw, error: personasErr } = await supabase
     .from("persona")
-    .select("id, nombre, apellido, cargo_actual")
+    .select("id, nombre, apellido, cargo_actual, iniciales")
     .eq("activo", true)
     .order("apellido");
 

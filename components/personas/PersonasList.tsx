@@ -13,6 +13,7 @@ import { PersonaForm } from "./PersonaForm";
 import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import { diasRestantesPapelera, limpiarPersonasCaducadas } from "@/lib/tasks/cleanupEngagements";
 import type { Persona, RolSistema } from "@/lib/types/database";
+import { getIniciales } from "@/lib/utils/iniciales";
 
 interface PersonasListProps { rolActual: RolSistema | null; }
 type Vista = "principal" | "ex_housers" | "papelera";
@@ -34,7 +35,7 @@ function PersonaCard({
   cargoColor?: string;
   dimmed?: boolean;
 }) {
-  const initials = `${persona.nombre[0]}${persona.apellido[0]}`.toUpperCase();
+  const initials = getIniciales(persona.nombre, persona.apellido, persona.iniciales);
   const avatarColor = cargoColor ?? CARGO_COLORS[persona.cargo_actual ?? ""] ?? CARGO_COLOR_DEFAULT;
 
   return (
@@ -262,7 +263,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
             {eliminados.map((p) => {
               const dias = diasRestantesPapelera(p.deleted_at);
               const urgente = dias <= 5;
-              const initials = `${p.nombre[0]}${p.apellido[0]}`.toUpperCase();
+              const initials = getIniciales(p.nombre, p.apellido, p.iniciales);
               return (
                 <div key={p.id} className="flex items-center gap-4 bg-white border border-[#e8e8e8] rounded-xl px-5 py-4">
                   <div className="w-9 h-9 rounded-full flex items-center justify-center text-white font-bold text-xs flex-shrink-0"

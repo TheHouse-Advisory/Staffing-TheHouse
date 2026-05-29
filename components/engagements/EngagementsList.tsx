@@ -34,7 +34,7 @@ interface EngExtra {
   industria: string | null;
   tematicas: string[];
   capacidades: string[];
-  participantes: { nombre: string; apellido: string; cargo: string }[];
+  participantes: { nombre: string; apellido: string; cargo: string; iniciales?: string | null }[];
 }
 
 // ── Secciones multi-tabla por tipo ──────────────────────────────────
@@ -206,7 +206,7 @@ function SeccionesTablaEngagements({
                                 <div className="flex flex-wrap gap-1">
                                   {(rowExpanded ? ex.participantes : ex.participantes.slice(0, 4)).map((p) => {
                                     const c = CARGO_COLORS[p.cargo] ?? CARGO_COLOR_DEFAULT;
-                                    const ini = `${p.nombre[0] ?? ""}${p.apellido[0] ?? ""}`.toUpperCase();
+                                    const ini = p.iniciales?.trim() ? p.iniciales.trim().toUpperCase().slice(0, 3) : `${p.nombre[0] ?? ""}${p.apellido[0] ?? ""}`.toUpperCase();
                                     return rowExpanded ? (
                                       <span key={`${p.nombre}${p.apellido}`}
                                         className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border border-[#e8e8e8] bg-white whitespace-nowrap"
@@ -276,7 +276,7 @@ function SeccionesTablaEngagements({
                                             <div key={`${p.nombre}${p.apellido}`} className="flex items-center gap-2">
                                               <span className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[8px] font-bold flex-shrink-0"
                                                 style={{ background: c }}>
-                                                {`${p.nombre[0] ?? ""}${p.apellido[0] ?? ""}`.toUpperCase()}
+                                                {p.iniciales?.trim() ? p.iniciales.trim().toUpperCase().slice(0, 3) : `${p.nombre[0] ?? ""}${p.apellido[0] ?? ""}`.toUpperCase()}
                                               </span>
                                               <span className="font-medium">{p.nombre} {p.apellido}</span>
                                               <span className="text-[#aaa]">·</span>
@@ -447,7 +447,7 @@ export function EngagementsList({ rolActual }: Props) {
       sb.from("cat_industria").select("id, nombre"),
       (sb as any).from("engagement_tematica").select("engagement_id, cat_tematica(nombre)").in("engagement_id", ids),
       (sb as any).from("engagement_capacidad").select("engagement_id, cat_capacidad(nombre)").in("engagement_id", ids),
-      (sb as any).from("asignacion").select("engagement_id, persona:persona_id(nombre, apellido, cargo_actual)").in("engagement_id", ids),
+      (sb as any).from("asignacion").select("engagement_id, persona:persona_id(nombre, apellido, cargo_actual, iniciales)").in("engagement_id", ids),
     ]).then(([indRes, temRes, capRes, asigRes]) => {
       const indMap = new Map<string, string>((indRes.data ?? []).map((r: any) => [r.id, r.nombre]));
       const map = new Map<string, EngExtra>();
@@ -458,7 +458,7 @@ export function EngagementsList({ rolActual }: Props) {
           capacidades: ((capRes.data ?? []) as any[]).filter((r) => r.engagement_id === eng.id).map((r) => r.cat_capacidad?.nombre).filter(Boolean),
           participantes: ((asigRes.data ?? []) as any[])
             .filter((r) => r.engagement_id === eng.id && r.persona)
-            .map((r) => ({ nombre: r.persona.nombre, apellido: r.persona.apellido, cargo: r.persona.cargo_actual ?? "" }))
+            .map((r) => ({ nombre: r.persona.nombre, apellido: r.persona.apellido, cargo: r.persona.cargo_actual ?? "", iniciales: r.persona.iniciales ?? null }))
             .filter((p, i, arr) => arr.findIndex((x) => x.nombre === p.nombre && x.apellido === p.apellido) === i),
         });
       }
@@ -485,7 +485,7 @@ export function EngagementsList({ rolActual }: Props) {
       // capacidades por engagement
       (sb as any).from("engagement_capacidad").select("engagement_id, cat_capacidad(nombre)").in("engagement_id", ids),
       // participantes (asignaciones, cualquier estado)
-      (sb as any).from("asignacion").select("engagement_id, persona:persona_id(nombre, apellido, cargo_actual)").in("engagement_id", ids),
+      (sb as any).from("asignacion").select("engagement_id, persona:persona_id(nombre, apellido, cargo_actual, iniciales)").in("engagement_id", ids),
     ]).then(([indRes, temRes, capRes, asigRes]) => {
       const indMap = new Map<string, string>((indRes.data ?? []).map((r: any) => [r.id, r.nombre]));
       const map = new Map<string, EngExtra>();
@@ -496,7 +496,7 @@ export function EngagementsList({ rolActual }: Props) {
           capacidades: ((capRes.data ?? []) as any[]).filter((r) => r.engagement_id === eng.id).map((r) => r.cat_capacidad?.nombre).filter(Boolean),
           participantes: ((asigRes.data ?? []) as any[])
             .filter((r) => r.engagement_id === eng.id && r.persona)
-            .map((r) => ({ nombre: r.persona.nombre, apellido: r.persona.apellido, cargo: r.persona.cargo_actual ?? "" }))
+            .map((r) => ({ nombre: r.persona.nombre, apellido: r.persona.apellido, cargo: r.persona.cargo_actual ?? "", iniciales: r.persona.iniciales ?? null }))
             .filter((p, i, arr) => arr.findIndex((x) => x.nombre === p.nombre && x.apellido === p.apellido) === i),
         });
       }
@@ -718,7 +718,7 @@ export function EngagementsList({ rolActual }: Props) {
                           <div className="flex flex-wrap gap-1">
                             {ex.participantes.map((p) => {
                               const color = CARGO_COLORS[p.cargo] ?? CARGO_COLOR_DEFAULT;
-                              const initials = `${p.nombre[0] ?? ""}${p.apellido[0] ?? ""}`.toUpperCase();
+                              const initials = p.iniciales?.trim() ? p.iniciales.trim().toUpperCase().slice(0, 3) : `${p.nombre[0] ?? ""}${p.apellido[0] ?? ""}`.toUpperCase();
                               return (
                                 <span key={`${p.nombre}${p.apellido}`}
                                   className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border border-[#e8e8e8] bg-white whitespace-nowrap"

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Plus, Trash2, ChevronDown, ChevronUp, Users } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronUp, Users, CalendarDays, Pencil } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
@@ -49,6 +49,16 @@ interface ReqRow {
   fecha_inicio: string;
   fecha_fin: string;
 }
+
+interface ActividadRow {
+  id?: string;
+  tipo: "Viajes" | "Taller" | "";
+  titulo: string;
+  descripcion: string;
+  fecha_inicio: string;
+  fecha_fin: string;
+}
+const EMPTY_ACTIVIDAD: ActividadRow = { tipo: "", titulo: "", descripcion: "", fecha_inicio: "", fecha_fin: "" };
 
 interface EngagementFormProps {
   open: boolean;
@@ -107,11 +117,18 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
   const [eliminarTemCandidata, setEliminarTemCandidata] = useState<{ value: string; label: string } | null>(null);
   const [eliminarTemCheck, setEliminarTemCheck] = useState<{ loading: boolean; count: number }>({ loading: false, count: 0 });
   const [eliminarTemLoading, setEliminarTemLoading] = useState(false);
+  // Actividades
+  const [actividades, setActividades] = useState<ActividadRow[]>([]);
+  const [actividadOpen, setActividadOpen] = useState(false);
+  const [nuevaActividad, setNuevaActividad] = useState<ActividadRow>({ ...EMPTY_ACTIVIDAD });
+  const [editingActividadIdx, setEditingActividadIdx] = useState<number | null>(null);
+  // Acordeón de requerimientos: set de índices colapsados
+  const [reqsColapsados, setReqsColapsados] = useState<Set<number>>(new Set());
 
   useEffect(() => {
     if (!open) {
       setForm({ ...EMPTY_ENG }); setReqs([]); setErrors({}); setServerError(null);
-      setExtOpen(false);
+      setExtOpen(false); setActividades([]); setActividadOpen(false); setNuevaActividad({ ...EMPTY_ACTIVIDAD }); setEditingActividadIdx(null);
       return;
     }
     async function load() {
@@ -147,12 +164,18 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
         setReqs((reqData ?? []).map((r: RequerimientoEngagement) => ({
           id: r.id,
           fase_nombre: r.fase_nombre ?? "",
-          // toCargoOption: mapea el valor de BD al value exacto de CARGOS_OPTIONS
           cargo_requerido: toCargoOption(r.cargo_requerido),
           descripcion: r.descripcion ?? "",
           pct_dedicacion: String(r.pct_dedicacion),
           fecha_inicio: r.fecha_inicio ?? "",
           fecha_fin: r.fecha_fin ?? "",
+        })));
+        // Cargar actividades existentes
+        const { data: actData } = await (supabase as any)
+          .from("engagement_actividades").select("*").eq("engagement_id", engagement.id).order("fecha_inicio");
+        setActividades((actData ?? []).map((a: any) => ({
+          id: a.id, tipo: a.tipo, titulo: a.titulo,
+          descripcion: a.descripcion ?? "", fecha_inicio: a.fecha_inicio, fecha_fin: a.fecha_fin,
         })));
       }
     }
@@ -271,12 +294,17 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
   // fecha_fin_estimada puede estar vacía si el engagement usa fecha_fin_real
   const fechaFinEfectiva = form.fecha_fin_estimada || (engagement as any)?.fecha_fin_real || "";
 
-  const addReq = () =>
-    setReqs((r) => [...r, {
-      ...EMPTY_REQ,
-      fecha_inicio: form.fecha_inicio,
-      fecha_fin: fechaFinEfectiva,
-    }]);
+  const addReq = () => {
+    setReqs((r) => {
+      const newIndex = r.length;
+      // Asegurar que el nuevo req esté expandido (fuera del set de colapsados)
+      setReqsColapsados((prev) => { const next = new Set(prev); next.delete(newIndex); return next; });
+      setTimeout(() => {
+        document.getElementById(`req-card-${newIndex}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
+      }, 60);
+      return [...r, { ...EMPTY_REQ, fecha_inicio: form.fecha_inicio, fecha_fin: fechaFinEfectiva }];
+    });
+  };
 
   const removeReq = (idx: number) =>
     setReqs((r) => r.filter((_, i) => i !== idx));
@@ -370,6 +398,21 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
       caps.length > 0 ? (supabase as any).from("engagement_capacidad").insert(caps) : Promise.resolve(),
       tems.length > 0 ? (supabase as any).from("engagement_tematica").insert(tems) : Promise.resolve(),
     ]);
+
+    // Actividades: borrar todas y reinsertar (mismo patrón que capacidades)
+    await (supabase as any).from("engagement_actividades").delete().eq("engagement_id", engId);
+    if (actividades.length > 0) {
+      await (supabase as any).from("engagement_actividades").insert(
+        actividades.map((a) => ({
+          engagement_id: engId,
+          tipo: a.tipo,
+          titulo: a.titulo.trim(),
+          descripcion: a.descripcion.trim() || null,
+          fecha_inicio: a.fecha_inicio,
+          fecha_fin: a.fecha_fin,
+        }))
+      );
+    }
 
     for (const [i, r] of reqs.entries()) {
       const reqPayload = {
@@ -786,13 +829,33 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
         {/* Requerimientos */}
         <div className="border-t border-[#f0f0f0] pt-5">
           <div className="flex items-center justify-between mb-3">
-            <div>
-              <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">Requerimientos</p>
-              {(minReqDate || maxReqDate) && (
-                <p className="text-[10px] text-[#aaa] mt-0.5">
-                  Las fechas deben estar dentro del rango del engagement
-                  {minReqDate && ` (desde ${minReqDate}`}{maxReqDate && ` → ${maxReqDate}`}{(minReqDate || maxReqDate) && ")"}
-                </p>
+            <div className="flex items-center gap-2">
+              <div>
+                <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">Requerimientos</p>
+                {(minReqDate || maxReqDate) && (
+                  <p className="text-[10px] text-[#aaa] mt-0.5">
+                    Las fechas deben estar dentro del rango del engagement
+                    {minReqDate && ` (desde ${minReqDate}`}{maxReqDate && ` → ${maxReqDate}`}{(minReqDate || maxReqDate) && ")"}
+                  </p>
+                )}
+              </div>
+              {reqs.length > 0 && (
+                <button
+                  type="button"
+                  title={reqsColapsados.size > 0 ? "Expandir todos" : "Colapsar todos"}
+                  onClick={() => {
+                    if (reqsColapsados.size > 0) {
+                      setReqsColapsados(new Set());
+                    } else {
+                      setReqsColapsados(new Set(reqs.map((_, idx) => idx)));
+                    }
+                  }}
+                  className="p-0.5 rounded text-[#bbb] hover:text-[#4a90e2] hover:bg-blue-50 transition-colors"
+                >
+                  {reqsColapsados.size > 0
+                    ? <ChevronDown className="w-3.5 h-3.5" />
+                    : <ChevronUp className="w-3.5 h-3.5" />}
+                </button>
               )}
             </div>
             <Button variant="ghost" size="sm" onClick={addReq}>
@@ -805,42 +868,188 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
           )}
 
           <div className="space-y-4">
-            {reqs.map((r, i) => (
-              <div key={i} className="border border-[#e8e8e8] rounded-xl p-4 space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-xs font-semibold text-[#888]">Requerimiento {i + 1}</span>
-                  <button onClick={() => removeReq(i)} className="text-[#aaa] hover:text-red-500 transition-colors">
+            {reqs.map((r, i) => {
+              const colapsado = reqsColapsados.has(i);
+              const toggleReq = () => setReqsColapsados((prev) => {
+                const next = new Set(prev);
+                if (next.has(i)) next.delete(i); else next.add(i);
+                return next;
+              });
+              return (
+                <div key={i} id={`req-card-${i}`} className="border border-[#e8e8e8] rounded-xl overflow-hidden">
+                  {/* Cabecera siempre visible */}
+                  <div
+                    className="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-[#fafafa] transition-colors"
+                    onClick={toggleReq}
+                  >
+                    <span className="text-xs font-semibold text-[#888]">
+                      Requerimiento {i + 1}
+                      {r.fase_nombre && <span className="ml-1.5 font-normal text-[#aaa]">· {r.fase_nombre}</span>}
+                      {r.cargo_requerido && <span className="ml-1.5 font-normal text-[#aaa]">· {r.cargo_requerido}</span>}
+                    </span>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); toggleReq(); }}
+                        className="text-[#ccc] hover:text-[#4a90e2] transition-colors"
+                      >
+                        {colapsado ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); removeReq(i); }}
+                        className="text-[#aaa] hover:text-red-500 transition-colors"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </div>
+                  {/* Body colapsable */}
+                  {!colapsado && (
+                    <div className="px-4 pb-4 pt-1 space-y-3 border-t border-[#f0f0f0]">
+                      <div className="grid grid-cols-2 gap-3">
+                        <FieldWrapper label="Nombre de fase">
+                          <Input value={r.fase_nombre} onChange={setReqField(i, "fase_nombre")} placeholder="Diagnóstico" />
+                        </FieldWrapper>
+                        <FieldWrapper label="Cargo requerido">
+                          <Select value={r.cargo_requerido} onChange={setReqField(i, "cargo_requerido")}
+                            options={CARGOS_OPTIONS} placeholder="Cualquier cargo" />
+                        </FieldWrapper>
+                        <FieldWrapper label="% Dedicación" required error={errors[`req_${i}_pct`]}>
+                          <Input type="number" min="1" max="100" step="0.5" value={r.pct_dedicacion}
+                            onChange={setReqField(i, "pct_dedicacion")} placeholder="100"
+                            error={!!errors[`req_${i}_pct`]} />
+                        </FieldWrapper>
+                        <FieldWrapper label="Descripción del rol">
+                          <Input value={r.descripcion} onChange={setReqField(i, "descripcion")} placeholder="Líder de proyecto" />
+                        </FieldWrapper>
+                        <FieldWrapper label="Fecha inicio" required error={errors[`req_${i}_inicio`]}>
+                          <Input type="date" value={r.fecha_inicio} onChange={setReqField(i, "fecha_inicio")}
+                            min={minReqDate} max={maxReqDate} error={!!errors[`req_${i}_inicio`]} />
+                        </FieldWrapper>
+                        <FieldWrapper label="Fecha fin" required error={errors[`req_${i}_fin`]}>
+                          <Input type="date" value={r.fecha_fin} onChange={setReqField(i, "fecha_fin")}
+                            min={r.fecha_inicio || minReqDate} max={maxReqDate} error={!!errors[`req_${i}_fin`]} />
+                        </FieldWrapper>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* ── Actividades Planificadas ── */}
+        <div className="border-t border-[#f0f0f0] pt-5">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <div className="w-6 h-6 rounded-md bg-[#f0f9ff] flex items-center justify-center">
+                <CalendarDays className="w-3.5 h-3.5 text-[#4a90e2]" />
+              </div>
+              <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">Actividades Planificadas</p>
+            </div>
+            <button
+              type="button"
+              onClick={() => { setActividadOpen(true); setNuevaActividad({ ...EMPTY_ACTIVIDAD }); setEditingActividadIdx(null); }}
+              className="flex items-center gap-1 text-[11px] text-[#4a90e2] hover:text-[#2563eb] font-medium transition-colors"
+            >
+              <Plus className="w-3 h-3" /> Agregar actividad
+            </button>
+          </div>
+
+          {/* Lista de actividades agregadas */}
+          {actividades.length > 0 && (
+            <div className="space-y-2 mb-3">
+              {actividades.map((a, i) => (
+                <div key={i} className="flex items-center gap-2 bg-[#f9f9f9] border border-[#f0f0f0] rounded-lg px-3 py-2 text-xs">
+                  <span className={`px-2 py-0.5 rounded-full font-semibold flex-shrink-0 ${a.tipo === "Viajes" ? "bg-blue-100 text-blue-700" : "bg-purple-100 text-purple-700"}`}>
+                    {a.tipo}
+                  </span>
+                  <span className="font-medium text-[#1a1a1a] truncate flex-1">{a.titulo}</span>
+                  <span className="text-[#aaa] flex-shrink-0 whitespace-nowrap">{a.fecha_inicio} → {a.fecha_fin}</span>
+                  <button
+                    type="button"
+                    onClick={() => { setNuevaActividad({ ...a }); setEditingActividadIdx(i); setActividadOpen(true); }}
+                    className="text-[#ccc] hover:text-[#4a90e2] transition-colors flex-shrink-0 ml-1"
+                  >
+                    <Pencil className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActividades((prev) => prev.filter((_, j) => j !== i))}
+                    className="text-[#ccc] hover:text-red-500 transition-colors flex-shrink-0"
+                  >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <FieldWrapper label="Nombre de fase">
-                    <Input value={r.fase_nombre} onChange={setReqField(i, "fase_nombre")} placeholder="Diagnóstico" />
-                  </FieldWrapper>
-                  <FieldWrapper label="Cargo requerido">
-                    <Select value={r.cargo_requerido} onChange={setReqField(i, "cargo_requerido")}
-                      options={CARGOS_OPTIONS} placeholder="Cualquier cargo" />
-                  </FieldWrapper>
-                  <FieldWrapper label="% Dedicación" required error={errors[`req_${i}_pct`]}>
-                    <Input type="number" min="1" max="100" step="0.5" value={r.pct_dedicacion}
-                      onChange={setReqField(i, "pct_dedicacion")} placeholder="100"
-                      error={!!errors[`req_${i}_pct`]} />
-                  </FieldWrapper>
-                  <FieldWrapper label="Descripción del rol">
-                    <Input value={r.descripcion} onChange={setReqField(i, "descripcion")} placeholder="Líder de proyecto" />
-                  </FieldWrapper>
-                  <FieldWrapper label="Fecha inicio" required error={errors[`req_${i}_inicio`]}>
-                    <Input type="date" value={r.fecha_inicio} onChange={setReqField(i, "fecha_inicio")}
-                      min={minReqDate} max={maxReqDate} error={!!errors[`req_${i}_inicio`]} />
-                  </FieldWrapper>
-                  <FieldWrapper label="Fecha fin" required error={errors[`req_${i}_fin`]}>
-                    <Input type="date" value={r.fecha_fin} onChange={setReqField(i, "fecha_fin")}
-                      min={r.fecha_inicio || minReqDate} max={maxReqDate} error={!!errors[`req_${i}_fin`]} />
-                  </FieldWrapper>
-                </div>
+              ))}
+            </div>
+          )}
+
+          {/* Sub-formulario nueva actividad */}
+          {actividadOpen && (
+            <div className="border border-[#e8e8e8] rounded-xl p-4 space-y-3 bg-[#fafafa]">
+              <div className="grid grid-cols-2 gap-3">
+                <FieldWrapper label="Tipo" error={errors.act_tipo}>
+                  <Select
+                    value={nuevaActividad.tipo}
+                    onChange={(e) => setNuevaActividad((p) => ({ ...p, tipo: (e as any).target?.value ?? e as any }))}
+                    options={[{ value: "Viajes", label: "Viajes" }, { value: "Taller", label: "Taller" }]}
+                    placeholder="Seleccionar"
+                  />
+                </FieldWrapper>
+                <FieldWrapper label="Título" error={errors.act_titulo}>
+                  <Input
+                    value={nuevaActividad.titulo}
+                    onChange={(e) => setNuevaActividad((p) => ({ ...p, titulo: e.target.value }))}
+                    placeholder="ej: Workshop de diagnóstico"
+                  />
+                </FieldWrapper>
               </div>
-            ))}
-          </div>
+              <div className="grid grid-cols-2 gap-3">
+                <FieldWrapper label="Fecha inicio">
+                  <Input type="date" value={nuevaActividad.fecha_inicio}
+                    onChange={(e) => setNuevaActividad((p) => ({ ...p, fecha_inicio: e.target.value }))} />
+                </FieldWrapper>
+                <FieldWrapper label="Fecha término">
+                  <Input type="date" value={nuevaActividad.fecha_fin}
+                    onChange={(e) => setNuevaActividad((p) => ({ ...p, fecha_fin: e.target.value }))} />
+                </FieldWrapper>
+              </div>
+              <FieldWrapper label="Descripción (opcional)">
+                <Textarea value={nuevaActividad.descripcion}
+                  onChange={(e) => setNuevaActividad((p) => ({ ...p, descripcion: (e as any).target?.value ?? e as any }))}
+                  placeholder="Detalles breves..." />
+              </FieldWrapper>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => { setActividadOpen(false); setEditingActividadIdx(null); setErrors((p) => { const n = { ...p }; delete n.act_tipo; delete n.act_titulo; return n; }); }}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-[#e8e8e8] text-[#888] hover:bg-[#f5f5f5] transition-colors">
+                  Cancelar
+                </button>
+                <button type="button"
+                  onClick={() => {
+                    const errs: Record<string, string> = {};
+                    if (!nuevaActividad.tipo)          errs.act_tipo   = "Requerido";
+                    if (!nuevaActividad.titulo.trim())  errs.act_titulo = "Requerido";
+                    if (Object.keys(errs).length) { setErrors((p) => ({ ...p, ...errs })); return; }
+                    if (editingActividadIdx !== null) {
+                      // Reemplazar actividad existente
+                      setActividades((prev) => prev.map((a, j) => j === editingActividadIdx ? { ...nuevaActividad } : a));
+                      setEditingActividadIdx(null);
+                    } else {
+                      setActividades((prev) => [...prev, { ...nuevaActividad }]);
+                    }
+                    setActividadOpen(false);
+                    setNuevaActividad({ ...EMPTY_ACTIVIDAD });
+                    setErrors((p) => { const n = { ...p }; delete n.act_tipo; delete n.act_titulo; return n; });
+                  }}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-[#4a90e2] text-white hover:bg-[#2563eb] transition-colors font-medium">
+                  {editingActividadIdx !== null ? "Actualizar" : "Agregar"}
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* ── Extender Proyecto (solo en modo edición) ── */}

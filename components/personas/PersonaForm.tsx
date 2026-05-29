@@ -21,6 +21,7 @@ const CARGOS_LEVERAGER = ["Consultor Senior", "Consultor de Proyectos", "Consult
 interface FormState {
   nombre: string;
   apellido: string;
+  iniciales: string;
   email: string;
   cargo_actual: string;
   fecha_ingreso: string;
@@ -35,6 +36,7 @@ interface FormState {
 const EMPTY: FormState = {
   nombre: "",
   apellido: "",
+  iniciales: "",
   email: "",
   cargo_actual: "",
   fecha_ingreso: "",
@@ -100,6 +102,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
       setForm({
         nombre: persona!.nombre,
         apellido: persona!.apellido,
+        iniciales: persona!.iniciales ?? "",
         email: persona!.email,
         cargo_actual: persona!.cargo_actual ?? "",
         fecha_ingreso: persona!.fecha_ingreso ?? "",
@@ -137,6 +140,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
     const payload = {
       nombre: form.nombre.trim(),
       apellido: form.apellido.trim(),
+      iniciales: form.iniciales.trim().toUpperCase().slice(0, 3) || null,
       email: form.email.trim().toLowerCase(),
       cargo_actual: form.cargo_actual,
       fecha_ingreso: form.fecha_ingreso || null,
@@ -225,6 +229,35 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
             />
           </FieldWrapper>
         </div>
+
+        {/* Iniciales personalizadas */}
+        <FieldWrapper
+          label="Iniciales"
+          hint="Opcional · máx. 3 caracteres · se muestran en avatares del Tablero, Inicio y Reportes"
+        >
+          <div className="flex items-center gap-3">
+            {/* Preview del avatar */}
+            <div
+              className="w-9 h-9 rounded-full flex items-center justify-center text-white text-[13px] font-bold flex-shrink-0 select-none"
+              style={{ background: "#4a90e2" }}
+            >
+              {(form.iniciales.trim() ||
+                `${form.nombre[0] ?? ""}${form.apellido[0] ?? ""}`.toUpperCase()) || "?"}
+            </div>
+            <div className="w-20">
+              <Input
+                value={form.iniciales}
+                onChange={(e) =>
+                  setForm((f) => ({ ...f, iniciales: e.target.value.toUpperCase().slice(0, 3) }))
+                }
+                placeholder={
+                  `${form.nombre[0] ?? ""}${form.apellido[0] ?? ""}`.toUpperCase() || "AB"
+                }
+                maxLength={3}
+              />
+            </div>
+          </div>
+        </FieldWrapper>
 
         <FieldWrapper label="Email" required error={errors.email}>
           <Input

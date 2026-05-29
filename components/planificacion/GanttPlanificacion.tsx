@@ -81,7 +81,8 @@ function nivelEmoji(nivel: FitNivel) {
   }
 }
 
-function iniciales(nombre: string, apellido: string) {
+function iniciales(nombre: string, apellido: string, custom?: string | null) {
+  if (custom?.trim()) return custom.trim().toUpperCase().slice(0, 3);
   return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
 }
 
@@ -108,9 +109,9 @@ function formatFechaLarga(f: string) {
 // ─────────────────────────────────────────────────────────────
 
 function Avatar({
-  personaId, nombre, apellido, size = "md", alerta = false, title,
+  personaId, nombre, apellido, inicialesCustom, size = "md", alerta = false, title,
 }: {
-  personaId: string; nombre: string; apellido: string;
+  personaId: string; nombre: string; apellido: string; inicialesCustom?: string | null;
   size?: "sm" | "md"; alerta?: boolean; title?: string;
 }) {
   const color = avatarColor(personaId);
@@ -121,7 +122,7 @@ function Avatar({
         className={cn(dim, "rounded-full flex items-center justify-center font-bold text-white select-none")}
         style={{ background: color }}
       >
-        {iniciales(nombre, apellido)}
+        {iniciales(nombre, apellido, inicialesCustom)}
       </div>
       {alerta && (
         <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-amber-400 rounded-full flex items-center justify-center">
@@ -576,7 +577,7 @@ function FitPanel({
                       className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white text-xs flex-shrink-0"
                       style={{ background: avatarColor(p.persona_id) }}
                     >
-                      {iniciales(p.nombre, p.apellido)}
+                      {iniciales(p.nombre, p.apellido, p.iniciales)}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
