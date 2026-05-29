@@ -85,6 +85,20 @@ function rangoSolapan(aIni: string, aFin: string | null, cIni: Date, cFin: Date)
   if (!aFin) return parseLocal(aIni) <= cFin;
   return parseLocal(aIni) <= cFin && parseLocal(aFin) >= cIni;
 }
+// Devuelve si el engagement (período original o cualquier extensión) está activo en la columna
+function engActivoEnCol(eng: { fecha_inicio: string; fecha_fin: string | null; extensiones: { fecha_inicio: string; fecha_fin: string }[] }, cIni: Date, cFin: Date): boolean {
+  if (rangoSolapan(eng.fecha_inicio, eng.fecha_fin, cIni, cFin)) return true;
+  return eng.extensiones.some((ex) => rangoSolapan(ex.fecha_inicio, ex.fecha_fin, cIni, cFin));
+}
+// Devuelve si la columna cae en la "brecha" entre el fin original y el inicio de una extensión
+function engEnBrechaEnCol(eng: { fecha_fin: string | null; extensiones: { fecha_inicio: string; fecha_fin: string }[] }, cIni: Date, cFin: Date): boolean {
+  if (!eng.fecha_fin || eng.extensiones.length === 0) return false;
+  const finOrig = parseLocal(eng.fecha_fin);
+  return eng.extensiones.some((ex) => {
+    const extIni = parseLocal(ex.fecha_inicio);
+    return cIni > finOrig && cFin < extIni;
+  });
+}
 function iniciales(nombre: string, apellido: string, custom?: string | null) {
   if (custom?.trim()) return custom.trim().toUpperCase().slice(0, 3);
   return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
@@ -112,6 +126,7 @@ interface EngRow {
   personas: PersonaAsig[];
   reqs: ReqData[];
   actividades: ActividadEng[];
+  extensiones: { id: string; fecha_inicio: string; fecha_fin: string }[];
   raw: Engagement;
   sort_order: number | null;
 }
@@ -384,12 +399,27 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       const cutoff = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().split("T")[0]; })();
       const filtroCutoff = [`fecha_fin_real.gte.${cutoff}`, `and(fecha_fin_real.is.null,fecha_fin_estimada.gte.${cutoff})`, `and(fecha_fin_real.is.null,fecha_fin_estimada.is.null)`].join(",");
 
+      // IDs de engagements con extensiones que solapan la vista actual
+      const { data: extVisibles } = await (sb as any)
+        .from("engagement_extension")
+        .select("engagement_id")
+        .lte("fecha_inicio", finStr)
+        .gte("fecha_fin", inicioStr);
+      const extEngIds = [...new Set((extVisibles ?? []).map((r: any) => r.engagement_id as string))];
+
       const [engRes, asigRes, ausRes] = await Promise.all([
         sb.from("engagement")
           .select("id, codigo, nombre, cliente, tipo, estado, descripcion, fecha_inicio, fecha_fin_estimada, fecha_fin_real, industria_id, sort_order")
           .eq("estado", "activo")
           .eq("is_deleted", false)
-          .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null,fecha_inicio.gte.${inicioStr}`)
+          // Incluye engagements activos en la vista O engagements con extensiones en este rango
+          .or([
+            `fecha_fin_real.gte.${inicioStr}`,
+            `fecha_fin_estimada.gte.${inicioStr}`,
+            `fecha_fin_real.is.null`,
+            `fecha_inicio.gte.${inicioStr}`,
+            ...(extEngIds.length > 0 ? [`id.in.(${extEngIds.join(",")})`] : []),
+          ].join(","))
           .or(filtroCutoff),
 
         sb.from("asignacion")
@@ -411,7 +441,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           tipo: e.tipo ?? "proyecto",
           fecha_inicio: e.fecha_inicio,
           fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? null,
-          personas: [], reqs: [], actividades: [], raw: e as Engagement,
+          personas: [], reqs: [], actividades: [], extensiones: [], raw: e as Engagement,
           sort_order: e.sort_order ?? null,
         });
       }
@@ -445,7 +475,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       // Requerimientos + días críticos en paralelo
       const engIds = [...engMap.keys()];
       if (engIds.length > 0) {
-        const [{ data: reqData }, { data: dcData }, { data: actData }] = await Promise.all([
+        const [{ data: reqData }, { data: dcData }, { data: actData }, { data: extData }] = await Promise.all([
           sb.from("requerimiento_engagement")
             .select("id, engagement_id, cargo_requerido, fecha_inicio, fecha_fin, pct_dedicacion")
             .in("engagement_id", engIds),
@@ -456,7 +486,15 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           (sb as any).from("engagement_actividades")
             .select("engagement_id, tipo, titulo, descripcion, fecha_inicio, fecha_fin")
             .in("engagement_id", engIds),
+          (sb as any).from("engagement_extension")
+            .select("id, engagement_id, fecha_inicio, fecha_fin")
+            .in("engagement_id", engIds)
+            .order("fecha_inicio"),
         ]);
+        for (const ex of (extData ?? []) as any[]) {
+          const eng = engMap.get(ex.engagement_id);
+          if (eng) eng.extensiones.push({ id: ex.id, fecha_inicio: ex.fecha_inicio, fecha_fin: ex.fecha_fin });
+        }
         for (const a of (actData ?? []) as any[]) {
           const eng = engMap.get(a.engagement_id);
           if (eng) eng.actividades.push({ tipo: a.tipo, titulo: a.titulo, descripcion: a.descripcion ?? null, fecha_inicio: a.fecha_inicio, fecha_fin: a.fecha_fin });
@@ -548,24 +586,55 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
     const sb = createAnyClient();
     const cargoRequerido = data.cargo_actual || null;
-    const fechaInicio = eng.fecha_inicio;
-    const fechaFin = eng.fecha_fin ?? eng.fecha_inicio;
 
-    const { data: newReq, error: reqErr } = await (sb as any)
+    // Busca req libre (sin asignación activa) con cargo coincidente
+    const { data: reqsLibres } = await (sb as any)
       .from("requerimiento_engagement")
-      .insert({
-        engagement_id: eng.id,
-        cargo_requerido: cargoRequerido,
-        fase_nombre: null,
-        pct_dedicacion: 100,
-        fecha_inicio: fechaInicio,
-        fecha_fin: fechaFin,
-        descripcion: null,
-      })
-      .select("id")
-      .single();
+      .select("id, fecha_inicio, fecha_fin, cargo_requerido")
+      .eq("engagement_id", eng.id)
+      .eq("cargo_requerido", cargoRequerido ?? "");
 
-    if (reqErr || !newReq) return;
+    let reqId: string;
+    let fechaInicio: string;
+    let fechaFin: string;
+
+    let reqMatch: any = null;
+    if (reqsLibres && (reqsLibres as any[]).length > 0) {
+      for (const r of reqsLibres as any[]) {
+        const { count } = await (sb as any)
+          .from("asignacion")
+          .select("id", { count: "exact", head: true })
+          .eq("requerimiento_id", r.id)
+          .eq("estado", "activa");
+        if ((count ?? 0) === 0) { reqMatch = r; break; }
+      }
+    }
+
+    if (reqMatch) {
+      // Reutiliza el req existente con sus fechas reales
+      reqId = reqMatch.id;
+      fechaInicio = reqMatch.fecha_inicio ?? eng.fecha_inicio;
+      fechaFin = reqMatch.fecha_fin ?? eng.fecha_fin ?? eng.fecha_inicio;
+    } else {
+      // Crea req nuevo solo si no hay match libre
+      fechaInicio = eng.fecha_inicio;
+      fechaFin = eng.fecha_fin ?? eng.fecha_inicio;
+      const { data: newReq, error: reqErr } = await (sb as any)
+        .from("requerimiento_engagement")
+        .insert({
+          engagement_id: eng.id,
+          cargo_requerido: cargoRequerido,
+          fase_nombre: null,
+          pct_dedicacion: 100,
+          fecha_inicio: fechaInicio,
+          fecha_fin: fechaFin,
+          descripcion: null,
+        })
+        .select("id")
+        .single();
+      if (reqErr || !newReq) return;
+      reqId = (newReq as any).id;
+    }
 
     // Validar ausencias de la persona dentro del rango del engagement
     const { data: ausPersonaDrop } = await sb
@@ -578,7 +647,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
     const baseInsert = {
       engagement_id: eng.id,
-      requerimiento_id: (newReq as any).id,
+      requerimiento_id: reqId,
       persona_id: data.personaId,
       cargo_al_momento: cargoRequerido,
       pct_dedicacion: 100,
@@ -939,6 +1008,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     if (!resizing) return;
     const onUp = async () => {
       const idx = resizeHoverRef.current;
+      console.log("[resize] mouseup | edge:", resizing.edge, "| hoverIdx:", idx, "| asignacionId:", resizing.p.asignacionId);
       if (idx !== null) {
         const col = columnas[idx];
         const newDate = resizing.edge === "start"
@@ -946,16 +1016,18 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           : format(col.fin, "yyyy-MM-dd");
         const sb = createAnyClient();
         // Guardar fecha original para undo antes de actualizar
-        const { data: oldAsig } = await sb.from("asignacion")
+        const { data: oldAsig, error: fetchErr } = await sb.from("asignacion")
           .select("fecha_inicio, fecha_fin, engagement_id")
           .eq("id", resizing.p.asignacionId)
           .single();
+        if (fetchErr) console.error("[resize] Error al leer asignacion:", fetchErr, "| asignacionId:", resizing.p.asignacionId);
         const prevDate: string | null = oldAsig
           ? (resizing.edge === "start" ? (oldAsig as any).fecha_inicio : (oldAsig as any).fecha_fin)
           : null;
-        await sb.from("asignacion")
+        const { error: updateErr } = await sb.from("asignacion")
           .update({ [resizing.edge === "start" ? "fecha_inicio" : "fecha_fin"]: newDate })
           .eq("id", resizing.p.asignacionId);
+        if (updateErr) console.error("[resize] Error al actualizar asignacion:", updateErr, "| asignacionId:", resizing.p.asignacionId, "| campo:", resizing.edge === "start" ? "fecha_inicio" : "fecha_fin", "| valor:", newDate);
         if (prevDate) {
           setUndoStack(s => [...s.slice(-2), {
             type: "resize" as const,
@@ -1292,15 +1364,26 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                       </td>
                       {columnas.map((col, i) => {
                         const esHoy = col.inicio <= hoy && hoy <= col.fin;
-                        const activo = rangoSolapan(eng.fecha_inicio, eng.fecha_fin, col.inicio, col.fin);
+                        const activo  = engActivoEnCol(eng, col.inicio, col.fin);
+                        const enBrecha = !activo && engEnBrechaEnCol(eng, col.inicio, col.fin);
                         const isDragTarget = dragOverEngId === eng.id;
 
-                        if (!activo) return (
+                        if (!activo && !enBrecha) return (
                           <td key={i} className="py-1 px-1"
                             onMouseEnter={() => { if (resizingEng) resizeEngHoverRef.current = i; if (movingEng?.eng.id === eng.id) { moveEngHoverRef.current = i; setMoveEngHoverIdx(i); } }}
                             onDragOver={(ev) => { ev.preventDefault(); setDragOverEngId(eng.id); }}
                             onDragLeave={() => setDragOverEngId(null)}
                             onDrop={(ev) => handleDropOnEngagement(ev, eng)} />
+                        );
+
+                        // Celda de brecha: proyecto "dormido" entre fin original e inicio de extensión
+                        if (enBrecha) return (
+                          <td key={i} className="py-1 px-1"
+                            onDragOver={(ev) => { ev.preventDefault(); setDragOverEngId(eng.id); }}
+                            onDragLeave={() => setDragOverEngId(null)}
+                            onDrop={(ev) => handleDropOnEngagement(ev, eng)}>
+                            <div className="h-5 rounded-full" style={{ background: `${eng.raw.color ?? "#f59e0b"}22`, border: `1.5px dashed ${eng.raw.color ?? "#f59e0b"}66` }} title="Proyecto en pausa" />
+                          </td>
                         );
 
                         const intensidad = resolverIntensidad(eng, col);
@@ -1324,16 +1407,21 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                         // Detecta bordes del engagement para colocar manillas de resize
                         const prevColE = columnas[i - 1];
                         const nextColE = columnas[i + 1];
-                        const isEngFirst = !prevColE || !rangoSolapan(eng.fecha_inicio, eng.fecha_fin, prevColE.inicio, prevColE.fin);
-                        const isEngLast  = !nextColE || !rangoSolapan(eng.fecha_inicio, eng.fecha_fin, nextColE.inicio, nextColE.fin);
+                        const isEngFirst = !prevColE || !engActivoEnCol(eng, prevColE.inicio, prevColE.fin);
+                        const isEngLast  = !nextColE || !engActivoEnCol(eng, nextColE.inicio, nextColE.fin);
 
                         // Preview visual del move: calcula si esta col estaría activa tras el desplazamiento
                         const movePreviewActive = movingEng?.eng.id === eng.id && moveEngHoverIdx !== null && (() => {
                           const delta = Math.round((columnas[moveEngHoverIdx]?.inicio.getTime() - columnas[movingEng.startColIdx]?.inicio.getTime()) / 86400000);
                           if (!delta) return false;
                           const pi = format(addDays(new Date(eng.fecha_inicio + "T00:00:00"), delta), "yyyy-MM-dd");
-                          const pf = format(addDays(new Date(eng.fecha_fin    + "T00:00:00"), delta), "yyyy-MM-dd");
-                          return rangoSolapan(pi, pf, col.inicio, col.fin);
+                          const pf = eng.fecha_fin ? format(addDays(new Date(eng.fecha_fin + "T00:00:00"), delta), "yyyy-MM-dd") : null;
+                          const extShifted = eng.extensiones.map((ex) => ({
+                            id: ex.id,
+                            fecha_inicio: format(addDays(new Date(ex.fecha_inicio + "T00:00:00"), delta), "yyyy-MM-dd"),
+                            fecha_fin: format(addDays(new Date(ex.fecha_fin + "T00:00:00"), delta), "yyyy-MM-dd"),
+                          }));
+                          return engActivoEnCol({ fecha_inicio: pi, fecha_fin: pf, extensiones: extShifted }, col.inicio, col.fin);
                         })();
 
                         if (!estaColapsado) {
@@ -1567,7 +1655,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               const { isFirst, isLast } = barEdge(p, i);
                               return (
                                 <td key={i} className="px-0.5 py-0 relative"
-                                  style={{ height: ROW_H, borderTop: btop, borderBottom: borderBtmRow }}>
+                                  style={{ height: ROW_H, borderTop: btop, borderBottom: borderBtmRow }}
+                                  onMouseEnter={() => { if (resizing) { setResizeHoverIdx(i); resizeHoverRef.current = i; } }}>
                                   {isActive && (
                                     <>
                                       <div className="relative group/bar h-1.5 w-full cursor-pointer overflow-visible"
@@ -1580,14 +1669,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                           style={{ borderRadius: "0 4px 4px 0" }}>
                                           <span className="text-white text-[8px] font-bold leading-none">×</span>
                                         </button>
-                                        {isFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "start" }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-l hover:bg-white/30 transition-colors" />}
+                                        {isFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "start" }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize z-50 rounded-l hover:bg-white/30 transition-colors" />}
                                         {isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r hover:bg-white/30 transition-colors" />}
                                       </div>
                                       {isFirst && (
                                         <div className="absolute flex items-center justify-center rounded-full text-white font-bold select-none cursor-pointer z-20 shadow-sm"
-                                          style={{ width: 14, height: 14, fontSize: 7, backgroundColor: cargoColor, border: "1.5px solid white", top: "50%", left: 2, transform: "translateY(-50%)" }}
-                                          title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}
-                                          onClick={(e) => { e.stopPropagation(); handleAvatarClick(e, p, eng); }}>
+                                          style={{ width: 14, height: 14, fontSize: 7, backgroundColor: cargoColor, border: "1.5px solid white", top: "50%", left: 18, transform: "translateY(-50%)", pointerEvents: "none" }}
+                                          title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
                                           {iniciales(p.nombre, p.apellido, p.iniciales)}
                                         </div>
                                       )}
@@ -1614,27 +1702,30 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 onDrop={(e) => { setDragOverReqId(null); if (!isActive && reqsEnCol[0]) handleDrop(e, eng, reqsEnCol[0], true); }}>
                                 {isActive && (
                                   <>
-                                    <div className="relative group/bar overflow-visible"
+                                    <div className="relative group/bar overflow-visible cursor-pointer"
                                       style={{ height: 5, marginTop: 7, backgroundColor: `${cargoColor}55`, border: `1.5px dashed ${cargoColor}`, borderRadius: 4, opacity: desasignando === p.asignacionId ? 0.2 : 1 }}
-                                      title={`PLAN · ${p.nombre} ${p.apellido} · ${p.pct}%`}>
+                                      title={`PLAN · ${p.nombre} ${p.apellido} · ${p.pct}%`}
+                                      onClick={(e) => handleAvatarClick(e, p, eng)}>
                                       <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
                                         title="Quitar del plan"
                                         className="absolute top-0 right-0 bottom-0 w-4 flex items-center justify-center opacity-0 group-hover/bar:opacity-100 bg-red-400 transition-opacity z-10"
                                         style={{ borderRadius: "0 4px 4px 0" }}>
                                         <span className="text-white text-[8px] font-bold">×</span>
                                       </button>
-                                      {isFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "start" }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-l-sm hover:bg-blue-400 transition-colors" />}
+                                      {isFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "start" }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize z-50 rounded-l-sm hover:bg-blue-400 transition-colors" />}
                                       {isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r-sm hover:bg-blue-400 transition-colors" />}
                                     </div>
                                     {isFirst && (
-                                      <div className="absolute flex items-center gap-0.5 z-20" style={{ top: "50%", left: 2, transform: "translateY(-50%)" }}>
-                                        <button onClick={() => confirmarPlan(p, eng.id)} disabled={confirmando === p.asignacionId}
+                                      <div className="absolute flex items-center gap-0.5 z-20" style={{ top: "50%", left: 18, transform: "translateY(-50%)", pointerEvents: "none" }}>
+                                        <button
+                                          style={{ pointerEvents: "auto" }}
+                                          onClick={() => confirmarPlan(p, eng.id)} disabled={confirmando === p.asignacionId}
                                           title="Confirmar"
                                           className="w-3.5 h-3.5 rounded-full bg-green-500 text-white flex items-center justify-center hover:bg-green-600 disabled:opacity-50 text-[7px] font-bold shadow-sm border border-white flex-shrink-0">
                                           ✓
                                         </button>
                                         <div className="flex items-center justify-center rounded-full text-white font-bold select-none shadow-sm"
-                                          style={{ width: 14, height: 14, fontSize: 7, backgroundColor: cargoColor, border: "1.5px solid white" }}
+                                          style={{ width: 14, height: 14, fontSize: 7, backgroundColor: cargoColor, border: "1.5px solid white", pointerEvents: "none" }}
                                           title={`PLAN · ${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
                                           {iniciales(p.nombre, p.apellido, p.iniciales)}
                                         </div>
