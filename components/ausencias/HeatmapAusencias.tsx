@@ -66,9 +66,10 @@ interface TooltipProps {
   onEditar: () => void;
   onCerrar: () => void;
   anchorRect: DOMRect; // posición del botón para portal fixed
+  readOnly?: boolean;
 }
 
-function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar, onCerrar, anchorRect }: TooltipProps) {
+function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar, onCerrar, anchorRect, readOnly = false }: TooltipProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const cfg = COLOR_AUSENCIA[celda.tipo];
   const labelFecha = new Date(fecha + "T00:00:00").toLocaleDateString("es-CL", {
@@ -97,14 +98,14 @@ function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar,
           {cfg.label}
         </span>
         <div className="flex items-center gap-1">
-          <button
+          {!readOnly && <button
             onClick={onEditar}
             className="text-[#bbb] hover:text-[#4a90e2] transition-colors"
             title="Editar ausencia"
           >
             <Pencil className="w-3 h-3" />
-          </button>
-          <button
+          </button>}
+          {!readOnly && <button
             onClick={() => setConfirmOpen(true)}
             disabled={eliminando}
             className="text-[#bbb] hover:text-red-500 transition-colors"
@@ -113,7 +114,7 @@ function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar,
             {eliminando
               ? <Loader2 className="w-3 h-3 animate-spin" />
               : <Trash2 className="w-3 h-3" />}
-          </button>
+          </button>}
           <button
             onClick={onCerrar}
             className="text-[#bbb] hover:text-[#555] transition-colors"
@@ -526,6 +527,7 @@ interface HeatmapAusenciasProps {
   month: number;
   externalModalOpen?: boolean;
   onExternalModalClose?: () => void;
+  readOnly?: boolean;
 }
 
 export function HeatmapAusencias({
@@ -533,6 +535,7 @@ export function HeatmapAusencias({
   month,
   externalModalOpen = false,
   onExternalModalClose,
+  readOnly = false,
 }: HeatmapAusenciasProps) {
   const [filas, setFilas]   = useState<FilaPersona[]>([]);
   const [dias, setDias]     = useState<string[]>([]);
@@ -571,9 +574,9 @@ export function HeatmapAusencias({
     setPersonaColapsados(prev => { const s = new Set(prev); s.has(id) ? s.delete(id) : s.add(id); return s; });
   }
 
-  // Sincronizar modal externo (desde la página)
+  // Sincronizar modal externo (desde la página) — bloqueado en readOnly
   useEffect(() => {
-    if (externalModalOpen) {
+    if (externalModalOpen && !readOnly) {
       setModalFecha(undefined);
       setModalPersona(undefined);
       setModalOpen(true);
@@ -913,6 +916,7 @@ export function HeatmapAusencias({
                                       <CeldaTooltip celda={celda} persona={fila.persona} fecha={fecha}
                                         onEliminar={handleEliminar} eliminando={eliminando === celda.ausencia_id}
                                         onEditar={() => handleAbrirEditar(celda.ausencia_id, fila.persona)}
+                                        readOnly={readOnly}
                                         onCerrar={() => setTooltip(null)}
                                         anchorRect={tooltip!.rect}
                                       />
@@ -922,6 +926,7 @@ export function HeatmapAusencias({
                                   /* Celda feriado: visible con gris, sin interacción */
                                   <div className="w-full h-4 rounded bg-gray-400 opacity-40" title="Feriado" />
                                 ) : (
+                                  !readOnly && (
                                   <button type="button"
                                     className="w-full h-4 rounded hover:bg-[#f0f0f0] transition-colors group"
                                     onClick={() => { setModalPersona(fila.persona.id); setModalFecha(fecha); setModalOpen(true); }}
@@ -929,6 +934,7 @@ export function HeatmapAusencias({
                                   >
                                     <Plus className="w-2 h-2 text-[#ddd] group-hover:text-[#bbb] mx-auto transition-colors" />
                                   </button>
+                                  )
                                 )}
                               </td>
                             );

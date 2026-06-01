@@ -68,8 +68,9 @@ interface TooltipProps {
   onEditar: () => void;
   onCerrar: () => void;
   anchorRect: DOMRect;
+  readOnly?: boolean;
 }
-function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar, onCerrar, anchorRect }: TooltipProps) {
+function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar, onCerrar, anchorRect, readOnly = false }: TooltipProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const cfg = COLOR_AUSENCIA[celda.tipo];
   const labelFecha = new Date(fecha + "T00:00:00").toLocaleDateString("es-CL", {
@@ -82,10 +83,10 @@ function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar,
         <div className="flex items-center justify-between mb-2">
           <span className="text-[10px] font-bold px-2 py-0.5 rounded-full text-white" style={{ background: cfg.bg }}>{cfg.label}</span>
           <div className="flex items-center gap-1">
-            <button onClick={onEditar} title="Editar" className="text-[#bbb] hover:text-[#4a90e2] transition-colors"><Pencil className="w-3 h-3" /></button>
-            <button onClick={() => setConfirmOpen(true)} disabled={eliminando} title="Eliminar" className="text-[#bbb] hover:text-red-500 transition-colors">
+            {!readOnly && <button onClick={onEditar} title="Editar" className="text-[#bbb] hover:text-[#4a90e2] transition-colors"><Pencil className="w-3 h-3" /></button>}
+            {!readOnly && <button onClick={() => setConfirmOpen(true)} disabled={eliminando} title="Eliminar" className="text-[#bbb] hover:text-red-500 transition-colors">
               {eliminando ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
-            </button>
+            </button>}
             <button onClick={onCerrar} className="text-[#bbb] hover:text-[#555] transition-colors"><X className="w-3 h-3" /></button>
           </div>
         </div>
@@ -257,9 +258,10 @@ interface Props {
   selectedDate: Date;
   externalModalOpen?: boolean;
   onExternalModalClose?: () => void;
+  readOnly?: boolean;
 }
 
-export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false, onExternalModalClose }: Props) {
+export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false, onExternalModalClose, readOnly = false }: Props) {
   const weekDays = useMemo(() => getWeekDays(selectedDate), [selectedDate]);
 
   const [filas,    setFilas]    = useState<FilaPersona[]>([]);
@@ -518,12 +520,14 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                                     onEditar={() => { setEditarId(celda.ausencia_id); setModalOpen(true); setTooltip(null); }}
                                     onCerrar={() => setTooltip(null)}
                                     anchorRect={tooltip!.rect}
+                                    readOnly={readOnly}
                                   />
                                 )}
                               </div>
                             ) : esFeriado ? (
                               <div className="w-full h-5 rounded bg-gray-400 opacity-40" title="Feriado" />
                             ) : (
+                              !readOnly && (
                               <button type="button"
                                 className="w-full h-5 rounded hover:bg-[#f0f0f0] transition-colors group flex items-center justify-center"
                                 onClick={() => { setModalPersona(fila.persona.id); setModalFecha(iso); setEditarId(undefined); setModalOpen(true); }}
@@ -531,6 +535,7 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                               >
                                 <Plus className="w-2 h-2 text-[#ddd] group-hover:text-[#bbb] transition-colors" />
                               </button>
+                              )
                             )}
                           </td>
                         );

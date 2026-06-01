@@ -175,6 +175,25 @@ export function ColaboradorModal({
   async function handleGuardar() {
     const err = validate();
     if (err) { setError(err); return; }
+
+    // Validación estricta: fetch fresco de ausencias — sin depender de estado
+    const sbCheck = createAnyClient();
+    const { data: ausRaw } = await (sbCheck as any)
+      .from("ausencia")
+      .select("fecha_inicio, fecha_fin")
+      .eq("persona_id", personaId);
+    const engIni = new Date(engInicio);
+    const engFin_ = new Date(engFin);
+    const cubreTodo = (ausRaw ?? []).some((a: any) => {
+      const ausIni = new Date(a.fecha_inicio);
+      const ausFin = new Date(a.fecha_fin);
+      return ausIni <= engIni && ausFin >= engFin_;
+    });
+    if (cubreTodo) {
+      setError("La persona seleccionada tiene ausencias durante toda la duración del engagement. No puede ser staffeada.");
+      return; // bloqueo total — ninguna escritura en Supabase ocurre
+    }
+
     setError(null); setSaving(true);
     const sb = createAnyClient();
     const delQ = (sb as any).from("asignacion").delete()

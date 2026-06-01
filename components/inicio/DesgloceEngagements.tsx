@@ -145,6 +145,8 @@ interface Props {
   onPersonaClick?: (personaId: string) => void;
   /** Si se provee, expande y hace scroll hasta ese engagement al cargar */
   openEngagementId?: string;
+  /** Solo lectura: deshabilita drag&drop, edición y apertura de modales */
+  readOnly?: boolean;
 }
 
 // ── Tipo para el undo stack (fuera del componente para evitar re-declaraciones) ──
@@ -155,7 +157,7 @@ type UndoEntry =
   | { type: "resize_eng";  engId: string; label: string; field: string; prevDate: string }
   | { type: "move_eng";    engId: string; label: string; prevInicio: string; prevFin: string; finField: string };
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId }: Props) {
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
   const [baseInterna, setBaseInterna] = useState<Date>(new Date());
 
@@ -573,6 +575,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   // Clic en avatar/barra → siempre abre ColaboradorModal unificado (tabs Asignación + Perfil)
   function handleAvatarClick(e: React.MouseEvent, p: PersonaAsig, eng: EngRow) {
     e.stopPropagation();
+    if (readOnly) return; // Desarrollo: sin acceso a detalle
     setAsigModal({ persona: p, eng });
   }
 
@@ -580,6 +583,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   async function handleDropOnEngagement(e: React.DragEvent, eng: EngRow) {
     e.preventDefault();
     setDragOverEngId(null);
+    if (readOnly) return;
     let data: { personaId: string; nombre: string; apellido: string; cargo_actual: string } | null = null;
     try { data = JSON.parse(e.dataTransfer.getData("persona")); } catch { return; }
     if (!data?.personaId) return;
@@ -669,6 +673,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         cursor = format(addDays(new Date(aus.fecha_fin + "T00:00:00"), 1), "yyyy-MM-dd");
       }
       if (cursor <= fechaFin) segments.push({ fecha_inicio: cursor, fecha_fin: fechaFin });
+
+      // Bloqueo total: ausencias cubren el 100% del engagement
+      if (segments.length === 0) {
+        if (!reqMatch) await (sb as any).from("requerimiento_engagement").delete().eq("id", reqId);
+        showToast("❌ La persona seleccionada tiene ausencias durante toda la duración del engagement. No puede ser staffeada.");
+        return;
+      }
+
       for (const seg of segments) {
         const { data: ins } = await (sb as any).from("asignacion").insert({ ...baseInsert, ...seg }).select("id");
         if (ins) createdIds.push(...(ins as any[]).map((r: any) => r.id));
@@ -693,6 +705,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   async function handleDrop(e: React.DragEvent, eng: EngRow, req: ReqData, forcePlan = false) {
     e.preventDefault();
     setDragOverReqId(null);
+    if (readOnly) return;
     let data: { personaId: string; nombre: string; apellido: string; cargo_actual: string } | null = null;
     try { data = JSON.parse(e.dataTransfer.getData("persona")); } catch { return; }
     if (!data?.personaId) return;
@@ -745,6 +758,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       }
       // Segmento final tras la última ausencia
       if (cursor <= reqFin) segments.push({ fecha_inicio: cursor, fecha_fin: reqFin });
+
+      // Bloqueo total: ausencias cubren el 100% del requerimiento
+      if (segments.length === 0) {
+        showToast("❌ La persona seleccionada tiene ausencias durante toda la duración del engagement. No puede ser staffeada.");
+        return;
+      }
 
       for (const seg of segments) {
         const { data: ins } = await sb.from("asignacion").insert({ ...baseInsert, ...seg }).select("id");
@@ -1025,7 +1044,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           ? (resizing.edge === "start" ? (oldAsig as any).fecha_inicio : (oldAsig as any).fecha_fin)
           : null;
         const { error: updateErr } = await sb.from("asignacion")
-          .update({ [resizing.edge === "start" ? "fecha_inicio" : "fecha_fin"]: newDate })
+          .update({ [resizing.edge === "start" ? "fecha_inicio" : "fecha_fin"]: format(newDate, "yyyy-MM-dd") })
           .eq("id", resizing.p.asignacionId);
         if (updateErr) console.error("[resize] Error al actualizar asignacion:", updateErr, "| asignacionId:", resizing.p.asignacionId, "| campo:", resizing.edge === "start" ? "fecha_inicio" : "fecha_fin", "| valor:", newDate);
         if (prevDate) {
@@ -1104,14 +1123,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         {/* Fila 1: acciones principales + Resumen */}
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <button
+            {!readOnly && <button
               onClick={() => { setEngToEdit(undefined); setFormOpen(true); }}
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white transition-colors hover:opacity-90"
               style={{ background: "#4a90e2" }}
             >
               <Plus className="w-3 h-3" />
               Nuevo proyecto
-            </button>
+            </button>}
             {engs.length > 0 && (
               <button
                 onClick={colapsados.size === engs.length ? expandirTodos : colapsarTodos}
@@ -1133,14 +1152,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               <span>Deshacer{undoStack.length > 1 ? ` (${undoStack.length})` : ""}</span>
             </button>
           </div>
-          {/* Resumen — compacto, a la derecha */}
-          <Link
+          {/* Resumen — oculto en readOnly */}
+          {!readOnly && <Link
             href="/reportes/resumen-proyectos"
             className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-gray-200 text-[10px] text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/40 hover:bg-blue-50 transition-all"
           >
             <BarChart2 className="w-2.5 h-2.5" />
             <span>Resumen</span>
-          </Link>
+          </Link>}
         </div>
         {/* Fila 2: buscador + controles de vista */}
         <div className="flex items-center justify-between">
@@ -1316,17 +1335,17 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
                   const filaHdr = (
                     <tr key={`hdr-${eng.id}`} data-eng-id={eng.id}
-                      draggable
-                      onDragStart={(e) => { if (movingEngActiveRef.current || resizingEngActiveRef.current) { e.preventDefault(); return; } setDraggingEngId(eng.id); e.dataTransfer.effectAllowed = "move"; }}
+                      draggable={!readOnly}
+                      onDragStart={(e) => { if (readOnly || movingEngActiveRef.current || resizingEngActiveRef.current) { e.preventDefault(); return; } setDraggingEngId(eng.id); e.dataTransfer.effectAllowed = "move"; }}
                       onDragEnd={() => { setDraggingEngId(null); setDragOverEngSortId(null); }}
                       style={{ opacity: draggingEngId === eng.id ? 0.45 : 1, transition: "opacity 0.15s" }}>
                       <td className="pt-1 pb-0.5 sticky left-0 bg-white z-10" style={{ width: 110, maxWidth: 110 }}>
                         {/* relative+overflow-hidden: los botones de acción son absolute y no afectan el ancho */}
                         <div className="relative flex items-center gap-0.5 group overflow-hidden">
-                          {/* Grip — visible on hover, señaliza que la fila es arrastrable */}
-                          <span title="Arrastrar para reordenar">
+                          {/* Grip — oculto en readOnly */}
+                          {!readOnly && <span title="Arrastrar para reordenar">
                             <GripVertical className="w-3 h-3 flex-shrink-0 text-gray-200 group-hover:text-gray-400 cursor-grab transition-colors" />
-                          </span>
+                          </span>}
                           <button
                             onClick={() => toggleColapso(eng.id)}
                             title={estaColapsado ? "Expandir" : "Colapsar"}
@@ -1346,7 +1365,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                             </button>
                             {eng.cliente && <p className="text-[10px] text-gray-400 truncate w-full">{eng.cliente}</p>}
                           </div>
-                          {/* Botones acción: absolute para no sumar ancho al layout */}
+                          {/* Botones acción: ocultos en readOnly */}
+                          {!readOnly && (
                           <div className="absolute right-0 top-0 bottom-0 flex items-center gap-0.5 bg-white pl-1 opacity-0 group-hover:opacity-100 transition-opacity">
                             <button onClick={() => { setEngToEdit(eng.raw); setFormOpen(true); }}
                               title="Editar"
@@ -1360,6 +1380,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               <Trash2 className="w-3 h-3" />
                             </button>
                           </div>
+                          )}
                         </div>
                       </td>
                       {columnas.map((col, i) => {
@@ -1435,9 +1456,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               <div
                                 className="relative h-5 rounded-full transition-all overflow-visible group/engbar"
                                 style={{ background: barColor, ...rojoOutline, opacity: esHoy ? 1 : 0.5, cursor: movingEng?.eng.id === eng.id ? "grabbing" : "grab", ...(tieneViaje ? { border: "3px solid #92400e" } : tieneTaller ? { border: "3px solid #2563eb" } : {}) }}
-                                title="Arrastra para mover · Borde para redimensionar · Clic para intensidad"
+                                title={readOnly ? "" : "Arrastra para mover · Borde para redimensionar · Clic para intensidad"}
                                 onMouseDown={(ev) => {
-                                  // Solo cuerpo (no los handles de borde que hacen stopPropagation)
+                                  if (readOnly) return;
                                   ev.stopPropagation();
                                   movingEngActiveRef.current = true;
                                   setMovingEng({ eng, startColIdx: i });
@@ -1445,7 +1466,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                   setMoveEngHoverIdx(i);
                                 }}
                                 onClick={(ev) => {
-                                  if (movingEng) return; // fue drag, no click
+                                  if (readOnly) return;
+                                  if (movingEng) return;
                                   ev.stopPropagation();
                                   setQuickEdit({ engId: eng.id, fecha: format(col.inicio, "yyyy-MM-dd"), fecha_fin: format(col.fin, "yyyy-MM-dd"), x: ev.clientX, y: ev.clientY });
                                 }}>
@@ -1465,8 +1487,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                     </div>
                                   </div>
                                 )}
-                                {isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/40 transition-colors" />}
-                                {isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/40 transition-colors" />}
+                                {!readOnly && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/40 transition-colors" />}
+                                {!readOnly && isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/40 transition-colors" />}
                               </div>
                             </td>
                           );
@@ -1663,14 +1685,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                         style={{ backgroundColor: cargoColor, opacity: desasignando === p.asignacionId ? 0.3 : esHoy ? 1 : 0.85, borderRadius: 4, marginTop: 7 }}
                                         onClick={(e) => handleAvatarClick(e, p, eng)}
                                         title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
-                                        <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
+                                        {!readOnly && <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
                                           title="Desasignar"
                                           className="absolute top-0 right-0 bottom-0 w-4 flex items-center justify-center opacity-0 group-hover/bar:opacity-100 bg-red-500 transition-opacity z-10"
                                           style={{ borderRadius: "0 4px 4px 0" }}>
                                           <span className="text-white text-[8px] font-bold leading-none">×</span>
-                                        </button>
-                                        {isFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "start" }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize z-50 rounded-l hover:bg-white/30 transition-colors" />}
-                                        {isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r hover:bg-white/30 transition-colors" />}
+                                        </button>}
+                                        {!readOnly && isFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "start" }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize z-50 rounded-l hover:bg-white/30 transition-colors" />}
+                                        {!readOnly && isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r hover:bg-white/30 transition-colors" />}
                                       </div>
                                       {isFirst && (
                                         <div className="absolute flex items-center justify-center rounded-full text-white font-bold select-none cursor-pointer z-20 shadow-sm"
@@ -1706,24 +1728,24 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                       style={{ height: 5, marginTop: 7, backgroundColor: `${cargoColor}55`, border: `1.5px dashed ${cargoColor}`, borderRadius: 4, opacity: desasignando === p.asignacionId ? 0.2 : 1 }}
                                       title={`PLAN · ${p.nombre} ${p.apellido} · ${p.pct}%`}
                                       onClick={(e) => handleAvatarClick(e, p, eng)}>
-                                      <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
+                                      {!readOnly && <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
                                         title="Quitar del plan"
                                         className="absolute top-0 right-0 bottom-0 w-4 flex items-center justify-center opacity-0 group-hover/bar:opacity-100 bg-red-400 transition-opacity z-10"
                                         style={{ borderRadius: "0 4px 4px 0" }}>
                                         <span className="text-white text-[8px] font-bold">×</span>
-                                      </button>
-                                      {isFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "start" }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize z-50 rounded-l-sm hover:bg-blue-400 transition-colors" />}
-                                      {isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r-sm hover:bg-blue-400 transition-colors" />}
+                                      </button>}
+                                      {!readOnly && isFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "start" }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize z-50 rounded-l-sm hover:bg-blue-400 transition-colors" />}
+                                      {!readOnly && isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r-sm hover:bg-blue-400 transition-colors" />}
                                     </div>
                                     {isFirst && (
                                       <div className="absolute flex items-center gap-0.5 z-20" style={{ top: "50%", left: 18, transform: "translateY(-50%)", pointerEvents: "none" }}>
-                                        <button
+                                        {!readOnly && <button
                                           style={{ pointerEvents: "auto" }}
                                           onClick={() => confirmarPlan(p, eng.id)} disabled={confirmando === p.asignacionId}
                                           title="Confirmar"
                                           className="w-3.5 h-3.5 rounded-full bg-green-500 text-white flex items-center justify-center hover:bg-green-600 disabled:opacity-50 text-[7px] font-bold shadow-sm border border-white flex-shrink-0">
                                           ✓
-                                        </button>
+                                        </button>}
                                         <div className="flex items-center justify-center rounded-full text-white font-bold select-none shadow-sm"
                                           style={{ width: 14, height: 14, fontSize: 7, backgroundColor: cargoColor, border: "1.5px solid white", pointerEvents: "none" }}
                                           title={`PLAN · ${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
@@ -1868,13 +1890,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                   )}
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
-                  <button
+                  {!readOnly && <button
                     onClick={() => { setEngToEdit(engModal.raw); setFormOpen(true); setEngModal(null); }}
                     title="Editar"
                     className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
                   >
                     <Pencil className="w-3.5 h-3.5" />
-                  </button>
+                  </button>}
                   <button
                     onClick={() => setEngModal(null)}
                     title="Cerrar"

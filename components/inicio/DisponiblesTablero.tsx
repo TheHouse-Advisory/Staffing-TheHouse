@@ -11,9 +11,12 @@ export interface AsigDetalle {
   tipo: string;
 }
 
+interface AusenciaItem { persona_id: string; fecha_inicio: string; fecha_fin: string; }
+
 interface Props {
   personas: Persona[];
   asignaciones: AsigDetalle[];
+  ausencias?: AusenciaItem[];
 }
 
 type Estado = "libre" | "pronto" | "comercial";
@@ -36,17 +39,24 @@ const BADGE: Record<Estado, { bg: string; text: string; label: (d?: number) => s
   pronto:    { bg: "#fff7ed", text: "#c2410c", label: (d) => d === 0 ? "Hoy" : `En ${d}d` },
 };
 
-export function DisponiblesTablero({ personas, asignaciones }: Props) {
+export function DisponiblesTablero({ personas, asignaciones, ausencias = [] }: Props) {
   const [colapsado, setColapsado] = useState(false);
 
   const disponibles = useMemo((): DisponibleItem[] => {
     const hoy = new Date();
     const hoyStr = format(hoy, "yyyy-MM-dd");
     const en7diasStr = format(addDays(hoy, 7), "yyyy-MM-dd");
+    // Set de IDs con ausencia activa hoy o que inicia en los próximos 7 días
+    const conAusencia = new Set(
+      ausencias
+        .filter((a) => a.fecha_inicio <= en7diasStr && a.fecha_fin >= hoyStr)
+        .map((a) => a.persona_id)
+    );
     const result: DisponibleItem[] = [];
 
     for (const p of personas) {
       if (excluir(p.cargo_actual)) continue;
+      if (conAusencia.has(p.id)) continue; // excluir personas con ausencia en el rango
 
       const asigs = asignaciones.filter((a) => a.persona_id === p.id);
 
@@ -79,7 +89,7 @@ export function DisponiblesTablero({ personas, asignaciones }: Props) {
       if (a.estado === "pronto") return (a.dias ?? 99) - (b.dias ?? 99);
       return `${a.persona.apellido}${a.persona.nombre}`.localeCompare(`${b.persona.apellido}${b.persona.nombre}`);
     });
-  }, [personas, asignaciones]);
+  }, [personas, asignaciones, ausencias]);
 
   return (
     <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col flex-shrink-0">

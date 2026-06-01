@@ -10,7 +10,7 @@ import { createAnyClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { Modal, ConfirmDialog } from "@/components/ui/Modal";
 import { PersonaForm } from "./PersonaForm";
-import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
+import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT, CARGOS_OCULTOS_GYD } from "@/lib/constants";
 import { diasRestantesPapelera, limpiarPersonasCaducadas } from "@/lib/tasks/cleanupEngagements";
 import type { Persona, RolSistema } from "@/lib/types/database";
 import { getIniciales } from "@/lib/utils/iniciales";
@@ -25,12 +25,14 @@ const EX_PAGE = 20;
 function PersonaCard({
   persona,
   isAdmin,
+  canView = true,
   onDesactivar,
   cargoColor,
   dimmed = false,
 }: {
   persona: Persona;
   isAdmin: boolean;
+  canView?: boolean;
   onDesactivar?: (p: Persona) => void;
   cargoColor?: string;
   dimmed?: boolean;
@@ -69,12 +71,14 @@ function PersonaCard({
             <UserX className="w-3.5 h-3.5" />
           </button>
         )}
-        <Link
-          href={`/personas/${persona.id}`}
-          className="flex items-center gap-1 text-[11px] text-[#888] hover:text-[#1a1a1a] px-2 py-1 rounded-md hover:bg-[#f5f5f5] transition-colors font-medium"
-        >
-          Ver <ChevronRight className="w-3 h-3" />
-        </Link>
+        {canView && (
+          <Link
+            href={`/personas/${persona.id}`}
+            className="flex items-center gap-1 text-[11px] text-[#888] hover:text-[#1a1a1a] px-2 py-1 rounded-md hover:bg-[#f5f5f5] transition-colors font-medium"
+          >
+            Ver <ChevronRight className="w-3 h-3" />
+          </Link>
+        )}
       </div>
     </div>
   );
@@ -110,8 +114,14 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   // Diálogo de destino al restaurar desde papelera
   const [restaurando, setRestaurando] = useState<PersonaEliminada | null>(null);
 
-  const isAdmin = rolActual === "admin";
+  const isAdmin      = rolActual === "admin";
+  const isGyD        = rolActual === "GyD";
+  const isAySr       = rolActual === "AySr";
+  const isDesarrollo = rolActual === "Desarrollo";
   const sb = createAnyClient();
+
+  // Cargos visibles para AySr
+  const CARGOS_AYSR = ["Consultor de Proyectos", "Consultor Analista", "Consultor Trainee"];
 
   const load = useCallback(async () => {
     const { data } = await sb
@@ -121,9 +131,13 @@ export function PersonasList({ rolActual }: PersonasListProps) {
       .eq("is_deleted", false)
       .eq("is_ex_houser", false)
       .order("apellido");
-    setPersonas((data ?? []) as Persona[]);
+    const all = (data ?? []) as Persona[];
+    let filtradas = all;
+    if (isGyD)  filtradas = all.filter((p) => !CARGOS_OCULTOS_GYD.includes(p.cargo_actual ?? ""));
+    if (isAySr) filtradas = all.filter((p) =>  CARGOS_AYSR.includes(p.cargo_actual ?? ""));
+    setPersonas(filtradas);
     setLoading(false);
-  }, []);
+  }, [isGyD, isAySr]);
 
   const loadExHousers = useCallback(async (pagina: number) => {
     setLoadingEx(true);
@@ -474,6 +488,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
                   {lista.map((p) => (
                     <PersonaCard
                       key={p.id} persona={p} isAdmin={isAdmin} cargoColor={color}
+                      canView={!isDesarrollo}
                       onDesactivar={isAdmin ? setDesactivando : undefined}
                     />
                   ))}

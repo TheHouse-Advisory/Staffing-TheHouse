@@ -42,6 +42,16 @@ export const CARGO_COLORS: Record<string, string> = {
 };
 export const CARGO_COLOR_DEFAULT = "#94a3b8";
 
+/** Cargos que el rol GyD NO puede ver en ninguna pantalla */
+export const CARGOS_OCULTOS_GYD: string[] = [
+  "Socio",
+  "Director de Proyectos",
+  "Director",
+  "Gerente de Proyectos",
+  "Gerente",
+  "Desarrollo",
+];
+
 /** Estilos por estado de engagement */
 export const ESTADO_ENGAGEMENT: Record<string, { bg: string; text: string; label: string }> = {
   activo:    { bg: "#dcf5e7", text: "#1e7e45", label: "Activo" },

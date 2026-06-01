@@ -34,30 +34,30 @@ interface NavItem {
   href: string;
   label: string;
   icon: LucideIcon;
-  /** Solo visible para personas con rol admin. */
-  adminOnly?: boolean;
+  /** Roles que pueden ver este ítem. Si se omite, visible para todos. */
+  allowedRoles?: RolSistema[];
 }
 
 const navItems: { section: string; items: NavItem[] }[] = [
   {
     section: "Principal",
     items: [
-      { href: "/inicio",    label: "Inicio",    icon: Home },
-      { href: "/tablero",   label: "Tablero",   icon: LayoutDashboard },
-      { href: "/engagements", label: "Proyectos", icon: Briefcase },
-      { href: "/personas",  label: "Personas",  icon: Users },
-      { href: "/ausencias", label: "Ausencias", icon: CalendarOff },
-      { href: "/alertas",   label: "Alertas",   icon: Bell },
-      { href: "/reportes",  label: "Reportes",  icon: BarChart2 },
+      { href: "/inicio",      label: "Inicio",    icon: Home,            allowedRoles: ["admin", "GyD", "proposer"] },
+      { href: "/tablero",     label: "Tablero",   icon: LayoutDashboard, allowedRoles: ["admin", "GyD", "Desarrollo", "proposer"] },
+      { href: "/engagements", label: "Proyectos", icon: Briefcase,       allowedRoles: ["admin", "proposer"] },
+      { href: "/personas",    label: "Personas",  icon: Users,           allowedRoles: ["admin", "GyD", "AySr", "proposer"] },
+      { href: "/ausencias",   label: "Ausencias", icon: CalendarOff,     allowedRoles: ["admin", "GyD", "AySr", "Desarrollo", "proposer"] },
+      { href: "/alertas",     label: "Alertas",   icon: Bell,            allowedRoles: ["admin", "proposer"] },
+      { href: "/reportes",    label: "Reportes",  icon: BarChart2,       allowedRoles: ["admin", "GyD", "proposer"] },
     ],
   },
   {
     section: "Gestión",
     items: [
-      { href: "/planificacion",  label: "Planificación",  icon: Kanban },
-      { href: "/capacity",       label: "Capacity",       icon: BarChart3 },
-      { href: "/accesos",        label: "Accesos",        icon: ShieldCheck, adminOnly: true },
-      { href: "/configuracion",  label: "Configuración",  icon: Settings },
+      { href: "/planificacion", label: "Planificación", icon: Kanban,      allowedRoles: ["admin"] },
+      { href: "/capacity",      label: "Capacity",       icon: BarChart3,   allowedRoles: ["admin"] },
+      { href: "/accesos",       label: "Accesos",        icon: ShieldCheck, allowedRoles: ["admin"] },
+      { href: "/configuracion", label: "Configuración",  icon: Settings,    allowedRoles: ["admin"] },
     ],
   },
 ];
@@ -90,13 +90,17 @@ export function Sidebar({
 
       {/* Navegación */}
       <nav className="flex-1 overflow-y-auto py-2 [&::-webkit-scrollbar]:hidden" style={{ scrollbarWidth: "none" }}>
-        {navItems.map((group) => (
+        {navItems.map((group) => {
+          const visibles = group.items.filter(
+            (item) => !item.allowedRoles || item.allowedRoles.includes(rol as RolSistema)
+          );
+          if (visibles.length === 0) return null;
+          return (
           <div key={group.section}>
             <p className="px-3 pt-4 pb-1.5 text-[10px] font-bold text-white/30 uppercase tracking-widest">
               {group.section}
             </p>
-            {group.items
-              .filter((item) => !item.adminOnly || rol === "admin")
+            {visibles
               .map((item) => {
               const isActive =
                 pathname === item.href ||
@@ -135,7 +139,8 @@ export function Sidebar({
               );
             })}
           </div>
-        ))}
+          );
+        })}
       </nav>
 
       {/* Usuario */}
@@ -151,7 +156,7 @@ export function Sidebar({
               {nombreCompleto}
             </p>
             <p className="text-[10px] text-[#a0a8c0] truncate">
-              {rol === "admin" ? "Admin" : cargo ?? "Equipo"}
+              {rol === "admin" ? "Admin" : rol === "GyD" ? "G&D" : rol === "AySr" ? "A&Sr" : rol === "Desarrollo" ? "Desarrollo" : cargo ?? "Equipo"}
             </p>
           </div>
           {/* Logout */}

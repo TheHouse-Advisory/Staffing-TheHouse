@@ -69,7 +69,11 @@ export async function GET(request: NextRequest) {
       token_hash: tokenHash,
       type,
     });
-    if (!error) return redirectTo(next);
+    if (!error) {
+      // Invitación o recuperación → el usuario debe crear/resetear su contraseña
+      const needsPassword = type === "invite" || type === "recovery";
+      return redirectTo(needsPassword ? "/auth/set-password" : next);
+    }
     const expirado = /expired|invalid/i.test(error.message ?? "");
     return redirectTo(
       `/login?error=${expirado ? "enlace_expirado" : "auth_callback"}`

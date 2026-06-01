@@ -81,6 +81,8 @@ export function PersonaProfile({ id }: Props) {
   const [mentoreados, setMentoreados] = useState<Persona[]>([]);
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(false);
+  const [isEditingTalent, setIsEditingTalent] = useState(false);
+  const [talentDraft, setTalentDraft] = useState<{ p: number | null; d: number | null }>({ p: null, d: null });
   const [ausenciasDetalle, setAusenciasDetalle] = useState<DetalleAusenciasPersona | null>(null);
   const [historial,        setHistorial]        = useState<HistorialItem[]>([]);
   const [deletingEngId,    setDeletingEngId]    = useState<string | null>(null); // eng que se va a borrar
@@ -370,19 +372,51 @@ export function PersonaProfile({ id }: Props) {
 
         {/* ── Matriz de Talento 9-Box ──────────────────────── */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
-          <h3 className="font-semibold mb-4">Matriz de Talento</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold">Matriz de Talento</h3>
+            {!isEditingTalent ? (
+              <button
+                onClick={() => {
+                  setTalentDraft({ p: persona.talento_potencial, d: persona.talento_desempeno });
+                  setIsEditingTalent(true);
+                }}
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-[#e8e8e8] text-[#555] hover:bg-[#f5f5f5] transition-colors"
+              >
+                <Pencil className="w-3.5 h-3.5" /> Editar
+              </button>
+            ) : (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setIsEditingTalent(false)}
+                  className="text-xs px-3 py-1.5 rounded-lg border border-[#e8e8e8] text-[#888] hover:bg-[#f5f5f5] transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={async () => {
+                    if (talentDraft.p == null || talentDraft.d == null) return;
+                    const supabase = createAnyClient();
+                    const { error } = await supabase
+                      .from("persona")
+                      .update({ talento_potencial: talentDraft.p, talento_desempeno: talentDraft.d })
+                      .eq("id", persona.id);
+                    if (!error) {
+                      setPersona((prev) => prev ? { ...prev, talento_potencial: talentDraft.p, talento_desempeno: talentDraft.d } : prev);
+                      setIsEditingTalent(false);
+                    }
+                  }}
+                  className="text-xs px-3 py-1.5 rounded-lg bg-[#1a1a2e] text-white hover:bg-[#2d2d4e] transition-colors"
+                >
+                  Guardar
+                </button>
+              </div>
+            )}
+          </div>
           <TalentMatrix
-            potencial={persona.talento_potencial}
-            desempeno={persona.talento_desempeno}
-            isEditable
-            onUpdate={async (p, d) => {
-              const supabase = createAnyClient();
-              const { error } = await supabase
-                .from("persona")
-                .update({ talento_potencial: p, talento_desempeno: d })
-                .eq("id", persona.id);
-              if (!error) setPersona((prev) => prev ? { ...prev, talento_potencial: p, talento_desempeno: d } : prev);
-            }}
+            potencial={isEditingTalent ? talentDraft.p : persona.talento_potencial}
+            desempeno={isEditingTalent ? talentDraft.d : persona.talento_desempeno}
+            isEditable={isEditingTalent}
+            onUpdate={(p, d) => setTalentDraft({ p, d })}
           />
         </div>
 

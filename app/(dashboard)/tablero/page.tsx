@@ -1,7 +1,9 @@
 "use client";
 
-import { Suspense, useState } from "react";
+import { Suspense, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
+import { createClient, createAnyClient } from "@/lib/supabase/client";
+import type { RolSistema } from "@/lib/types/database";
 import { startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths, addDays, format } from "date-fns";
 import { es } from "date-fns/locale";
 import { ChevronLeft, ChevronRight } from "lucide-react";
@@ -18,6 +20,19 @@ function TableroContent() {
   const searchParams = useSearchParams();
   const openEngagementId = searchParams.get("openEngagementId") ?? undefined;
   const [vistaPrincipal, setVistaPrincipal] = useState<VistaPrincipal>("proyectos");
+  const [rol, setRol] = useState<RolSistema | null>(null);
+  const isReadOnly = rol === "Desarrollo";
+
+  useEffect(() => {
+    (async () => {
+      const supabase = createClient();
+      const sb = createAnyClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
+      setRol((data?.rol_sistema as RolSistema) ?? null);
+    })();
+  }, []);
 
   // ── Panel lateral de recomendaciones (mismo patrón que inicio/page.tsx) ──
   const [panelReq,       setPanelReq]       = useState<PanelInfo | null>(null);
@@ -119,6 +134,7 @@ function TableroContent() {
                 openEngagementId={openEngagementId}
                 externalReloadKey={tableroReloadKey}
                 onOpenPanel={abrirPanel}
+                readOnly={isReadOnly}
               />
             </div>
 

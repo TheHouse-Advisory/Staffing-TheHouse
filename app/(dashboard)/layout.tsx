@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname } from "next/navigation";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
 import type { Persona, RolSistema } from "@/lib/types/database";
@@ -12,6 +12,7 @@ interface DashboardLayoutProps {
 
 export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const router = useRouter();
+  const pathname = usePathname();
   const [persona, setPersona] = useState<Persona | null>(null);
 
   const loadUser = useCallback(async () => {
@@ -47,9 +48,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
     }
   }, [router]);
 
+  // Re-fetch en cada cambio de ruta para que el rol siempre esté fresco
   useEffect(() => {
     loadUser();
-  }, [loadUser]);
+  }, [loadUser, pathname]);
 
   const handleSignOut = async () => {
     const supabase = createClient();
