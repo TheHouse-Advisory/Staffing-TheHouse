@@ -19,7 +19,9 @@ function LoginForm() {
   const [cooldown, setCooldown] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
-  const redirectTo = searchParams.get("redirectTo") ?? "/tablero";
+  // Valida que sea ruta interna — evita open redirect vía ?redirectTo=//evil.com
+  const rawRedirect = searchParams.get("redirectTo") ?? "";
+  const redirectTo = rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") ? rawRedirect : "/tablero";
 
   const errorMsg = searchParams.get("error");
   const errorMessages: Record<string, string> = {

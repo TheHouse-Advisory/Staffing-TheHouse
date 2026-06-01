@@ -26,10 +26,11 @@
 "use server";
 
 import { createClient, createServiceClient } from "@/lib/supabase/server";
+import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
 import type { Persona, RolSistema } from "@/lib/types/database";
 
-const ROLES_VALIDOS: RolSistema[] = ["admin", "proposer"];
+const ROLES_VALIDOS: RolSistema[] = ["admin", "GyD", "AySr", "Desarrollo", "proposer"];
 
 export interface ResultadoAccion {
   ok: boolean;
@@ -249,6 +250,16 @@ export async function cambiarRol({
     return { ok: false, message: "La persona no tiene un acceso asignado." };
   }
 
+  // Failsafe: solo bloquear si es el propio admin editándose Y es el último
+  if (actual.rol_sistema === "admin" && rol !== "admin" && personaId === admin.persona.id) {
+    const { count } = await service
+      .from("persona")
+      .select("id", { count: "exact", head: true })
+      .eq("rol_sistema", "admin");
+    if ((count ?? 0) <= 1)
+      return { ok: false, message: "No puedes cambiar el rol, eres el último Admin dentro, si no queda inutilizada la plataforma." };
+  }
+
   const { error } = await service
     .from("persona")
     .update({ rol_sistema: rol })
@@ -258,6 +269,7 @@ export async function cambiarRol({
     return { ok: false, message: error.message };
   }
 
+  revalidatePath("/", "layout"); // refresca el layout para que el Sidebar refleje el nuevo rol
   return { ok: true, message: "Rol actualizado." };
 }
 

@@ -19,8 +19,10 @@ import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import type { Persona, RolSistema, EstadoAcceso } from "@/lib/types/database";
 
 const ROL_OPTIONS = [
-  { value: "proposer", label: "Proposer" },
-  { value: "admin", label: "Admin" },
+  { value: "admin",      label: "Admin" },
+  { value: "GyD",        label: "G&D" },
+  { value: "AySr",       label: "A&Sr" },
+  { value: "Desarrollo", label: "Desarrollo" },
 ];
 
 const ESTADO_BADGE: Record<EstadoAcceso, { label: string; bg: string; text: string }> = {
@@ -84,10 +86,22 @@ export function AccesosManager() {
     if (nuevoRol === persona.rol_sistema) return;
     setBusyId(persona.id);
     setFeedback(null);
-    const r = await cambiarRol({ personaId: persona.id, rol: nuevoRol });
-    setFeedback({ ok: r.ok, text: r.message });
-    setBusyId(null);
-    if (r.ok) load();
+    try {
+      const { error } = await sb
+        .from("persona")
+        .update({ rol_sistema: nuevoRol })
+        .eq("id", persona.id);
+      if (error) {
+        setFeedback({ ok: false, text: error.message });
+      } else {
+        setFeedback({ ok: true, text: "Rol actualizado." });
+        load();
+      }
+    } catch (e: any) {
+      setFeedback({ ok: false, text: e?.message ?? "Error inesperado." });
+    } finally {
+      setBusyId(null);
+    }
   }
 
   async function handleReenviar(persona: Persona) {
@@ -319,14 +333,14 @@ function OtorgarAccesoModal({
   onResult: (r: { ok: boolean; text: string }) => void;
 }) {
   const [personaId, setPersonaId] = useState("");
-  const [rol, setRol] = useState<RolSistema>("proposer");
+  const [rol, setRol] = useState<RolSistema>("GyD");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (open) {
       setPersonaId("");
-      setRol("proposer");
+      setRol("GyD");
       setError(null);
       setLoading(false);
     }

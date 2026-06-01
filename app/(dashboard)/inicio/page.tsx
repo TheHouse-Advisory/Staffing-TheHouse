@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths,
-  format, isSameDay, parseISO,
+  format, isSameDay, parseISO, addDays,
 } from "date-fns";
 import { es } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell, BarChart2 } from "lucide-react";
 import Link from "next/link";
-import { createAnyClient } from "@/lib/supabase/client";
+import { createClient, createAnyClient } from "@/lib/supabase/client";
+import { CARGOS_OCULTOS_GYD } from "@/lib/constants";
+import type { RolSistema } from "@/lib/types/database";
 import { GanttAusencias } from "@/components/inicio/GanttAusencias";
 import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTablero";
 import { DesgloceEngagements, type PanelInfo } from "@/components/inicio/DesgloceEngagements";
@@ -55,9 +57,11 @@ function ocupColor(pct: number) {
 
 
 export default function InicioPage() {
+  const [rol, setRol] = useState<RolSistema | null>(null);
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [ocupacionMap, setOcupacionMap] = useState<Record<string, number>>({});
   const [asignacionesDetalle, setAsignacionesDetalle] = useState<AsigDetalle[]>([]);
+  const [ausenciasActivas, setAusenciasActivas] = useState<{ persona_id: string; fecha_inicio: string; fecha_fin: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [alertasHoy, setAlertasHoy] = useState(0);
 
@@ -104,10 +108,20 @@ export default function InicioPage() {
 
   useEffect(() => {
     async function load() {
+      // Obtener rol del usuario actual
+      const supabase = createClient();
       const sb = createAnyClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      let rolActual: RolSistema | null = null;
+      if (user) {
+        const { data: personaData } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
+        rolActual = (personaData?.rol_sistema as RolSistema) ?? null;
+        setRol(rolActual);
+      }
       const hoy = format(new Date(), "yyyy-MM-dd");
 
-      const [persRes, asigRes, asigDetalleRes] = await Promise.all([
+      const en7dias = format(addDays(new Date(), 7), "yyyy-MM-dd");
+      const [persRes, asigRes, asigDetalleRes, ausRes] = await Promise.all([
         sb.from("persona")
           .select("id, nombre, apellido, iniciales, cargo_actual, is_leverager, fecha_ingreso")
           .eq("activo", true).order("cargo_actual").order("apellido"),
@@ -121,10 +135,15 @@ export default function InicioPage() {
           .eq("estado", "activa")
           .lte("fecha_inicio", hoy)
           .gte("fecha_fin", hoy),
+        sb.from("ausencia")
+          .select("persona_id, fecha_inicio, fecha_fin")
+          .lte("fecha_inicio", en7dias)
+          .gte("fecha_fin", hoy),
       ]);
 
       const pers = (persRes.data ?? []) as Persona[];
-      setPersonas(pers);
+      // GyD no ve personas con ciertos cargos
+      setPersonas(rolActual === "GyD" ? pers.filter((p) => !CARGOS_OCULTOS_GYD.includes(p.cargo_actual ?? "")) : pers);
 
       // Mapa ocupación hoy
       const map: Record<string, number> = {};
@@ -141,6 +160,7 @@ export default function InicioPage() {
           tipo: a.engagement?.tipo ?? "proyecto",
         }))
       );
+      setAusenciasActivas((ausRes.data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string }[]);
 
       // Aniversarios hoy
       const hoyDate = new Date();
@@ -367,6 +387,7 @@ export default function InicioPage() {
           <DisponiblesTablero
             personas={personas}
             asignaciones={asignacionesDetalle}
+            ausencias={ausenciasActivas}
           />
         )}
         </div>{/* fin columna izquierda */}

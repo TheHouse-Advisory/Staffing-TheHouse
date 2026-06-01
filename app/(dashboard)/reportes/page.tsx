@@ -1,9 +1,12 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import { BarChart2, Grid2X2, Layers } from "lucide-react";
 import { ReportCard } from "@/components/reportes/ReportCard";
 import { TalentMatrixPreview } from "@/components/reportes/TalentMatrixPreview";
+import { createClient, createAnyClient } from "@/lib/supabase/client";
+import type { RolSistema } from "@/lib/types/database";
 
-// ── Catálogo de reportes disponibles ────────────────────────────
-// Para agregar un nuevo reporte basta añadir un objeto a este array.
 const REPORTES = [
   {
     id: "matriz-talento",
@@ -13,6 +16,8 @@ const REPORTES = [
     iconColor: "#7c5cbf",
     iconBg: "bg-[#f3f0ff]",
     href: "/reportes/matriz-talento",
+    // GyD no puede ver este reporte
+    allowedRoles: ["admin"] as RolSistema[],
   },
   {
     id: "resumen-proyectos",
@@ -35,21 +40,37 @@ const REPORTES = [
 ];
 
 export default function ReportesPage() {
+  const [rol, setRol] = useState<RolSistema | null>(null);
+
+  useEffect(() => {
+    async function loadRol() {
+      const supabase = createClient();
+      const sb = createAnyClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
+      setRol((data?.rol_sistema as RolSistema) ?? null);
+    }
+    loadRol();
+  }, []);
+
+  const reportesVisibles = REPORTES.filter(
+    (r) => !r.allowedRoles || r.allowedRoles.includes(rol as RolSistema)
+  );
+
   return (
     <div className="flex flex-col h-full overflow-hidden">
-      {/* ── Header ─────────────────────────────────────────── */}
       <header className="h-14 bg-white border-b border-[#e8e8e8] flex items-center px-6 gap-3 flex-shrink-0">
         <BarChart2 className="w-4 h-4 text-[#4a90e2]" />
         <h1 className="text-[16px] font-bold flex-1 text-[#1a1a2e]">Reportes</h1>
         <span className="text-[11px] text-gray-400 font-medium">
-          {REPORTES.length} {REPORTES.length === 1 ? "módulo disponible" : "módulos disponibles"}
+          {reportesVisibles.length} {reportesVisibles.length === 1 ? "módulo disponible" : "módulos disponibles"}
         </span>
       </header>
 
-      {/* ── Grid de reportes ───────────────────────────────── */}
       <div className="flex-1 overflow-y-auto p-6">
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 gap-6 max-w-4xl">
-          {REPORTES.map((r) => (
+          {reportesVisibles.map((r) => (
             <ReportCard
               key={r.id}
               icon={r.icon}

@@ -1,7 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ChevronLeft, ChevronRight, Plus, BarChart2 } from "lucide-react";
+import { createClient, createAnyClient } from "@/lib/supabase/client";
+import type { RolSistema } from "@/lib/types/database";
 import { HeatmapAusencias } from "@/components/ausencias/HeatmapAusencias";
 import { HeatmapAusenciasMes } from "@/components/ausencias/HeatmapAusenciasMes";
 import { HeatmapAusenciasSemana } from "@/components/ausencias/HeatmapAusenciasSemana";
@@ -52,6 +54,20 @@ function formatWeekLabel(d: Date): string {
 // ── Página ─────────────────────────────────────────────────────
 export default function AusenciasPage() {
   const now = new Date();
+  const [rol, setRol] = useState<RolSistema | null>(null);
+  const isReadOnly = rol === "Desarrollo";
+
+  useEffect(() => {
+    (async () => {
+      const supabase = createClient();
+      const sb = createAnyClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
+      setRol((data?.rol_sistema as RolSistema) ?? null);
+    })();
+  }, []);
+
   const [vistaActiva, setVistaActiva] = useState<VistaActiva>("month");
   // year independiente para vista "Año"
   const [yearAnio, setYearAnio] = useState(now.getFullYear());
@@ -153,13 +169,15 @@ export default function AusenciasPage() {
               <BarChart2 className="w-3.5 h-3.5" />
               Resumen vacaciones
             </button>
-            <button
-              onClick={() => setModalOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#333] rounded-lg text-[12px] font-semibold text-white transition-colors"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              Nueva ausencia
-            </button>
+            {!isReadOnly && (
+              <button
+                onClick={() => setModalOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#333] rounded-lg text-[12px] font-semibold text-white transition-colors"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                Nueva ausencia
+              </button>
+            )}
           </div>
         </div>
 
@@ -186,8 +204,9 @@ export default function AusenciasPage() {
             <HeatmapAusencias
               year={year}
               month={month}
-              externalModalOpen={modalOpen}
+              externalModalOpen={isReadOnly ? false : modalOpen}
               onExternalModalClose={() => setModalOpen(false)}
+              readOnly={isReadOnly}
             />
           )}
 
@@ -200,8 +219,9 @@ export default function AusenciasPage() {
           {vistaActiva === "week" && (
             <HeatmapAusenciasSemana
               selectedDate={selectedDate}
-              externalModalOpen={modalOpen}
+              externalModalOpen={isReadOnly ? false : modalOpen}
               onExternalModalClose={() => setModalOpen(false)}
+              readOnly={isReadOnly}
             />
           )}
 
