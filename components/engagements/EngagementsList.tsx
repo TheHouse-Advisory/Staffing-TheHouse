@@ -41,7 +41,7 @@ interface EngExtra {
 const SECCIONES_DEF = [
   { tipo: "proyecto",      titulo: "Proyectos",              color: "#4a90e2", msgVacio: "No hay proyectos que coincidan con la búsqueda." },
   { tipo: "propuesta",     titulo: "Propuestas comerciales", color: "#9b59b6", msgVacio: "No hay propuestas que coincidan con la búsqueda." },
-  { tipo: "ayuda_interna", titulo: "Ayuda interna",          color: "#27ae60", msgVacio: "No hay elementos de ayuda interna que coincidan." },
+  { tipo: "ayuda_interna", titulo: "Desarrollo interno",          color: "#27ae60", msgVacio: "No hay elementos de desarrollo interno que coincidan." },
 ] as const;
 
 const COLS_TABLA = ["Código","Proyecto","Cliente","Industria","Temáticas","Participantes","Capacidades","Inicio","Término","Descripción"] as const;

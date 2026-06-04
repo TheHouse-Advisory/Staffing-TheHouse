@@ -266,11 +266,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
             onChange={(e) => set("email")(e.target.value)}
             placeholder="mgonzalez@thehouse.cl"
             error={!!errors.email}
-            disabled={!!persona} // No editar email (vinculado a Auth)
           />
-          {persona && (
-            <p className="text-xs text-[#888]">El email no se puede cambiar (vinculado a la cuenta de acceso).</p>
-          )}
         </FieldWrapper>
 
         <FieldWrapper label="Cargo" required error={errors.cargo_actual}>

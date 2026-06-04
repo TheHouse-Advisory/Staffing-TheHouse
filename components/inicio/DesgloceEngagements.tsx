@@ -6,13 +6,14 @@ import {
   subWeeks, subMonths, format, startOfMonth, endOfMonth,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, ChevronDown, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2, GripVertical, RotateCcw, Diamond, Plane, BarChart2, Search } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2, GripVertical, RotateCcw, Diamond, Plane, BarChart2, Search, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
 import { ColaboradorModal } from "@/components/engagements/ColaboradorModal";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import type { Engagement } from "@/lib/types/database";
+import { COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 
 // ── Cargos Asociado y Consultor Senior son la misma categoría visual ──
 const GRUPO_SENIOR = ["Asociado", "Consultor Senior", "Asociado / Consultor Senior"];
@@ -147,6 +148,23 @@ interface Props {
   openEngagementId?: string;
   /** Solo lectura: deshabilita drag&drop, edición y apertura de modales */
   readOnly?: boolean;
+  /**
+   * Modo simulación: habilita interacciones pero redirige TODAS las mutaciones
+   * al estado local (engs) sin tocar Supabase. Úsalo en la vista de Planificación.
+   */
+  simulationMode?: boolean;
+  /** Datos iniciales pre-cargados (snapshot). Solo se usa cuando simulationMode=true. */
+  initialEngs?: EngRow[];
+  /** Callback para inyectar una asignación simulada desde un panel externo (ej: PanelFitAsignacion) */
+  onSimPersonaAsignada?: (handler: (payload: SimAsigPayload) => void) => void;
+  /** Llamado cada vez que `engs` cambia en simulationMode → permite al padre capturar el estado */
+  onSimEngsChange?: (engs: EngRow[]) => void;
+}
+
+export interface SimAsigPayload {
+  engagementId: string; reqId: string; personaId: string;
+  nombre: string; apellido: string; cargo: string;
+  pct: number; fechaInicio: string; fechaFin: string;
 }
 
 // ── Tipo para el undo stack (fuera del componente para evitar re-declaraciones) ──
@@ -157,18 +175,51 @@ type UndoEntry =
   | { type: "resize_eng";  engId: string; label: string; field: string; prevDate: string }
   | { type: "move_eng";    engId: string; label: string; prevInicio: string; prevFin: string; finField: string };
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false }: Props) {
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
   const [baseInterna, setBaseInterna] = useState<Date>(new Date());
 
   // Si vienen props externas las usamos; si no, usamos estado interno
   const vista = vistaExterna ?? vistaInterna;
   const base = baseExterna ?? baseInterna;
-  const [engs, setEngs] = useState<EngRow[]>([]);
-  const [ausencias, setAusencias] = useState<{ persona_id: string; fecha_inicio: string; fecha_fin: string }[]>([]);
+  const [engs, setEngs] = useState<EngRow[]>(() =>
+    simulationMode && initialEngs ? structuredClone(initialEngs) : []
+  );
+  const [ausencias, setAusencias] = useState<{ persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string }[]>([]);
   const [loading, setLoading] = useState(true);
   const [reloadKey, setReloadKey] = useState(0);
   const [searchTerm, setSearchTerm] = useState("");
+
+  // Notifica al padre cuando engs cambia en simulación (para persistencia del snapshot)
+  useEffect(() => {
+    if (simulationMode && onSimEngsChange && engs.length > 0) {
+      onSimEngsChange(engs);
+    }
+  }, [engs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Registrar handler para inyección de asignaciones simuladas desde panel externo
+  useEffect(() => {
+    if (!simulationMode || !onSimPersonaAsignada) return;
+    onSimPersonaAsignada((payload) => {
+      const simId = `sim_panel_${Date.now()}`;
+      const nuevaPersona: PersonaAsig = {
+        asignacionId: simId,
+        id: payload.personaId,
+        nombre: payload.nombre,
+        apellido: payload.apellido,
+        iniciales: null,
+        cargo: payload.cargo,
+        pct: payload.pct,
+        fecha_inicio: payload.fechaInicio,
+        fecha_fin: payload.fechaFin,
+        estado_staffing: "CONFIRMADO",
+        requerimiento_id: payload.reqId || null,
+      };
+      setEngs((prev) => prev.map((eg) =>
+        eg.id !== payload.engagementId ? eg : { ...eg, personas: [...eg.personas, nuevaPersona] }
+      ));
+    });
+  }, [simulationMode, onSimPersonaAsignada]);
 
   // Form crear/editar engagement
   const [formOpen, setFormOpen] = useState(false);
@@ -198,6 +249,71 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     if (!undoStack.length || undoing) return;
     const last = undoStack[undoStack.length - 1];
     setUndoing(true);
+
+    // ── SIMULACIÓN: revertir en estado local sin tocar Supabase ─────────
+    if (simulationMode) {
+      if (last.type === "staffear") {
+        // Eliminar las asignaciones creadas localmente
+        setEngs((prev) => prev.map((eg) =>
+          eg.id !== last.engId ? eg : {
+            ...eg,
+            personas: eg.personas.filter((p) => !last.ids.includes(p.asignacionId)),
+          }
+        ));
+      } else if (last.type === "desasignar") {
+        // Re-insertar persona eliminada en el engagement
+        const a = last.asig as any;
+        const personaRestaurada: PersonaAsig = {
+          asignacionId: a.id ?? `sim_undo_${Date.now()}`,
+          id: a.persona_id,
+          nombre: a.nombre ?? "",
+          apellido: a.apellido ?? "",
+          iniciales: null,
+          cargo: a.cargo_al_momento ?? "",
+          pct: a.pct_dedicacion ?? 100,
+          fecha_inicio: a.fecha_inicio,
+          fecha_fin: a.fecha_fin,
+          estado_staffing: a.estado_staffing ?? "CONFIRMADO",
+          requerimiento_id: a.requerimiento_id ?? null,
+        };
+        setEngs((prev) => prev.map((eg) =>
+          eg.id !== last.engId ? eg : { ...eg, personas: [...eg.personas, personaRestaurada] }
+        ));
+      } else if (last.type === "resize") {
+        // Restaurar fecha de barra de persona
+        const campo = last.edge === "start" ? "fecha_inicio" : "fecha_fin";
+        setEngs((prev) => prev.map((eg) => ({
+          ...eg,
+          personas: eg.personas.map((p) =>
+            p.asignacionId !== last.asignacionId ? p : { ...p, [campo]: last.prevDate }
+          ),
+        })));
+      } else if (last.type === "resize_eng") {
+        // Restaurar fecha del engagement
+        setEngs((prev) => prev.map((eg) =>
+          eg.id !== last.engId ? eg : {
+            ...eg,
+            fecha_inicio: last.field === "fecha_inicio" ? last.prevDate : eg.fecha_inicio,
+            fecha_fin:    last.field !== "fecha_inicio"  ? last.prevDate : eg.fecha_fin,
+            raw: { ...(eg.raw as any), [last.field]: last.prevDate },
+          }
+        ));
+      } else if (last.type === "move_eng") {
+        setEngs((prev) => prev.map((eg) =>
+          eg.id !== last.engId ? eg : {
+            ...eg,
+            fecha_inicio: last.prevInicio,
+            fecha_fin: last.prevFin,
+            raw: { ...(eg.raw as any), fecha_inicio: last.prevInicio, [last.finField]: last.prevFin },
+          }
+        ));
+      }
+      setUndoStack(s => s.slice(0, -1));
+      setUndoing(false);
+      return;
+    }
+    // ────────────────────────────────────────────────────────────────────
+
     const sb = createAnyClient();
     if (last.type === "staffear") {
       // Eliminar las asignaciones creadas
@@ -248,6 +364,20 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
   async function confirmarPlan(p: PersonaAsig, engId?: string) {
     setConfirmando(p.asignacionId);
+    // ── SIMULACIÓN: sólo actualiza estado local ──────────────────────────
+    if (simulationMode) {
+      setEngs((prev) => prev.map((eg) =>
+        eg.id !== engId ? eg : {
+          ...eg,
+          personas: eg.personas.map((pa) =>
+            pa.asignacionId !== p.asignacionId ? pa : { ...pa, estado_staffing: "CONFIRMADO" }
+          ),
+        }
+      ));
+      setConfirmando(null);
+      return;
+    }
+    // ────────────────────────────────────────────────────────────────────
     const sb = createAnyClient();
     await sb.from("asignacion")
       .update({ estado_staffing: "CONFIRMADO" })
@@ -324,6 +454,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     const withOrder = next.map((e, i) => ({ ...e, sort_order: i + 1 }));
     setEngs(withOrder);
 
+    // ── SIMULACIÓN: reorder ya aplicado optimísticamente, no persiste ───
+    if (simulationMode) return;
+    // ────────────────────────────────────────────────────────────────────
     // Persistir en Supabase (batch silencioso en segundo plano)
     const sb = createAnyClient();
     await Promise.all(
@@ -338,10 +471,23 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     setEditFechas({ inicio: req.fecha_inicio, fin: req.fecha_fin });
     setEditReqModal({ req, engId: eng.id });
   }
-  // Guarda fechas editadas en Supabase (actualiza todos los reqs del mismo cargo)
+  // Guarda fechas editadas — en simulación solo actualiza engs local
   async function saveEditReq() {
     if (!editReqModal) return;
     setReqLoading(true);
+    if (simulationMode) {
+      setEngs((prev) => prev.map((eg) =>
+        eg.id !== editReqModal.engId ? eg : {
+          ...eg,
+          reqs: eg.reqs.map((r) =>
+            r.id !== editReqModal.req.id ? r : { ...r, fecha_inicio: editFechas.inicio, fecha_fin: editFechas.fin }
+          ),
+        }
+      ));
+      setReqLoading(false);
+      setEditReqModal(null);
+      return;
+    }
     const sb = createAnyClient();
     await sb.from("requerimiento_engagement")
       .update({ fecha_inicio: editFechas.inicio, fecha_fin: editFechas.fin })
@@ -356,14 +502,27 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     if (reqs.length === 0) return;
     setDeleteReqModal({ reqs, engId: eng.id, cargo });
   }
-  // Elimina reqs + sus asignaciones en cascada
+  // Elimina reqs + sus asignaciones — en simulación solo limpia estado local
   async function confirmDeleteReq() {
     if (!deleteReqModal) return;
     setReqLoading(true);
+    const ids = new Set(deleteReqModal.reqs.map((r) => r.id));
+    if (simulationMode) {
+      setEngs((prev) => prev.map((eg) =>
+        eg.id !== deleteReqModal.engId ? eg : {
+          ...eg,
+          reqs: eg.reqs.filter((r) => !ids.has(r.id)),
+          personas: eg.personas.filter((p) => !p.requerimiento_id || !ids.has(p.requerimiento_id)),
+        }
+      ));
+      setReqLoading(false);
+      setDeleteReqModal(null);
+      return;
+    }
     const sb = createAnyClient();
-    const ids = deleteReqModal.reqs.map((r) => r.id);
-    await sb.from("asignacion").delete().in("requerimiento_id", ids);
-    await sb.from("requerimiento_engagement").delete().in("id", ids);
+    const idsArr = [...ids];
+    await sb.from("asignacion").delete().in("requerimiento_id", idsArr);
+    await sb.from("requerimiento_engagement").delete().in("id", idsArr);
     setReqLoading(false);
     setDeleteReqModal(null);
     refresh(deleteReqModal.engId);
@@ -395,6 +554,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const lookbackStr = format(addDays(columnas[0].inicio, -90), "yyyy-MM-dd");
 
   useEffect(() => {
+    // ── SIMULACIÓN: no re-fetch; el snapshot inicial ya se cargó al crear el escenario ──
+    if (simulationMode) { setLoading(false); return; }
+    // ─────────────────────────────────────────────────────────────────────────────────────
     async function load() {
       setLoading(true);
       const sb = createAnyClient();
@@ -431,7 +593,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           .gte("fecha_fin", lookbackStr),
 
         sb.from("ausencia")
-          .select("persona_id, fecha_inicio, fecha_fin")
+          .select("persona_id, fecha_inicio, fecha_fin, tipo")
           .lte("fecha_inicio", finStr)
           .gte("fecha_fin", inicioStr),
       ]);
@@ -528,7 +690,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         if (b.sort_order !== null) return 1;
         return a.nombre.localeCompare(b.nombre, "es");
       }));
-      setAusencias((ausRes.data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string }[]);
+      setAusencias((ausRes.data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string }[]);
       setLoading(false);
     }
     load();
@@ -566,6 +728,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   }
 
   function refresh(focusId?: string) {
+    // ── SIMULACIÓN: no re-fetch desde Supabase, preserva estado local ────
+    if (simulationMode) return;
+    // ─────────────────────────────────────────────────────────────────────
     if (focusId) focusEngIdRef.current = focusId;
     setReloadKey((k) => k + 1);
     onAsignacionChange?.();
@@ -587,6 +752,30 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     let data: { personaId: string; nombre: string; apellido: string; cargo_actual: string } | null = null;
     try { data = JSON.parse(e.dataTransfer.getData("persona")); } catch { return; }
     if (!data?.personaId) return;
+
+    // ── SIMULACIÓN: inserción local directa en el engagement ─────────────
+    if (simulationMode) {
+      const simId = `sim_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const nuevaPersona: PersonaAsig = {
+        asignacionId: simId,
+        id: data.personaId,
+        nombre: data.nombre,
+        apellido: data.apellido,
+        iniciales: null,
+        cargo: data.cargo_actual ?? "",
+        pct: 100,
+        fecha_inicio: eng.fecha_inicio,
+        fecha_fin: eng.fecha_fin ?? eng.fecha_inicio,
+        estado_staffing: "PLAN",
+        requerimiento_id: null,
+      };
+      setEngs((prev) => prev.map((eg) =>
+        eg.id !== eng.id ? eg : { ...eg, personas: [...eg.personas, nuevaPersona] }
+      ));
+      showToast(`✅ [Simulación] ${data.nombre} ${data.apellido} añadido a ${eng.nombre}`);
+      return;
+    }
+    // ────────────────────────────────────────────────────────────────────
 
     const sb = createAnyClient();
     const cargoRequerido = data.cargo_actual || null;
@@ -733,6 +922,31 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     };
 
     const createdIdsReq: string[] = [];
+
+    // ── SIMULACIÓN: inserción en estado local, sin Supabase ──────────────
+    if (simulationMode) {
+      const simId = `sim_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+      const nuevaPersona: PersonaAsig = {
+        asignacionId: simId,
+        id: data.personaId,
+        nombre: data.nombre,
+        apellido: data.apellido,
+        iniciales: null,
+        cargo: data.cargo_actual ?? "",
+        pct: req.pct_dedicacion ?? 100,
+        fecha_inicio: req.fecha_inicio,
+        fecha_fin: req.fecha_fin ?? req.fecha_inicio,
+        estado_staffing: forcePlan ? "PLAN" : "CONFIRMADO",
+        requerimiento_id: req.id,
+      };
+      setEngs((prev) => prev.map((eg) =>
+        eg.id !== eng.id ? eg : { ...eg, personas: [...eg.personas, nuevaPersona] }
+      ));
+      showToast(`✅ [Simulación] ${nombre} asignado a ${eng.nombre}`);
+      return;
+    }
+    // ────────────────────────────────────────────────────────────────────
+
     if (!ausPersona || ausPersona.length === 0) {
       // Sin ausencias: inserción normal
       const { data: ins } = await sb.from("asignacion").insert({
@@ -853,6 +1067,28 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   // Eliminar asignación (botón X en avatar)
   async function handleDesasignar(asignacionId: string, engId?: string) {
     setDesasignando(asignacionId);
+
+    // ── SIMULACIÓN: eliminar del estado local únicamente ─────────────────
+    if (simulationMode) {
+      // Buscar datos de la persona en engs para poder revertir con undo
+      let personaData: any = null;
+      for (const eg of engs) {
+        const p = eg.personas.find((p) => p.asignacionId === asignacionId);
+        if (p) { personaData = { ...p, id: asignacionId, persona_id: p.id, engagement_id: eg.id, cargo_al_momento: p.cargo, pct_dedicacion: p.pct }; break; }
+      }
+      setEngs((prev) => prev.map((eg) =>
+        engId && eg.id !== engId ? eg : {
+          ...eg,
+          personas: eg.personas.filter((p) => p.asignacionId !== asignacionId),
+        }
+      ));
+      if (personaData) pushUndo({ type: "desasignar", engId: engId ?? personaData.engagement_id, label: "Desasignación", asig: personaData });
+      setDesasignando(null);
+      showToast("🗑️ [Simulación] Persona removida del escenario");
+      return;
+    }
+    // ────────────────────────────────────────────────────────────────────
+
     const sb = createAnyClient();
     // Guardar datos antes de eliminar para permitir undo
     const { data: asigData } = await sb
@@ -870,6 +1106,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
   // Mover engagement a papelera
   async function moverAPapelera(id: string) {
+    // ── SIMULACIÓN: quitar engagement del estado local ───────────────────
+    if (simulationMode) {
+      setEngs((prev) => prev.filter((eg) => eg.id !== id));
+      setConfirmPapeleraDesg(null);
+      return;
+    }
+    // ────────────────────────────────────────────────────────────────────
     const sb2 = createAnyClient();
     await sb2.from("engagement").update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq("id", id);
     setConfirmPapeleraDesg(null);
@@ -962,18 +1205,26 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
             const prevFin: string = (eng.raw as any)[finField] ?? eng.fecha_fin;
             const newInicio = format(addDays(new Date(eng.fecha_inicio + "T00:00:00"), deltaDays), "yyyy-MM-dd");
             const newFin    = format(addDays(new Date(prevFin        + "T00:00:00"), deltaDays), "yyyy-MM-dd");
-            await (sb as any).from("engagement")
-              .update({ fecha_inicio: newInicio, [finField]: newFin })
-              .eq("id", eng.id);
             setUndoStack(s => [...s.slice(-2), {
               type: "move_eng" as const,
-              engId:     eng.id,
-              label:     `Mover "${eng.nombre}"`,
-              prevInicio: eng.fecha_inicio,
-              prevFin,
-              finField,
+              engId: eng.id, label: `Mover "${eng.nombre}"`,
+              prevInicio: eng.fecha_inicio, prevFin, finField,
             }]);
-            refresh(eng.id);
+            // ── SIMULACIÓN: actualiza estado local ───────────────────────
+            if (simulationMode) {
+              setEngs((prev) => prev.map((eg) =>
+                eg.id !== eng.id ? eg : {
+                  ...eg, fecha_inicio: newInicio, fecha_fin: newFin,
+                  raw: { ...(eg.raw as any), fecha_inicio: newInicio, [finField]: newFin },
+                }
+              ));
+            } else {
+              await (sb as any).from("engagement")
+                .update({ fecha_inicio: newInicio, [finField]: newFin })
+                .eq("id", eng.id);
+              refresh(eng.id);
+            }
+            // ─────────────────────────────────────────────────────────────
           }
         }
       }
@@ -1002,17 +1253,31 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           ? "fecha_inicio"
           : ((resizingEng.eng.raw as any).fecha_fin_real ? "fecha_fin_real" : "fecha_fin_estimada");
         const prevDate: string = (resizingEng.eng.raw as any)[field] ?? "";
-        await (sb as any).from("engagement").update({ [field]: newDate }).eq("id", resizingEng.eng.id);
-        if (prevDate) {
-          setUndoStack(s => [...s.slice(-2), {
-            type: "resize_eng" as const,
-            engId: resizingEng.eng.id,
-            label: `Cambio fechas "${resizingEng.eng.nombre}"`,
-            field,
-            prevDate,
-          }]);
+
+        // ── SIMULACIÓN: actualiza estado local del engagement ────────────
+        if (simulationMode) {
+          setEngs((prev) => prev.map((eg) =>
+            eg.id !== resizingEng.eng.id ? eg : {
+              ...eg,
+              fecha_inicio: field === "fecha_inicio" ? newDate : eg.fecha_inicio,
+              fecha_fin:    field !== "fecha_inicio"  ? newDate : eg.fecha_fin,
+              raw: { ...(eg.raw as any), [field]: newDate },
+            }
+          ));
+        } else {
+          await (sb as any).from("engagement").update({ [field]: newDate }).eq("id", resizingEng.eng.id);
+          if (prevDate) {
+            setUndoStack(s => [...s.slice(-2), {
+              type: "resize_eng" as const,
+              engId: resizingEng.eng.id,
+              label: `Cambio fechas "${resizingEng.eng.nombre}"`,
+              field,
+              prevDate,
+            }]);
+          }
+          refresh(resizingEng.eng.id);
         }
-        refresh(resizingEng.eng.id);
+        // ────────────────────────────────────────────────────────────────
       }
       resizingEngActiveRef.current = false;
       setResizingEng(null);
@@ -1033,6 +1298,17 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         const newDate = resizing.edge === "start"
           ? format(col.inicio, "yyyy-MM-dd")
           : format(col.fin, "yyyy-MM-dd");
+        // ── SIMULACIÓN: actualiza fechas de persona en estado local ─────
+        if (simulationMode) {
+          const campo = resizing.edge === "start" ? "fecha_inicio" : "fecha_fin";
+          setEngs((prev) => prev.map((eg) => ({
+            ...eg,
+            personas: eg.personas.map((p) =>
+              p.asignacionId !== resizing.p.asignacionId ? p : { ...p, [campo]: newDate }
+            ),
+          })));
+        } else {
+        // ────────────────────────────────────────────────────────────────
         const sb = createAnyClient();
         // Guardar fecha original para undo antes de actualizar
         const { data: oldAsig, error: fetchErr } = await sb.from("asignacion")
@@ -1058,6 +1334,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           }]);
         }
         refresh();
+        } // fin else simulationMode
       }
       setResizing(null);
       setResizeHoverIdx(null);
@@ -1094,6 +1371,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       return next;
     });
     setQuickEdit(null);
+    // ── SIMULACIÓN: el update optimista ya se aplicó arriba, no persiste en DB ─
+    if (simulationMode) return;
+    // ─────────────────────────────────────────────────────────────────────────
     // Persiste en DB: reemplaza cualquier registro previo para ese engagement+fecha
     const sb2 = createAnyClient();
     const { error: delErr } = await sb2.from("dia_critico").delete().eq("engagement_id", engId).eq("fecha", fecha);
@@ -1231,7 +1511,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               {[
                 { tipo: "proyecto",      label: "Proyectos",              color: "#4a90e2" },
                 { tipo: "propuesta",     label: "Propuestas comerciales", color: "#9b59b6" },
-                { tipo: "ayuda_interna", label: "Ayuda interna",          color: "#27ae60" },
+                { tipo: "ayuda_interna", label: "Desarrollo interno",          color: "#27ae60" },
               ].flatMap(({ tipo, label, color: secColor }) => {
                 const q = searchTerm.toLowerCase().trim();
                 const lista = engs.filter((e) => {
@@ -1675,6 +1955,11 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               // Verifica TODOS los segmentos: barra visible si cualquier segmento solapa la columna
                               const isActive = (segsPersona.get(p.id) ?? [p]).some((s) => rangoSolapan(s.fecha_inicio, s.fecha_fin, col.inicio, col.fin));
                               const { isFirst, isLast } = barEdge(p, i);
+                              // Ausencia activa de esta persona en esta columna
+                              const tieneAusenciaConf = ausencias.some((a) => a.persona_id === p.id && rangoSolapan(a.fecha_inicio, a.fecha_fin, col.inicio, col.fin));
+                              const barBgConf = tieneAusenciaConf
+                                ? `repeating-linear-gradient(45deg, ${cargoColor}99 0px, ${cargoColor}99 4px, ${cargoColor}22 4px, ${cargoColor}22 8px)`
+                                : cargoColor;
                               return (
                                 <td key={i} className="px-0.5 py-0 relative"
                                   style={{ height: ROW_H, borderTop: btop, borderBottom: borderBtmRow }}
@@ -1682,7 +1967,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                   {isActive && (
                                     <>
                                       <div className="relative group/bar h-1.5 w-full cursor-pointer overflow-visible"
-                                        style={{ backgroundColor: cargoColor, opacity: desasignando === p.asignacionId ? 0.3 : esHoy ? 1 : 0.85, borderRadius: 4, marginTop: 7 }}
+                                        style={{ background: barBgConf, opacity: desasignando === p.asignacionId ? 0.3 : tieneAusenciaConf ? 0.55 : esHoy ? 1 : 0.85, borderRadius: 4, marginTop: 7 }}
                                         onClick={(e) => handleAvatarClick(e, p, eng)}
                                         title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
                                         {!readOnly && <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
@@ -1695,10 +1980,21 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                         {!readOnly && isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r hover:bg-white/30 transition-colors" />}
                                       </div>
                                       {isFirst && (
-                                        <div className="absolute flex items-center justify-center rounded-full text-white font-bold select-none cursor-pointer z-20 shadow-sm"
-                                          style={{ width: 14, height: 14, fontSize: 7, backgroundColor: cargoColor, border: "1.5px solid white", top: "50%", left: 18, transform: "translateY(-50%)", pointerEvents: "none" }}
-                                          title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
-                                          {iniciales(p.nombre, p.apellido, p.iniciales)}
+                                        <div className="absolute flex items-center gap-0.5 z-20" style={{ top: "50%", left: 18, transform: "translateY(-50%)", pointerEvents: "none" }}>
+                                          <div className="flex items-center justify-center rounded-full text-white font-bold select-none cursor-pointer shadow-sm"
+                                            style={{ width: 14, height: 14, fontSize: 7, backgroundColor: cargoColor, border: "1.5px solid white" }}
+                                            title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
+                                            {iniciales(p.nombre, p.apellido, p.iniciales)}
+                                          </div>
+                                          {/* Ícono ausencia */}
+                                          {tieneAusenciaConf && (
+                                            <div className="group/tip relative" style={{ pointerEvents: "auto" }}>
+                                              <AlertTriangle className="w-2.5 h-2.5 text-amber-500" />
+                                              <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-slate-900 text-white text-[10px] rounded px-2 py-1 whitespace-nowrap z-[9999] opacity-0 group-hover/tip:opacity-100 transition-opacity shadow-lg">
+                                                Personal con Ausencia en este periodo
+                                              </div>
+                                            </div>
+                                          )}
                                         </div>
                                       )}
                                     </>
@@ -1710,6 +2006,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                             // ── PLAN ───────────────────────────────────────────────────
                             const isActive = (segsPersona.get(p.id) ?? [p]).some((s) => rangoSolapan(s.fecha_inicio, s.fecha_fin, col.inicio, col.fin));
                             const { isFirst, isLast } = barEdge(p, i);
+                            // Ausencia activa en esta columna
+                            const tieneAusenciaPlan = ausencias.some((a) => a.persona_id === p.id && rangoSolapan(a.fecha_inicio, a.fecha_fin, col.inicio, col.fin));
+                            // Ausencia en propuesto: franjas densas alto contraste (cargoColor sólido + amarillo alerta)
+                            const barBgPlan = tieneAusenciaPlan
+                              ? `repeating-linear-gradient(45deg, ${cargoColor} 0px, ${cargoColor} 5px, rgba(251,191,36,1) 5px, rgba(251,191,36,1) 10px)`
+                              : `${cargoColor}55`;
                             const isResizeHover = resizing?.p.asignacionId === p.asignacionId && resizeHoverIdx === i;
                             const reqsEnCol     = eng.reqs.filter((r) =>
                               matchesCargo(r.cargo_requerido, cargo) &&
@@ -1725,7 +2027,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 {isActive && (
                                   <>
                                     <div className="relative group/bar overflow-visible cursor-pointer"
-                                      style={{ height: 5, marginTop: 7, backgroundColor: `${cargoColor}55`, border: `1.5px dashed ${cargoColor}`, borderRadius: 4, opacity: desasignando === p.asignacionId ? 0.2 : 1 }}
+                                      style={{ height: 5, marginTop: 7, background: barBgPlan, border: `1.5px dashed ${cargoColor}`, borderRadius: 4, opacity: desasignando === p.asignacionId ? 0.2 : tieneAusenciaPlan ? 0.55 : 1 }}
                                       title={`PLAN · ${p.nombre} ${p.apellido} · ${p.pct}%`}
                                       onClick={(e) => handleAvatarClick(e, p, eng)}>
                                       {!readOnly && <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
@@ -1751,6 +2053,15 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                           title={`PLAN · ${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
                                           {iniciales(p.nombre, p.apellido, p.iniciales)}
                                         </div>
+                                        {/* Ícono ausencia */}
+                                        {tieneAusenciaPlan && (
+                                          <div className="group/tip relative" style={{ pointerEvents: "auto" }}>
+                                            <AlertTriangle className="w-2.5 h-2.5 text-amber-500" />
+                                            <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-slate-900 text-white text-[10px] rounded px-2 py-1 whitespace-nowrap z-[9999] opacity-0 group-hover/tip:opacity-100 transition-opacity shadow-lg">
+                                              Personal con Ausencia en este periodo
+                                            </div>
+                                          </div>
+                                        )}
                                       </div>
                                     )}
                                   </>
@@ -1780,24 +2091,27 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                           rangoSolapan(a.fecha_inicio, a.fecha_fin, col.inicio, col.fin)
                         );
                         const vistos = new Set<string>();
-                        const ausUnicos = ausentesEnCol.reduce<PersonaAsig[]>((acc, a) => {
+                        const ausUnicos = ausentesEnCol.reduce<{ p: PersonaAsig; tipo: string }[]>((acc, a) => {
                           if (vistos.has(a.persona_id)) return acc;
                           vistos.add(a.persona_id);
                           const p = personasUnicas.find((pe) => pe.id === a.persona_id);
-                          if (p) acc.push(p);
+                          if (p) acc.push({ p, tipo: a.tipo ?? "otro" });
                           return acc;
                         }, []);
                         return (
                           <td key={i} className="pt-1 pb-0.5 px-1">
                             {/* Sin min-h: colapsa a 0 si no hay ausentes en esta columna */}
                             <div className="flex flex-wrap gap-0.5 justify-center items-center">
-                              {ausUnicos.map((p) => (
-                                <div key={p.id} title={`${p.nombre} ${p.apellido} — ausente`}
+                              {ausUnicos.map(({ p, tipo }) => {
+                                const cfg = COLOR_AUSENCIA[tipo as keyof typeof COLOR_AUSENCIA] ?? { bg: "#9ca3af", text: "#fff", label: "Ausencia" };
+                                return (
+                                <div key={p.id} title={`${p.nombre} ${p.apellido} — ${cfg.label}`}
                                   className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold"
-                                  style={{ background: "#fed7aa", color: "#c2410c" }}>
+                                  style={{ background: cfg.bg, color: cfg.text }}>
                                   {iniciales(p.nombre, p.apellido, p.iniciales)}
                                 </div>
-                              ))}
+                                );
+                              })}
                             </div>
                           </td>
                         );
@@ -1881,7 +2195,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                         background: engModal.tipo === "proyecto" ? "#eaf4ff" : engModal.tipo === "propuesta" ? "#f5f0ff" : "#f0fdf4",
                         color:      engModal.tipo === "proyecto" ? "#1a5276"  : engModal.tipo === "propuesta" ? "#6b21a8"  : "#15803d",
                       }}>
-                      {engModal.tipo === "proyecto" ? "Proyecto" : engModal.tipo === "propuesta" ? "Propuesta" : "Ayuda interna"}
+                      {engModal.tipo === "proyecto" ? "Proyecto" : engModal.tipo === "propuesta" ? "Propuesta" : "Desarrollo interno"}
                     </span>
                   </div>
                   <h3 className="font-bold text-[#1a1a2e] text-sm leading-tight">{engModal.codigo ? `${engModal.codigo}: ${engModal.nombre}` : engModal.nombre}</h3>

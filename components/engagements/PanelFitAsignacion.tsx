@@ -342,10 +342,14 @@ interface Props {
   onClose: () => void;
   onAsignado: () => void;
   onCollapse?: () => void;
+  /** Simulación: skip Supabase insert, llama onSimAsignar con los datos */
+  simulationMode?: boolean;
+  onSimAsignar?: (payload: { engagementId: string; reqId: string; personaId: string; nombre: string; apellido: string; cargo: string; pct: number; fechaInicio: string; fechaFin: string }) => void;
 }
 
 export function PanelFitAsignacion({
   reqId, engagementId, engagementNombre, engagementCliente, onClose, onAsignado, onCollapse,
+  simulationMode = false, onSimAsignar,
 }: Props) {
   const [req, setReq] = useState<ReqConEstado | null>(null);
   const [personas, setPersonas] = useState<PersonaFit[]>([]);
@@ -510,8 +514,27 @@ export function PanelFitAsignacion({
     if (!req || asignando) return;
     setAsignando(p.persona_id);
     setErr(null);
-    const sb = createAnyClient();
 
+    // ── SIMULACIÓN: sin escritura en Supabase ─────────────────────────
+    if (simulationMode) {
+      onSimAsignar?.({
+        engagementId, reqId,
+        personaId: p.persona_id,
+        nombre: p.nombre,
+        apellido: p.apellido,
+        cargo: p.cargo_actual ?? "",
+        pct: req.pct_dedicacion ?? 100,
+        fechaInicio: req.fecha_inicio,
+        fechaFin: req.fecha_fin,
+      });
+      setExito(`[Simulación] ${p.nombre} ${p.apellido} añadido al escenario.`);
+      setAsignando(null);
+      setTimeout(() => { onAsignado(); onClose(); }, 900);
+      return;
+    }
+    // ─────────────────────────────────────────────────────────────────
+
+    const sb = createAnyClient();
     const { error } = await (sb as any).from("asignacion").insert({
       engagement_id: engagementId,
       requerimiento_id: reqId,

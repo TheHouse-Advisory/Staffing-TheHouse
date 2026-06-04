@@ -753,7 +753,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
               options={[
                 { value: "propuesta", label: "Propuesta comercial" },
                 { value: "proyecto", label: "Proyecto" },
-                { value: "ayuda_interna", label: "Ayuda interna" },
+                { value: "ayuda_interna", label: "Desarrollo interno" },
               ]} />
           </FieldWrapper>
           <FieldWrapper label="Estado">

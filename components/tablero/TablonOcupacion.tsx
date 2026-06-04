@@ -856,7 +856,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
               {[
                 { tipo: "proyecto",      label: "Proyectos",              color: "#4a90e2" },
                 { tipo: "propuesta",     label: "Propuestas comerciales", color: "#9b59b6" },
-                { tipo: "ayuda_interna", label: "Ayuda interna",          color: "#27ae60" },
+                { tipo: "ayuda_interna", label: "Desarrollo interno",          color: "#27ae60" },
               ].flatMap(({ tipo, label, color: secColor }) => {
                 const q = searchTerm.toLowerCase().trim();
                 const lista = filasProyecto.filter((f) => {

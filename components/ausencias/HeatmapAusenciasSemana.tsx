@@ -16,17 +16,7 @@ import {
   type PersonaConSeniority,
 } from "@/lib/queries/ausencias";
 import type { TipoAusencia } from "@/lib/types/database";
-
-// ── Constants ──────────────────────────────────────────────────
-const TIPOS_AUSENCIA: { value: TipoAusencia; label: string }[] = [
-  { value: "vacaciones_confirmadas",   label: "Vacaciones confirmadas"   },
-  { value: "vacaciones_por_confirmar", label: "Vacaciones por confirmar" },
-  { value: "permiso_sin_goce",         label: "Permiso sin goce"         },
-  { value: "dia_post_proyecto",        label: "Día post proyecto"        },
-  { value: "dia_beneficio",            label: "Día beneficio"            },
-  { value: "dia_administrativo",       label: "Día administrativo"       },
-  { value: "otro",                     label: "Otro"                     },
-];
+import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
 
 const MESES_CORTO = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const DOW_LETRA   = ["L","M","X","J","V"];
@@ -70,9 +60,11 @@ interface TooltipProps {
   anchorRect: DOMRect;
   readOnly?: boolean;
 }
-function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar, onCerrar, anchorRect, readOnly = false }: TooltipProps) {
+function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar, onCerrar, anchorRect, readOnly = false, tiposDinamicos = [] }: TooltipProps & { tiposDinamicos?: { id: string; label: string; color_bg: string; color_text: string }[] }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
-  const cfg = COLOR_AUSENCIA[celda.tipo];
+  const din = tiposDinamicos.find((t) => t.id === celda.tipo);
+  const est = COLOR_AUSENCIA[celda.tipo as TipoAusencia];
+  const cfg = din ? { bg: din.color_bg, text: din.color_text, label: din.label } : est ?? { bg: "#9ca3af", text: "#fff", label: celda.tipo };
   const labelFecha = new Date(fecha + "T00:00:00").toLocaleDateString("es-CL", {
     weekday: "long", day: "numeric", month: "long",
   });
@@ -123,12 +115,42 @@ interface ModalProps {
 function ModalAusencia({ personas, fechaInicial, personaInicial, editarId, onClose, onGuardado }: ModalProps) {
   const modoEdicion = !!editarId;
   const [personaId,   setPersonaId]   = useState(personaInicial ?? "");
-  const [tipo,        setTipo]        = useState<TipoAusencia>("vacaciones_confirmadas");
+  const [tipo,        setTipo]        = useState<string>("vacaciones_confirmadas");
   const [fechaInicio, setFechaInicio] = useState(fechaInicial ?? "");
   const [fechaFin,    setFechaFin]    = useState(fechaInicial ?? "");
   const [descripcion, setDescripcion] = useState("");
   const [guardando,   setGuardando]   = useState(false);
   const [cargandoEdit,setCargandoEdit]= useState(modoEdicion);
+
+  // Gestión dinámica de tipos
+  const { tipos: tiposDinamicos, crearTipo, eliminarTipo } = useTiposAusencia();
+  const [nuevoTipoInput,    setNuevoTipoInput]    = useState("");
+  const [nuevoTipoColor,    setNuevoTipoColor]    = useState("#f43f5e");
+  const [mostrarNuevoTipo,  setMostrarNuevoTipo]  = useState(false);
+  const [tipoMsgError,      setTipoMsgError]      = useState<string | null>(null);
+  const [tipoMsgConfirm,    setTipoMsgConfirm]    = useState<string | null>(null);
+
+  const PALETA_PICKER = [
+    "#f43f5e","#ef4444","#f97316","#f59e0b","#eab308",
+    "#84cc16","#22c55e","#10b981","#14b8a6","#06b6d4",
+    "#0ea5e9","#3b82f6","#6366f1","#8b5cf6","#a855f7",
+    "#d946ef","#ec4899","#9ca3af","#78716c","#92400e",
+  ];
+  const cfgTipo = tiposDinamicos.find((t) => t.id === tipo);
+  const colorPreviewDinamico = cfgTipo?.color_bg ?? COLOR_AUSENCIA[tipo as TipoAusencia]?.bg ?? "#9ca3af";
+
+  async function handleCrearTipo() {
+    if (!nuevoTipoInput.trim()) return;
+    const nuevo = await crearTipo(nuevoTipoInput, nuevoTipoColor);
+    if (nuevo) { setTipo(nuevo.id); setNuevoTipoInput(""); setNuevoTipoColor("#f43f5e"); setMostrarNuevoTipo(false); }
+    else setTipoMsgError("Ya existe un tipo con ese nombre.");
+  }
+  async function handleEliminarTipo() {
+    setTipoMsgError(null); setTipoMsgConfirm(null);
+    const { ok, count } = await eliminarTipo(tipo);
+    if (!ok) setTipoMsgError(`No se puede eliminar: hay ${count} ausencia(s) con este tipo.`);
+    else { setTipoMsgConfirm("Tipo eliminado."); setTipo(tiposDinamicos[0]?.id ?? "otro"); }
+  }
   const [error,       setError]       = useState<string | null>(null);
   const supabase = createClient();
 
@@ -205,16 +227,45 @@ function ModalAusencia({ personas, fechaInicial, personaInicial, editarId, onClo
                 </select>
               )}
             </div>
-            {/* Tipo */}
+            {/* Tipo — dinámico */}
             <div>
               <label className="block text-[11px] font-semibold text-[#888] uppercase tracking-wide mb-1">Tipo</label>
               <div className="flex items-center gap-2">
-                <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: COLOR_AUSENCIA[tipo]?.bg ?? "#ccc" }} />
-                <select value={tipo} onChange={(e) => setTipo(e.target.value as TipoAusencia)}
+                <span className="w-3 h-3 rounded-sm flex-shrink-0" style={{ background: colorPreviewDinamico }} />
+                <select value={tipo} onChange={(e) => { setTipoMsgError(null); setTipoMsgConfirm(null); setTipo(e.target.value); }}
                   className="flex-1 border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] bg-white focus:outline-none focus:border-[#1a1a1a]">
-                  {TIPOS_AUSENCIA.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                  {tiposDinamicos.map((t) => <option key={t.id} value={t.id}>{t.label}</option>)}
                 </select>
               </div>
+              <div className="flex gap-3 mt-1.5 pl-5">
+                <button type="button" onClick={() => { setMostrarNuevoTipo((v) => !v); setTipoMsgError(null); setTipoMsgConfirm(null); }}
+                  className="text-[11px] text-[#4a90e2] hover:underline">+ Nuevo tipo</button>
+                <button type="button" onClick={handleEliminarTipo}
+                  className="text-[11px] text-red-400 hover:underline">🗑️ Eliminar tipo</button>
+              </div>
+              {mostrarNuevoTipo && (
+                <div className="mt-1.5 pl-5 space-y-1.5">
+                  <div className="flex gap-2">
+                    <span className="w-7 h-7 rounded flex-shrink-0 border border-white ring-1 ring-gray-200" style={{ background: nuevoTipoColor }} />
+                    <input type="text" value={nuevoTipoInput} onChange={(e) => setNuevoTipoInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && handleCrearTipo()}
+                      placeholder="Nombre del nuevo tipo..."
+                      className="flex-1 border border-[#e0e0e0] rounded px-2 py-1 text-[12px] focus:outline-none focus:border-[#4a90e2]" />
+                    <button type="button" onClick={handleCrearTipo}
+                      className="text-[11px] bg-[#4a90e2] text-white rounded px-2 py-1 hover:bg-[#357abd] whitespace-nowrap">Añadir</button>
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {PALETA_PICKER.map((c) => (
+                      <button key={c} type="button" onClick={() => setNuevoTipoColor(c)}
+                        className="w-5 h-5 rounded-full transition-transform hover:scale-110"
+                        style={{ background: c, outline: nuevoTipoColor === c ? `2px solid ${c}` : "none", outlineOffset: 2 }}
+                        title={c} />
+                    ))}
+                  </div>
+                </div>
+              )}
+              {tipoMsgError   && <p className="text-[11px] text-red-500 mt-1 pl-5">{tipoMsgError}</p>}
+              {tipoMsgConfirm && <p className="text-[11px] text-green-600 mt-1 pl-5">{tipoMsgConfirm}</p>}
             </div>
             {/* Fechas */}
             <div className="grid grid-cols-2 gap-3">
@@ -263,6 +314,16 @@ interface Props {
 
 export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false, onExternalModalClose, readOnly = false }: Props) {
   const weekDays = useMemo(() => getWeekDays(selectedDate), [selectedDate]);
+  const { tipos: tiposDinamicos } = useTiposAusencia();
+
+  // Resuelve color de tipo dinámico > estático > fallback
+  function colorDeTipo(tipo: string): { bg: string; label: string } {
+    const din = tiposDinamicos.find((t) => t.id === tipo);
+    if (din) return { bg: din.color_bg, label: din.label };
+    const est = COLOR_AUSENCIA[tipo as TipoAusencia];
+    if (est) return { bg: est.bg, label: est.label };
+    return { bg: "#9ca3af", label: tipo };
+  }
 
   const [filas,    setFilas]    = useState<FilaPersona[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -478,7 +539,7 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                         const celda     = fila.dias[iso];
                         const esFeriado = isHoliday(iso);
                         const isActive  = tooltip?.personaId === fila.persona.id && tooltip?.fecha === iso;
-                        const cfg       = celda ? COLOR_AUSENCIA[celda.tipo] : null;
+                        const cfg       = celda ? colorDeTipo(celda.tipo) : null;
 
                         // Vista colapsada: solo barra de color, sin interacción
                         if (estaColapsadaPersona) {
@@ -521,6 +582,7 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                                     onCerrar={() => setTooltip(null)}
                                     anchorRect={tooltip!.rect}
                                     readOnly={readOnly}
+                                    tiposDinamicos={tiposDinamicos}
                                   />
                                 )}
                               </div>

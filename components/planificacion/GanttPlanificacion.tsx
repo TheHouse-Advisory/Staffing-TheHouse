@@ -1,1137 +1,699 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { format } from "date-fns";
+import { useState, useEffect } from "react";
+import { format, startOfISOWeek, addWeeks, addDays } from "date-fns";
 import { es } from "date-fns/locale";
-import {
-  AlertTriangle,
-  CheckCircle,
-  ChevronDown,
-  ChevronRight,
-  Save,
-  Loader2,
-  X,
-  Info,
-  Zap,
-  CalendarX,
-  UserMinus,
-} from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
-import {
-  fetchEngagementsConReqs,
-  fetchPersonasFit,
-  today,
-  type EngagementConReqs,
-  type ReqConEstado,
-  type AsignacionActiva,
-  type AsignacionDetalle,
-  type PersonaFit,
-  type FitNivel,
-} from "@/lib/queries/planificacion";
-import { cn } from "@/lib/utils";
+import { Plus, X, Loader2, FlaskConical, Save, AlertTriangle, RotateCcw } from "lucide-react";
+import { createAnyClient } from "@/lib/supabase/client";
+import { SandboxInicioView } from "@/components/planificacion/SandboxInicioView";
+import { Modal } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
 
-// ─────────────────────────────────────────────────────────────
-//  Tipos locales
-// ─────────────────────────────────────────────────────────────
+// ─── Tipos ────────────────────────────────────────────────────
 
-interface Tentativa {
-  id: string;               // uuid local
-  requerimiento_id: string;
-  persona_id: string;
+interface PersonaAsig {
+  id: string;
   nombre: string;
   apellido: string;
+  iniciales: string | null;
   cargo: string;
   pct: number;
-  fecha_inicio: string;     // siempre "hoy"
-  fecha_fin: string;        // req.fecha_fin
+  fecha_inicio: string;
+  fecha_fin: string;
 }
 
-/** Terminación propuesta — solo existe en estado local hasta que se guarda el plan */
-interface TerminacionTentativa {
-  id: string;               // uuid local
-  asignacion_id: string;    // asignacion real a terminar
-  requerimiento_id: string;
-  engagement_id: string;
-  persona_id: string;
-  persona_nombre: string;
-  persona_apellido: string;
-  pct_liberado: number;
-  fecha_fin: string;        // fecha de término propuesta
+interface EngSnap {
+  id: string;
+  codigo: string | null;
+  nombre: string;
+  cliente: string | null;
+  tipo: string;
+  fecha_inicio: string;
+  fecha_fin: string;
+  personas: PersonaAsig[];
 }
 
-// ─────────────────────────────────────────────────────────────
-//  Utilidades
-// ─────────────────────────────────────────────────────────────
+interface PlanSimulacion {
+  id: string;
+  nombre: string;
+  creadoEn: string;
+  estado: "Borrador" | "Aceptado" | "Rechazado";
+  snapshot: EngSnap[];
+  mutaciones: Record<string, number | null>;
+  /** true si ya tiene un snapshot de data_real_previa en Supabase (plan aprobado) */
+  tieneRealPrevia?: boolean;
+}
 
-function nivelColor(nivel: FitNivel) {
-  switch (nivel) {
-    case "excelente":   return { bg: "#dcf5e7", text: "#1a7a45", border: "#b2dfc8" };
-    case "bueno":       return { bg: "#e8f4ff", text: "#1a5276", border: "#aacfee" };
-    case "advertencia": return { bg: "#fff4d4", text: "#8a6200", border: "#f0d980" };
-    case "riesgo":      return { bg: "#ffd4d4", text: "#c02020", border: "#f0aaaa" };
+// ─── Helpers ──────────────────────────────────────────────────
+
+
+const ESTADO_STYLE: Record<PlanSimulacion["estado"], string> = {
+  Borrador:  "bg-slate-100 text-slate-600",
+  Aceptado:  "bg-green-100 text-green-700",
+  Rechazado: "bg-red-100 text-red-600",
+};
+
+// ─── Persistencia Supabase + localStorage (fallback) ─────────
+
+const LS_KEY = "planificacion_sandbox_v1";
+
+/** @deprecated usar persistirPlan. Alias para compatibilidad. */
+function guardarPlanes(planes: PlanSimulacion[]) {
+  try { localStorage.setItem(LS_KEY, JSON.stringify(planes)); } catch {}
+}
+
+/** Carga planes desde Supabase. Fallback a localStorage si falla. */
+async function cargarPlanesRemoto(): Promise<PlanSimulacion[]> {
+  try {
+    const sb = createAnyClient();
+    const { data, error } = await sb
+      .from("plan_simulacion")
+      .select("id, nombre, estado, creado_en, data_simulada, data_real_previa")
+      .order("creado_en", { ascending: false });
+    if (error || !data) throw error;
+    return (data as any[]).map((row) => ({
+      id: row.id,
+      nombre: row.nombre,
+      estado: row.estado as PlanSimulacion["estado"],
+      creadoEn: row.creado_en,
+      snapshot: (row.data_simulada ?? []) as EngSnap[],
+      mutaciones: {},
+      tieneRealPrevia: row.data_real_previa != null,
+    }));
+  } catch {
+    // Fallback: localStorage mientras la tabla no exista
+    try { return JSON.parse(localStorage.getItem(LS_KEY) ?? "[]"); } catch { return []; }
   }
 }
 
-function nivelEmoji(nivel: FitNivel) {
-  switch (nivel) {
-    case "excelente":   return "😊";
-    case "bueno":       return "🙂";
-    case "advertencia": return "😐";
-    case "riesgo":      return "😟";
-  }
+/** Upsert del plan en Supabase + localStorage como caché. */
+async function persistirPlan(plan: PlanSimulacion): Promise<void> {
+  // Siempre guardar en localStorage (cache inmediato)
+  try {
+    const local = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]") as PlanSimulacion[];
+    const actualizado = local.some((p) => p.id === plan.id)
+      ? local.map((p) => p.id === plan.id ? plan : p)
+      : [plan, ...local];
+    localStorage.setItem(LS_KEY, JSON.stringify(actualizado));
+  } catch {}
+
+  // Persistir en Supabase
+  const sb = createAnyClient();
+  await (sb as any).from("plan_simulacion").upsert({
+    id:            plan.id,
+    nombre:        plan.nombre,
+    estado:        plan.estado,
+    creado_en:     plan.creadoEn,
+    data_simulada: plan.snapshot,
+  }, { onConflict: "id" });
 }
 
-function iniciales(nombre: string, apellido: string, custom?: string | null) {
-  if (custom?.trim()) return custom.trim().toUpperCase().slice(0, 3);
-  return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
+/** Elimina el plan de Supabase + localStorage. */
+async function eliminarPlanRemoto(id: string): Promise<void> {
+  try {
+    const local = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]") as PlanSimulacion[];
+    localStorage.setItem(LS_KEY, JSON.stringify(local.filter((p) => p.id !== id)));
+  } catch {}
+  const sb = createAnyClient();
+  await (sb as any).from("plan_simulacion").delete().eq("id", id);
 }
 
-function avatarColor(personaId: string) {
-  const palette = ["#4a90e2","#e2844a","#4ac27a","#9b4ae2","#e24a7a","#4ae2d5","#e2c24a","#7a4ae2"];
-  let hash = 0;
-  for (let i = 0; i < personaId.length; i++) hash = personaId.charCodeAt(i) + ((hash << 5) - hash);
-  return palette[Math.abs(hash) % palette.length];
-}
+// ─── Query snapshot ───────────────────────────────────────────
 
-function formatFecha(f: string | null) {
-  if (!f) return "∞";
-  try { return format(new Date(f + "T00:00:00"), "d MMM yy", { locale: es }); }
-  catch { return f; }
-}
+async function fetchSnapshot(): Promise<EngSnap[]> {
+  const sb = createAnyClient();
+  const hoy = format(new Date(), "yyyy-MM-dd");
+  const fin  = format(addDays(new Date(), 90), "yyyy-MM-dd");
 
-function formatFechaLarga(f: string) {
-  try { return format(new Date(f + "T00:00:00"), "d 'de' MMMM yyyy", { locale: es }); }
-  catch { return f; }
-}
+  const [engsRes, asigRes] = await Promise.all([
+    sb.from("engagement")
+      .select("id, codigo, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
+      .eq("estado", "activo")
+      .lte("fecha_inicio", fin)
+      .or(`fecha_fin_real.gte.${hoy},fecha_fin_estimada.gte.${hoy},fecha_fin_real.is.null`),
+    sb.from("asignacion")
+      .select("id, persona_id, engagement_id, pct_dedicacion, fecha_inicio, fecha_fin, persona:persona_id(nombre, apellido, iniciales, cargo_actual)")
+      .eq("estado", "activa")
+      .lte("fecha_inicio", fin)
+      .gte("fecha_fin", hoy) as any,
+  ]);
 
-// ─────────────────────────────────────────────────────────────
-//  Avatar
-// ─────────────────────────────────────────────────────────────
+  const engs = (engsRes.data ?? []) as any[];
+  const asigs = (asigRes.data ?? []) as any[];
 
-function Avatar({
-  personaId, nombre, apellido, inicialesCustom, size = "md", alerta = false, title,
-}: {
-  personaId: string; nombre: string; apellido: string; inicialesCustom?: string | null;
-  size?: "sm" | "md"; alerta?: boolean; title?: string;
-}) {
-  const color = avatarColor(personaId);
-  const dim = size === "sm" ? "w-7 h-7 text-[10px]" : "w-8 h-8 text-xs";
-  return (
-    <div className="relative flex-shrink-0" title={title ?? `${nombre} ${apellido}`}>
-      <div
-        className={cn(dim, "rounded-full flex items-center justify-center font-bold text-white select-none")}
-        style={{ background: color }}
-      >
-        {iniciales(nombre, apellido, inicialesCustom)}
-      </div>
-      {alerta && (
-        <span className="absolute -top-0.5 -right-0.5 w-3 h-3 bg-amber-400 rounded-full flex items-center justify-center">
-          <AlertTriangle className="w-2 h-2 text-white" />
-        </span>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-//  Fila de requerimiento
-// ─────────────────────────────────────────────────────────────
-
-function FilaRequerimiento({
-  req,
-  tentativas,
-  terminaciones,
-  isSelected,
-  onSelect,
-  onRemoveTentativa,
-  onProponerLiberar,
-  onDeshacerTerminar,
-}: {
-  req: ReqConEstado;
-  tentativas: Tentativa[];
-  terminaciones: TerminacionTentativa[];
-  isSelected: boolean;
-  onSelect: () => void;
-  onRemoveTentativa: (tentativaId: string) => void;
-  onProponerLiberar: (asig: AsignacionActiva) => void;
-  onDeshacerTerminar: (terminacionId: string) => void;
-}) {
-  const tieneTentativa = tentativas.some((t) => t.requerimiento_id === req.id);
-  const hoy = today();
-
-  // Asignaciones activas desde hoy
-  const asigActivas = req.asignaciones.filter(
-    (a) => a.fecha_fin === null || a.fecha_fin >= hoy
-  );
-
-  // Si TODAS las asignaciones activas están propuestas para liberación,
-  // el req se trata como sin cubrir (clickeable para buscar reemplazo)
-  const todasLiberadas =
-    asigActivas.length > 0 &&
-    asigActivas.every((a) => terminaciones.some((t) => t.asignacion_id === a.asignacion_id));
-
-  const cubierto = req.cubierto_desde_hoy && !todasLiberadas;
-  const clickeable = !cubierto;  // abre el fit panel para buscar candidatos
-
-  return (
-    <div
-      onClick={clickeable ? onSelect : undefined}
-      className={cn(
-        "group px-4 py-3 border-b border-[#f5f5f5] transition-all",
-        clickeable
-          ? isSelected
-            ? "bg-[#eaf4ff] cursor-pointer"
-            : "hover:bg-[#f9f9f9] cursor-pointer"
-          : "cursor-default opacity-80"
-      )}
-    >
-      {/* Encabezado de la fila */}
-      <div className="flex items-center gap-3">
-        {/* Indicador */}
-        <div
-          className="w-2 h-2 rounded-full flex-shrink-0"
-          style={{ background: cubierto ? "#27ae60" : "#e2844a" }}
-        />
-
-        {/* Cargo + % + fase */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-xs font-semibold text-[#1a1a1a]">
-              {req.cargo_requerido ?? "Sin cargo"}
-            </span>
-            <span className="text-[10px] bg-[#f0f0f0] text-[#666] px-1.5 py-0.5 rounded-full font-medium">
-              {req.pct_dedicacion}%
-            </span>
-            {req.fase_nombre && (
-              <span className="text-[10px] text-[#aaa]">{req.fase_nombre}</span>
-            )}
-          </div>
-          <p className="text-[10px] text-[#aaa] mt-0.5">
-            {formatFecha(req.fecha_inicio)} → {formatFecha(req.fecha_fin)}
-          </p>
-          {req.dias_criticos.length > 0 && (
-            <div className="flex items-center gap-1 mt-1">
-              <Zap className="w-2.5 h-2.5 text-orange-500 flex-shrink-0" />
-              <span className="text-[10px] font-medium text-orange-600">
-                Contempla {req.dias_criticos.length} día{req.dias_criticos.length !== 1 ? "s" : ""} crítico{req.dias_criticos.length !== 1 ? "s" : ""}
-              </span>
-            </div>
-          )}
-        </div>
-
-        {/* Chevron — solo visible si es clickeable */}
-        {clickeable && (
-          <ChevronRight
-            className={cn("w-3.5 h-3.5 flex-shrink-0 transition-colors",
-              isSelected ? "text-[#4a90e2]" : "text-[#ddd]"
-            )}
-          />
-        )}
-        {/* Ícono de check si está cubierto y no es clickeable */}
-        {!clickeable && (
-          <CheckCircle className="w-3.5 h-3.5 flex-shrink-0 text-[#27ae60]" />
-        )}
-      </div>
-
-      {/* Asignaciones confirmadas activas */}
-      {asigActivas.length > 0 && (
-        <div className="mt-2 space-y-1.5 ml-5">
-          {asigActivas.map((a) => {
-            const terminacion = terminaciones.find((t) => t.asignacion_id === a.asignacion_id);
-            const propuestaTerminar = !!terminacion;
-
-            return (
-              <div
-                key={a.asignacion_id}
-                className={cn(
-                  "flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors",
-                  propuestaTerminar ? "bg-red-50" : ""
-                )}
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className={cn("relative flex-shrink-0", propuestaTerminar && "opacity-50")}>
-                  <Avatar
-                    personaId={a.persona_id}
-                    nombre={a.persona_nombre}
-                    apellido={a.persona_apellido}
-                    size="sm"
-                  />
-                </div>
-                <div className={cn("flex-1 min-w-0", propuestaTerminar && "opacity-60")}>
-                  <p className={cn("text-[11px] font-medium truncate", propuestaTerminar ? "line-through text-red-700" : "text-[#333]")}>
-                    {a.persona_nombre} {a.persona_apellido}
-                  </p>
-                  <p className="text-[9px] text-[#aaa]">
-                    {formatFecha(a.fecha_inicio)} → {formatFecha(a.fecha_fin)} · {a.pct_dedicacion}%
-                    {propuestaTerminar && (
-                      <span className="text-amber-600 font-medium ml-1">
-                        · propuesto liberar hoy
-                      </span>
-                    )}
-                  </p>
-                </div>
-
-                {propuestaTerminar ? (
-                  /* Botón deshacer */
-                  <button
-                    onClick={() => onDeshacerTerminar(terminacion!.id)}
-                    className="flex items-center gap-1 text-[10px] text-red-500 hover:text-red-700 px-1.5 py-0.5 rounded hover:bg-red-100 transition-colors flex-shrink-0 font-medium"
-                    title="Deshacer propuesta de liberación"
-                  >
-                    <X className="w-3 h-3" />
-                    Deshacer
-                  </button>
-                ) : (
-                  /* Botón proponer liberación — acción directa, sin diálogo */
-                  <button
-                    onClick={() => onProponerLiberar(a)}
-                    className="flex items-center gap-1 text-[10px] text-[#bbb] hover:text-amber-600 px-1.5 py-0.5 rounded hover:bg-amber-50 transition-colors flex-shrink-0"
-                    title="Proponer liberar esta persona (en plan borrador, desde hoy)"
-                  >
-                    <UserMinus className="w-3 h-3" />
-                    <span className="hidden group-hover:inline">Liberar</span>
-                  </button>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* Tentativas (propuestas locales) */}
-      {tentativas
-        .filter((t) => t.requerimiento_id === req.id)
-        .map((t) => (
-          <div
-            key={t.id}
-            className="mt-1.5 flex items-center gap-2 ml-5"
-            onClick={(e) => e.stopPropagation()}
-          >
-            {/* Avatar con borde punteado = propuesto */}
-            <div className="relative flex-shrink-0">
-              <Avatar personaId={t.persona_id} nombre={t.nombre} apellido={t.apellido} size="sm" />
-              <div className="absolute inset-0 rounded-full ring-2 ring-dashed ring-[#4a90e2] ring-offset-1 pointer-events-none" />
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="text-[11px] font-medium text-[#4a90e2] truncate">
-                {t.nombre} {t.apellido}
-              </p>
-              <p className="text-[9px] text-[#aaa]">
-                {formatFecha(t.fecha_inicio)} → {formatFecha(t.fecha_fin)} · propuesto
-              </p>
-            </div>
-            <button
-              onClick={() => onRemoveTentativa(t.id)}
-              className="w-5 h-5 rounded-full bg-[#f0f0f0] hover:bg-red-100 text-[#aaa] hover:text-red-500 flex items-center justify-center transition-colors flex-shrink-0"
-              title="Quitar propuesta"
-            >
-              <X className="w-3 h-3" />
-            </button>
-          </div>
-        ))}
-
-      {/* Slot vacío */}
-      {!cubierto && !tieneTentativa && (
-        <div className="mt-1.5 ml-5 flex items-center gap-2">
-          <div className="w-7 h-7 rounded-full border-2 border-dashed border-[#f0c040] bg-[#fffbec] flex items-center justify-center flex-shrink-0">
-            <AlertTriangle className="w-3 h-3 text-[#e2a010]" />
-          </div>
-          <span className="text-[10px] text-[#e2a010]">Sin cubrir desde hoy · Haz click para buscar candidatos</span>
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-//  Mini Gantt de capacidad por persona
-// ─────────────────────────────────────────────────────────────
-
-const GANTT_COLORS = [
-  "#94a3b8", "#64748b", "#7c9ebe", "#8b9dc7", "#a0aec0",
-  "#6b7fa8", "#9badc7", "#7b8fab",
-];
-
-function barColor(idx: number): string {
-  return GANTT_COLORS[idx % GANTT_COLORS.length];
-}
-
-function MiniGantt({
-  req,
-  asignaciones,
-  asignacionIdsALiberar = [],
-}: {
-  req: ReqConEstado;
-  asignaciones: AsignacionDetalle[];
-  asignacionIdsALiberar?: string[];
-}) {
-  const reqStart = new Date(req.fecha_inicio + "T00:00:00").getTime();
-  const reqEnd   = new Date(req.fecha_fin   + "T00:00:00").getTime();
-  const totalMs  = reqEnd - reqStart;
-
-  if (totalMs <= 0) return null;
-
-  function posAndWidth(inicio: string, fin: string | null) {
-    const s = new Date(inicio + "T00:00:00").getTime();
-    const e = fin ? new Date(fin + "T00:00:00").getTime() : reqEnd;
-    const clampS = Math.max(s, reqStart);
-    const clampE = Math.min(e, reqEnd);
-    if (clampS >= clampE) return null;
-    const left  = ((clampS - reqStart) / totalMs) * 100;
-    const width = ((clampE - clampS)   / totalMs) * 100;
-    return { left: Math.max(0, left), width: Math.max(1, width) };
-  }
-
-  // Filtrar asignaciones que realmente se solapan con el req
-  const asigSolap = asignaciones.filter((a) => {
-    const s = new Date(a.fecha_inicio + "T00:00:00").getTime();
-    const e = a.fecha_fin ? new Date(a.fecha_fin + "T00:00:00").getTime() : reqEnd + 1;
-    return s < reqEnd && e > reqStart;
+  return engs.map((e) => {
+    const personas: PersonaAsig[] = asigs
+      .filter((a) => a.engagement_id === e.id)
+      .map((a) => {
+        const p = Array.isArray(a.persona) ? a.persona[0] : a.persona;
+        return {
+          id: a.persona_id,
+          nombre: p?.nombre ?? "",
+          apellido: p?.apellido ?? "",
+          iniciales: p?.iniciales ?? null,
+          cargo: p?.cargo_actual ?? "",
+          pct: a.pct_dedicacion,
+          fecha_inicio: a.fecha_inicio,
+          fecha_fin: a.fecha_fin,
+        };
+      });
+    return {
+      id: e.id,
+      codigo: e.codigo ?? null,
+      nombre: e.nombre,
+      cliente: e.cliente ?? null,
+      tipo: e.tipo ?? "proyecto",
+      fecha_inicio: e.fecha_inicio,
+      fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? fin,
+      personas,
+    };
   });
-
-  const rows: Array<{
-    label: string;
-    pct: number;
-    inicio: string;
-    fin: string | null;
-    color: string;
-    isProposed: boolean;
-    isLiberada: boolean;
-  }> = [
-    // Asignaciones existentes
-    ...asigSolap.map((a, i) => ({
-      label: a.engagement_nombre,
-      pct: a.pct_dedicacion,
-      inicio: a.fecha_inicio,
-      fin: a.fecha_fin,
-      color: barColor(i),
-      isProposed: false,
-      isLiberada: asignacionIdsALiberar.includes(a.asignacion_id),
-    })),
-    // La propuesta actual
-    {
-      label: "Esta propuesta",
-      pct: req.pct_dedicacion,
-      inicio: req.fecha_inicio,
-      fin: req.fecha_fin,
-      color: "#3b82f6",
-      isProposed: true,
-      isLiberada: false,
-    },
-  ];
-
-  return (
-    <div className="mt-2 space-y-1">
-      {/* Eje de tiempo */}
-      <div className="flex items-center justify-between text-[9px] text-[#aaa] px-0.5 mb-0.5">
-        <span>{formatFecha(req.fecha_inicio)}</span>
-        <span>{formatFecha(req.fecha_fin)}</span>
-      </div>
-
-      {rows.map((row, i) => {
-        const pos = posAndWidth(row.inicio, row.fin);
-        if (!pos) return null;
-
-        return (
-          <div key={i} className="flex items-center gap-1.5">
-            {/* Label izquierda */}
-            <div
-              className={cn(
-                "w-[72px] text-[9px] text-right flex-shrink-0 truncate leading-tight",
-                row.isLiberada && "line-through"
-              )}
-              style={{
-                color: row.isLiberada ? "#ef4444"
-                  : row.isProposed ? "#3b82f6"
-                  : "#888",
-              }}
-              title={row.isLiberada ? `${row.label} (propuesto liberar)` : row.label}
-            >
-              {row.label}
-            </div>
-
-            {/* Barra posicionada en el timeline */}
-            <div className="relative flex-1 h-4 bg-[#f0f0f0] rounded-sm overflow-hidden">
-              <div
-                className="absolute top-0 h-full rounded-sm flex items-center overflow-hidden"
-                style={{
-                  left:       `${pos.left}%`,
-                  width:      `${pos.width}%`,
-                  background: row.isLiberada ? "#fca5a5"
-                    : row.isProposed ? "#3b82f6"
-                    : row.color,
-                  opacity: row.isLiberada ? 0.6 : row.isProposed ? 1 : 0.75,
-                  border: row.isProposed ? "1px solid rgba(59,130,246,0.5)"
-                    : row.isLiberada ? "1px solid rgba(239,68,68,0.4)"
-                    : "none",
-                }}
-                title={`${row.label} · ${row.pct}%${row.isLiberada ? " (propuesto liberar)" : ""}`}
-              >
-                {/* Línea tachada para liberadas */}
-                {row.isLiberada && (
-                  <div className="absolute inset-0 flex items-center pointer-events-none">
-                    <div className="w-full h-px bg-red-500 opacity-70" />
-                  </div>
-                )}
-                <span className={cn(
-                  "text-[8px] font-semibold px-1 truncate leading-none select-none relative z-10",
-                  row.isLiberada ? "text-red-700" : "text-white"
-                )}>
-                  {row.pct}%
-                </span>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
 }
 
-// ─────────────────────────────────────────────────────────────
-//  Panel de fit (derecha)
-// ─────────────────────────────────────────────────────────────
-
-function FitPanel({
-  req, personas, loading, onAsignar, onCerrar, asignacionIdsALiberar = [],
-}: {
-  req: ReqConEstado | null;
-  personas: PersonaFit[];
-  loading: boolean;
-  onAsignar: (p: PersonaFit) => void;
-  onCerrar: () => void;
-  asignacionIdsALiberar?: string[];
-}) {
-  const hoy = today();
-
-  if (!req) {
-    return (
-      <div className="flex flex-col items-center justify-center h-full text-center px-6 text-[#aaa]">
-        <div className="w-14 h-14 rounded-full bg-[#f5f5f5] flex items-center justify-center mb-3">
-          <Zap className="w-6 h-6 text-[#ddd]" />
-        </div>
-        <p className="text-sm font-medium text-[#888]">Selecciona un requerimiento</p>
-        <p className="text-xs mt-1 text-[#bbb]">Ver personas disponibles y su fit para el rol</p>
-      </div>
-    );
-  }
-
-  const desdeEfectivo = req.fecha_inicio > hoy ? req.fecha_inicio : hoy;
-
-  return (
-    <div className="flex flex-col h-full">
-      {/* Header */}
-      <div className="px-5 py-4 border-b border-[#e8e8e8] bg-[#f9f9f9] flex-shrink-0">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex-1 min-w-0">
-            <p className="text-[10px] text-[#aaa] mb-0.5 truncate">
-              {req.engagement_nombre} · {req.engagement_cliente}
-            </p>
-            <h3 className="text-sm font-bold text-[#1a1a1a]">
-              {req.cargo_requerido ?? "Sin cargo"}{" "}
-              <span className="font-normal text-[#888]">{req.pct_dedicacion}%</span>
-            </h3>
-            {/* Período efectivo a cubrir */}
-            <p className="text-[10px] text-[#888] mt-1">
-              <span className="font-medium text-[#555]">A cubrir:</span>{" "}
-              {formatFecha(desdeEfectivo)} → {formatFecha(req.fecha_fin)}
-            </p>
-            {desdeEfectivo !== req.fecha_inicio && (
-              <p className="text-[10px] text-[#aaa]">
-                (req. comenzó {formatFecha(req.fecha_inicio)}, se asigna desde hoy)
-              </p>
-            )}
-          </div>
-          <button
-            onClick={onCerrar}
-            className="w-6 h-6 rounded-md flex items-center justify-center text-[#aaa] hover:text-[#555] hover:bg-[#eee] transition-colors flex-shrink-0"
-          >
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-      </div>
-
-      {/* Lista de personas */}
-      <div className="flex-1 overflow-y-auto">
-        {loading ? (
-          <div className="flex items-center justify-center h-32 gap-2 text-[#888]">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span className="text-sm">Calculando fit...</span>
-          </div>
-        ) : personas.length === 0 ? (
-          <div className="flex flex-col items-center justify-center h-32 text-center px-4 text-[#aaa]">
-            <p className="text-sm">No hay personas con cargo <strong>"{req.cargo_requerido}"</strong></p>
-            <p className="text-xs mt-1">Revisa los cargos en el catálogo de personas</p>
-          </div>
-        ) : (
-          <div className="divide-y divide-[#f5f5f5]">
-            {personas.map((p) => {
-              const colors = nivelColor(p.nivel);
-              const emoji  = nivelEmoji(p.nivel);
-              const yaEnReq = req.asignaciones.some((a) => a.persona_id === p.persona_id);
-
-              return (
-                <div key={p.persona_id} className="px-5 py-3 hover:bg-[#fafafa] transition-colors">
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-white text-xs flex-shrink-0"
-                      style={{ background: avatarColor(p.persona_id) }}
-                    >
-                      {iniciales(p.nombre, p.apellido, p.iniciales)}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <p className="text-xs font-semibold text-[#1a1a1a] truncate">
-                          {p.nombre} {p.apellido}
-                        </p>
-                        <span className="text-sm">{emoji}</span>
-                      </div>
-                      <p className="text-[10px] text-[#888]">{p.cargo_actual}</p>
-                    </div>
-                    <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                      <span
-                        className="text-[11px] font-bold px-2 py-0.5 rounded-full"
-                        style={{ background: colors.bg, color: colors.text }}
-                      >
-                        {p.pct_si_asigna}%
-                      </span>
-                      <button
-                        onClick={() => onAsignar(p)}
-                        className="text-[10px] font-semibold px-2.5 py-1 rounded-md bg-[#1a1a1a] text-white hover:bg-[#333] transition-colors"
-                      >
-                        {yaEnReq ? "Reemplazar" : "Proponer"}
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Alertas soft */}
-                  {p.alertas.length > 0 && (
-                    <div className="mt-2 space-y-1">
-                      {p.alertas.map((a, i) => (
-                        <div key={i} className="flex items-start gap-1.5">
-                          {a.nivel === "error"
-                            ? <AlertTriangle className="w-3 h-3 text-red-500 flex-shrink-0 mt-px" />
-                            : a.tipo === "ausencia_en_periodo"
-                            ? <CalendarX className="w-3 h-3 text-amber-500 flex-shrink-0 mt-px" />
-                            : <Info className="w-3 h-3 text-amber-500 flex-shrink-0 mt-px" />
-                          }
-                          <p className="text-[10px] text-[#666]">{a.mensaje}</p>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-
-                  {/* Mini Gantt de capacidad */}
-                  {req && (
-                    <MiniGantt
-                      req={req}
-                      asignaciones={p.asignaciones}
-                      asignacionIdsALiberar={asignacionIdsALiberar}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-//  Card de engagement
-// ─────────────────────────────────────────────────────────────
-
-function EngagementCard({
-  eng, tentativas, terminaciones, reqSeleccionado, onSelectReq,
-  onRemoveTentativa, onProponerLiberar, onDeshacerTerminar,
-}: {
-  eng: EngagementConReqs;
-  tentativas: Tentativa[];
-  terminaciones: TerminacionTentativa[];
-  reqSeleccionado: string | null;
-  onSelectReq: (req: ReqConEstado) => void;
-  onRemoveTentativa: (id: string) => void;
-  onProponerLiberar: (asig: AsignacionActiva) => void;
-  onDeshacerTerminar: (id: string) => void;
-}) {
-  const [collapsed, setCollapsed] = useState(false);
-
-  const totalReqs  = eng.requerimientos.length;
-  const cubiertos  = eng.requerimientos.filter(
-    (r) => r.cubierto_desde_hoy || tentativas.some((t) => t.requerimiento_id === r.id)
-  ).length;
-  const todosCubiertos = cubiertos === totalReqs;
-
-  const estadoBadge: Record<string, { bg: string; text: string; label: string }> = {
-    propuesta: { bg: "#fff3e8", text: "#c05000", label: "Propuesta" },
-    activo:    { bg: "#e8f9ee", text: "#1a7a45", label: "Activo" },
-    pausado:   { bg: "#f0f0f0", text: "#666",    label: "Pausado" },
-  };
-  const badge = estadoBadge[eng.estado] ?? { bg: "#f0f0f0", text: "#666", label: eng.estado };
-
-  return (
-    <div className="border border-[#e8e8e8] rounded-xl overflow-hidden mb-3 bg-white shadow-sm">
-      {/* Header */}
-      <button
-        type="button"
-        onClick={() => setCollapsed((v) => !v)}
-        className="w-full flex items-center gap-3 px-4 py-3 hover:bg-[#fafafa] transition-colors text-left"
-      >
-        {collapsed
-          ? <ChevronRight className="w-4 h-4 text-[#aaa] flex-shrink-0" />
-          : <ChevronDown  className="w-4 h-4 text-[#aaa] flex-shrink-0" />
-        }
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <p className="text-sm font-bold text-[#1a1a1a] truncate">{eng.nombre}</p>
-            <span
-              className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0"
-              style={{ background: badge.bg, color: badge.text }}
-            >
-              {badge.label}
-            </span>
-          </div>
-          <p className="text-[10px] text-[#888] mt-0.5">{eng.cliente}</p>
-        </div>
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          {todosCubiertos
-            ? <CheckCircle className="w-4 h-4 text-[#27ae60]" />
-            : <AlertTriangle className="w-4 h-4 text-[#e2844a]" />
-          }
-          <span className="text-xs font-semibold text-[#888]">{cubiertos}/{totalReqs}</span>
-        </div>
-      </button>
-
-      {!collapsed && (
-        <div className="border-t border-[#f0f0f0]">
-          {eng.requerimientos.map((req) => (
-            <FilaRequerimiento
-              key={req.id}
-              req={req}
-              tentativas={tentativas.filter((t) => t.requerimiento_id === req.id)}
-              terminaciones={terminaciones.filter((t) => t.requerimiento_id === req.id)}
-              isSelected={reqSeleccionado === req.id}
-              onSelect={() => onSelectReq(req)}
-              onRemoveTentativa={onRemoveTentativa}
-              onProponerLiberar={onProponerLiberar}
-              onDeshacerTerminar={onDeshacerTerminar}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
-//  Componente principal
-// ─────────────────────────────────────────────────────────────
+// ─── Componente principal ─────────────────────────────────────
 
 export function GanttPlanificacion() {
-  const [engagements, setEngagements] = useState<EngagementConReqs[]>([]);
-  const [loading, setLoading]         = useState(true);
-  const [error, setError]             = useState<string | null>(null);
+  const [planes, setPlanes]           = useState<PlanSimulacion[]>([]);
+  const [planActivo, setPlanActivo]   = useState<string | null>(null);
+  const [modalOpen, setModalOpen]     = useState(false);
+  const [nombreInput, setNombreInput] = useState("");
+  const [cargando, setCargando]       = useState(false);
+  const [loadingPlanes, setLoadingPlanes] = useState(true);
 
-  // Selección y fit
-  const [reqSeleccionado, setReqSeleccionado] = useState<ReqConEstado | null>(null);
-  const [fitPersonas, setFitPersonas]         = useState<PersonaFit[]>([]);
-  const [fitLoading, setFitLoading]           = useState(false);
+  // Semana de navegación para la grilla
+  const [semana, setSemana] = useState(() => startOfISOWeek(new Date()));
+  const COLS = 6; // semanas visibles
+  const columnas = Array.from({ length: COLS }, (_, i) => addWeeks(semana, i));
 
-  // Propuestas borrador locales (adiciones)
-  const [tentativas, setTentativas] = useState<Tentativa[]>([]);
-
-  // Liberaciones tentativas locales (no van a BD hasta guardar plan)
-  const [terminacionesTentativas, setTerminacionesTentativas] = useState<TerminacionTentativa[]>([]);
-
-  // Guardado de plan
-  const [guardando, setGuardando]     = useState(false);
-  const [guardadoMsg, setGuardadoMsg] = useState<string | null>(null);
-
-  // Búsqueda
-  const [filtro, setFiltro] = useState("");
-
-  // ── Carga ──────────────────────────────────────────────────
-
-  const cargar = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    const supabase = createClient();
-    const result = await fetchEngagementsConReqs(supabase);
-    if (result.error) setError(result.error);
-    else setEngagements(result.engagements);
-    setLoading(false);
-  }, []);
-
-  useEffect(() => { cargar(); }, [cargar]);
-
-  // Recarga cuando cambian asignaciones o engagements (ej: extensión de proyecto)
+  // Carga inicial: Supabase con fallback localStorage
   useEffect(() => {
-    const handler = () => cargar();
-    window.addEventListener("asignacionChanged", handler);
-    window.addEventListener("engagementChanged", handler);
-    return () => {
-      window.removeEventListener("asignacionChanged", handler);
-      window.removeEventListener("engagementChanged", handler);
-    };
-  }, [cargar]);
-
-  // ── Seleccionar req → cargar fit ───────────────────────────
-
-  const handleSelectReq = useCallback(async (req: ReqConEstado) => {
-    if (reqSeleccionado?.id === req.id) {
-      setReqSeleccionado(null);
-      setFitPersonas([]);
-      return;
-    }
-    setReqSeleccionado(req);
-    setFitLoading(true);
-    const supabase = createClient();
-    const result = await fetchPersonasFit(
-      supabase,
-      req,
-      tentativas.map((t) => ({ persona_id: t.persona_id, requerimiento_id: t.requerimiento_id, pct: t.pct })),
-      terminacionesTentativas.map((t) => t.asignacion_id)
-    );
-    setFitPersonas(result.personas);
-    setFitLoading(false);
-  }, [reqSeleccionado?.id, tentativas, terminacionesTentativas]);
-
-  // ── Proponer persona ───────────────────────────────────────
-
-  const handleAsignar = useCallback((persona: PersonaFit) => {
-    if (!reqSeleccionado) return;
-    const hoy = today();
-    setTentativas((prev) => {
-      const sin = prev.filter((t) => t.requerimiento_id !== reqSeleccionado.id);
-      return [
-        ...sin,
-        {
-          id: crypto.randomUUID(),
-          requerimiento_id: reqSeleccionado.id,
-          persona_id: persona.persona_id,
-          nombre: persona.nombre,
-          apellido: persona.apellido,
-          cargo: persona.cargo_actual,
-          pct: reqSeleccionado.pct_dedicacion,
-          fecha_inicio: hoy,
-          fecha_fin: reqSeleccionado.fecha_fin,
-        },
-      ];
+    cargarPlanesRemoto().then((data) => {
+      setPlanes(data);
+      setLoadingPlanes(false);
     });
-    setGuardadoMsg(null);
-  }, [reqSeleccionado]);
-
-  // ── Proponer liberar asignación (solo local, siempre desde hoy) ──
-
-  const handleProponerLiberar = useCallback((asig: AsignacionActiva) => {
-    // Buscar a qué req y engagement pertenece esta asignación
-    let reqId = "", engId = "";
-    for (const eng of engagements) {
-      for (const req of eng.requerimientos) {
-        if (req.asignaciones.some((a) => a.asignacion_id === asig.asignacion_id)) {
-          reqId = req.id;
-          engId = req.engagement_id;
-          break;
-        }
-      }
-      if (reqId) break;
-    }
-
-    const hoy = today();
-
-    setTerminacionesTentativas((prev) => {
-      // Solo una liberación por asignación
-      const sin = prev.filter((t) => t.asignacion_id !== asig.asignacion_id);
-      return [
-        ...sin,
-        {
-          id: crypto.randomUUID(),
-          asignacion_id: asig.asignacion_id,
-          requerimiento_id: reqId,
-          engagement_id: engId,
-          persona_id: asig.persona_id,
-          persona_nombre: asig.persona_nombre,
-          persona_apellido: asig.persona_apellido,
-          pct_liberado: Number(asig.pct_dedicacion),
-          fecha_fin: hoy,
-        },
-      ];
-    });
-
-    setGuardadoMsg(null);
-  }, [engagements]);
-
-  const handleDeshacerTerminar = useCallback((terminacionId: string) => {
-    setTerminacionesTentativas((prev) => prev.filter((t) => t.id !== terminacionId));
-    setGuardadoMsg(null);
   }, []);
 
-  // ── Guardar plan ───────────────────────────────────────────
+  const plan = planes.find((p) => p.id === planActivo) ?? null;
 
-  const totalCambios = tentativas.length + terminacionesTentativas.length;
-
-  const handleGuardarPlan = useCallback(async () => {
-    if (totalCambios === 0) return;
-    setGuardando(true);
-    setGuardadoMsg(null);
-
-    const supabase = createClient();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const sb = supabase as any;
-
-    const planNombre = `Plan ${format(new Date(), "d MMM yyyy HH:mm", { locale: es })}`;
-    const { data: planData, error: planErr } = await sb
-      .from("propuesta_plan")
-      .insert({ nombre: planNombre, estado: "borrador" })
-      .select("id")
-      .single();
-
-    if (planErr || !planData) {
-      setGuardadoMsg(`Error al crear plan: ${planErr?.message ?? "desconocido"}`);
-      setGuardando(false);
-      return;
+  // ── Crear plan ──────────────────────────────────────────────
+  async function handleCrear() {
+    if (!nombreInput.trim()) return;
+    setCargando(true);
+    try {
+      const snapshot = await fetchSnapshot();
+      const nuevo: PlanSimulacion = {
+        id: `plan_${Date.now()}`,
+        nombre: nombreInput.trim(),
+        creadoEn: new Date().toISOString(),
+        estado: "Borrador",
+        snapshot,
+        mutaciones: {},
+      };
+      setPlanes([nuevo, ...planes]);
+      await persistirPlan(nuevo); // guarda en Supabase + localStorage
+      setPlanActivo(nuevo.id);
+      setModalOpen(false);
+      setNombreInput("");
+    } finally {
+      setCargando(false);
     }
-
-    const planId = (planData as { id: string }).id;
-
-    // 1. Asignaciones nuevas (tipo=asignar)
-    const inserts = tentativas
-      .map((t) => {
-        const req = engagements.flatMap((e) => e.requerimientos).find((r) => r.id === t.requerimiento_id);
-        return {
-          plan_id: planId,
-          persona_id: t.persona_id,
-          engagement_id: req?.engagement_id ?? "",
-          requerimiento_id: t.requerimiento_id,
-          pct_dedicacion: t.pct,
-          fecha_inicio: t.fecha_inicio,
-          fecha_fin: t.fecha_fin,
-          estado: "borrador",
-          tipo: "asignar",
-          cargo_al_momento: t.cargo,
-        };
-      })
-      .filter((i) => i.engagement_id);
-
-    // 2. Liberaciones propuestas (tipo=liberar)
-    const liberaciones = terminacionesTentativas.map((t) => ({
-      plan_id: planId,
-      persona_id: t.persona_id,
-      engagement_id: t.engagement_id,
-      requerimiento_id: t.requerimiento_id,
-      pct_dedicacion: t.pct_liberado,
-      fecha_inicio: t.fecha_fin,
-      fecha_fin: t.fecha_fin,
-      estado: "borrador",
-      tipo: "liberar",
-      asignacion_a_terminar_id: t.asignacion_id,
-      cargo_al_momento: null,
-    }));
-
-    const todosLosInserts = [...inserts, ...liberaciones];
-
-    const { error: asigErr } = await sb.from("asignacion_propuesta").insert(todosLosInserts);
-
-    if (asigErr) {
-      await supabase.from("propuesta_plan").delete().eq("id", planId);
-      setGuardadoMsg(`Error: ${asigErr.message}`);
-    } else {
-      const partes = [];
-      if (tentativas.length > 0) partes.push(`${tentativas.length} asignación(es) nueva(s)`);
-      if (terminacionesTentativas.length > 0) partes.push(`${terminacionesTentativas.length} liberación(es)`);
-      setGuardadoMsg(`✓ Plan "${planNombre}" guardado — ${partes.join(", ")}`);
-      setTentativas([]);
-      setTerminacionesTentativas([]);
-    }
-    setGuardando(false);
-  }, [tentativas, terminacionesTentativas, engagements, totalCambios]);
-
-  // ── Filtrado y stats ───────────────────────────────────────
-
-  // Función para saber si un engagement tiene algo pendiente/modificado (incluye terminaciones)
-  const tienePendiente = (eng: EngagementConReqs) =>
-    eng.requerimientos.some((r) => {
-      const hasTentativa = tentativas.some((t) => t.requerimiento_id === r.id);
-      const hasTerminacion = terminacionesTentativas.some((t) => t.requerimiento_id === r.id);
-      // Pendiente si: no cubierto y sin tentativa, o tiene terminación propuesta
-      return (!r.cubierto_desde_hoy && !hasTentativa) || hasTerminacion;
-    });
-
-  const engFiltrados = (filtro.trim()
-    ? engagements.filter((e) =>
-        e.nombre.toLowerCase().includes(filtro.toLowerCase()) ||
-        e.cliente.toLowerCase().includes(filtro.toLowerCase()) ||
-        e.requerimientos.some((r) => r.cargo_requerido?.toLowerCase().includes(filtro.toLowerCase()))
-      )
-    : engagements
-  ).sort((a, b) => {
-    const aPend = tienePendiente(a) ? 0 : 1;
-    const bPend = tienePendiente(b) ? 0 : 1;
-    if (aPend !== bPend) return aPend - bPend;
-    return a.nombre.localeCompare(b.nombre, "es");
-  });
-
-  const allReqs   = engagements.flatMap((e) => e.requerimientos);
-  const totalReqs = allReqs.length;
-  const cubiertos = allReqs.filter(
-    (r) => r.cubierto_desde_hoy || tentativas.some((t) => t.requerimiento_id === r.id)
-  ).length;
-  const pendientes = totalReqs - cubiertos;
-
-  // ── Render ─────────────────────────────────────────────────
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center h-full gap-2 text-[#888]">
-        <Loader2 className="w-5 h-5 animate-spin" />
-        <span className="text-sm">Cargando planificación...</span>
-      </div>
-    );
   }
 
-  if (error) {
-    return (
-      <div className="flex items-center justify-center h-full text-red-500 text-sm">
-        Error: {error}
-      </div>
-    );
+  // ── Cambiar estado del plan ─────────────────────────────────
+  async function cambiarEstado(id: string, estado: PlanSimulacion["estado"]) {
+    // "Aceptado" NUNCA puede aplicarse silenciosamente — siempre requiere modal
+    if (estado === "Aceptado") {
+      console.warn("[Planificación] cambiarEstado('Aceptado') bloqueado. Usar aprobarPlan() con modal.");
+      return;
+    }
+    const actualizado = planes.find((p) => p.id === id);
+    if (!actualizado) return;
+    const nuevo = { ...actualizado, estado };
+    setPlanes(planes.map((p) => p.id === id ? nuevo : p));
+    await persistirPlan(nuevo);
+  }
+
+  // ── Mutaciones del snapshot (drag&drop, pct, eliminación) ──────────────
+  function handleSnapshotChange(nextSnapshot: EngSnap[]) {
+    if (!planActivo) return;
+    const planActualizado = planes.find((p) => p.id === planActivo);
+    if (!planActualizado) return;
+    const nuevo = { ...planActualizado, snapshot: nextSnapshot };
+    setPlanes(planes.map((p) => p.id !== planActivo ? p : nuevo));
+    // Persistencia inmediata en localStorage (sin esperar Supabase)
+    try {
+      const local = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]") as PlanSimulacion[];
+      const upd = local.some((p) => p.id === planActivo)
+        ? local.map((p) => p.id === planActivo ? nuevo : p)
+        : [nuevo, ...local];
+      localStorage.setItem(LS_KEY, JSON.stringify(upd));
+    } catch {}
+  }
+
+  // ── Guardar cambios del plan (persiste en localStorage; no toca tablas reales) ──
+  const [guardando, setGuardando] = useState(false);
+  const [guardadoOk, setGuardadoOk] = useState(false);
+  async function guardarPlan() {
+    if (!plan) return;
+    setGuardando(true);
+    try {
+      // Persiste snapshot actual en Supabase (columna data_simulada) + localStorage
+      await persistirPlan(plan);
+      setGuardadoOk(true);
+      setTimeout(() => setGuardadoOk(false), 2500);
+    } finally {
+      setGuardando(false);
+    }
+  }
+
+  // ── Modales de confirmación ────────────────────────────────────────────────
+  const [modalAprobar,   setModalAprobar]   = useState(false);
+  const [modalDeshacer,  setModalDeshacer]  = useState(false);
+  const [aprobando,      setAprobando]      = useState(false);
+  const [deshaciendo,    setDeshaciendo]    = useState(false);
+  const [errorModal,     setErrorModal]     = useState<string | null>(null);
+  const [exitoMsg,       setExitoMsg]       = useState<string | null>(null);
+
+  // ── Aprobar plan: snapshot real → aplica simulado → Aceptado ──────────────
+  async function ejecutarAprobacion() {
+    if (!plan) return;
+    setAprobando(true);
+    setErrorModal(null);
+    try {
+      // 0. Guarda el snapshot simulado más reciente en plan_simulacion
+      await persistirPlan(plan);
+      const sb = createAnyClient();
+
+      // A. Snapshot de asignaciones reales actuales → data_real_previa
+      const { data: asigActuales, error: fetchErr } = await sb
+        .from("asignacion")
+        .select("*")
+        .eq("estado", "activa");
+      if (fetchErr) throw fetchErr;
+
+      const { error: backupErr } = await (sb as any)
+        .from("plan_simulacion")
+        .update({ data_real_previa: asigActuales ?? [] })
+        .eq("id", plan.id);
+      if (backupErr) throw backupErr;
+
+      // B. Borrar asignaciones reales activas actuales
+      const { error: deleteErr } = await sb
+        .from("asignacion")
+        .delete()
+        .eq("estado", "activa");
+      if (deleteErr) throw deleteErr;
+
+      // C. Insertar asignaciones del plan simulado en la tabla real
+      const nuevasAsig = plan.snapshot.flatMap((eng) =>
+        eng.personas.map((p) => ({
+          engagement_id:   eng.id,
+          persona_id:      p.id,
+          cargo_al_momento: p.cargo || null,
+          pct_dedicacion:  p.pct,
+          fecha_inicio:    p.fecha_inicio,
+          fecha_fin:       p.fecha_fin,
+          estado:          "activa",
+          estado_staffing: "CONFIRMADO",
+          requerimiento_id: null,
+        }))
+      );
+
+      if (nuevasAsig.length > 0) {
+        // Insertar en lotes de 100 para evitar límites
+        for (let i = 0; i < nuevasAsig.length; i += 100) {
+          const lote = nuevasAsig.slice(i, i + 100);
+          const { error: insertErr } = await (sb as any)
+            .from("asignacion")
+            .insert(lote);
+          if (insertErr) throw insertErr;
+        }
+      }
+
+      // D. Marcar plan como Aceptado en plan_simulacion
+      const { error: updatePlanErr } = await (sb as any)
+        .from("plan_simulacion")
+        .update({ estado: "Aceptado" })
+        .eq("id", plan.id);
+      if (updatePlanErr) throw updatePlanErr;
+
+      console.log(`[Planificación] Fusión real completada: ${nuevasAsig.length} asignaciones aplicadas desde el escenario "${plan.nombre}"`);
+
+      // E. Actualiza estado local + refresca todos los componentes del dashboard
+      const actualizado = { ...plan, estado: "Aceptado" as const, tieneRealPrevia: true };
+      setPlanes((prev) => prev.map((p) => p.id === plan.id ? actualizado : p));
+      window.dispatchEvent(new CustomEvent("asignacionChanged"));
+      setModalAprobar(false);
+      setExitoMsg(`✅ Escenario "${plan.nombre}" publicado. ${nuevasAsig.length} asignaciones aplicadas al Tablero real de la empresa.`);
+      setTimeout(() => setExitoMsg(null), 8000);
+    } catch (err: any) {
+      console.error("[Planificación] Error en aprobación:", err);
+      setErrorModal(err?.message ?? "Error desconocido al aprobar el plan.");
+    } finally {
+      setAprobando(false);
+    }
+  }
+
+  // ── Deshacer aprobación: restaura snapshot real previo → Borrador ──────────
+  async function ejecutarDeshacer() {
+    if (!plan) return;
+    setDeshaciendo(true);
+    setErrorModal(null);
+    try {
+      const sb = createAnyClient();
+
+      // A. Leer data_real_previa del plan
+      const { data: planRow, error: fetchErr } = await (sb as any)
+        .from("plan_simulacion")
+        .select("data_real_previa")
+        .eq("id", plan.id)
+        .single();
+      if (fetchErr) throw fetchErr;
+      const realPrevia = planRow?.data_real_previa as any[] | null;
+      if (!realPrevia) throw new Error("No hay respaldo previo para restaurar.");
+
+      // B. Borrar asignaciones actuales (las del plan aprobado)
+      const { error: deleteErr } = await sb
+        .from("asignacion")
+        .delete()
+        .eq("estado", "activa");
+      if (deleteErr) throw deleteErr;
+
+      // C. Restaurar asignaciones reales previas en lotes de 100
+      if (realPrevia.length > 0) {
+        // Campos seguros para re-insertar (excluye created_at y campos auto)
+        const filas = realPrevia.map(({ id: _id, created_at: _ca, ...rest }: any) => rest);
+        for (let i = 0; i < filas.length; i += 100) {
+          const lote = filas.slice(i, i + 100);
+          const { error: insertErr } = await (sb as any)
+            .from("asignacion")
+            .insert(lote);
+          if (insertErr) throw insertErr;
+        }
+      }
+
+      // D. Regresar estado del plan a Borrador y limpiar respaldo
+      const { error: updateErr } = await (sb as any)
+        .from("plan_simulacion")
+        .update({ estado: "Borrador", data_real_previa: null })
+        .eq("id", plan.id);
+      if (updateErr) throw updateErr;
+
+      console.log(`[Planificación] Reversión completada: ${realPrevia.length} asignaciones restauradas.`);
+
+      const actualizado = { ...plan, estado: "Borrador" as const, tieneRealPrevia: false };
+      setPlanes((prev) => prev.map((p) => p.id === plan.id ? actualizado : p));
+      window.dispatchEvent(new CustomEvent("asignacionChanged"));
+      setModalDeshacer(false);
+      setExitoMsg(`↩ Aprobación revertida. ${realPrevia.length} asignaciones originales restauradas.`);
+      setTimeout(() => setExitoMsg(null), 8000);
+    } catch (err: any) {
+      console.error("[Planificación] Error en reversión:", err);
+      setErrorModal(err?.message ?? "Error desconocido al deshacer la aprobación.");
+    } finally {
+      setDeshaciendo(false);
+    }
+  }
+
+  // ── Eliminar plan ───────────────────────────────────────────
+  async function eliminarPlan(id: string) {
+    setPlanes(planes.filter((p) => p.id !== id));
+    if (planActivo === id) setPlanActivo(null);
+    await eliminarPlanRemoto(id);
   }
 
   return (
-    <div className="flex h-full overflow-hidden">
+    <div className="flex flex-col h-full overflow-hidden bg-[#fafafa]">
 
-      {/* ── Panel izquierdo ── */}
-      <div className="flex flex-col flex-1 min-w-0 overflow-hidden border-r border-[#e8e8e8]">
+      {/* ── Galería de planes — barra compacta ────────────────── */}
+      <div className="flex-shrink-0 bg-white border-b border-[#e8e8e8] px-4 py-1.5 flex items-center gap-3">
+        {/* Título + contador */}
+        <FlaskConical className="w-3.5 h-3.5 text-[#4a90e2] flex-shrink-0" />
+        <span className="text-[11px] font-semibold text-[#1a1a2e] flex-shrink-0">Escenarios</span>
+        <span className="text-[10px] text-[#aaa] flex-shrink-0">({planes.length})</span>
 
-        {/* Topbar */}
-        <div className="flex items-center gap-3 px-5 py-3 border-b border-[#e8e8e8] bg-white flex-shrink-0">
-          {/* Stats */}
-          <div className="flex items-center gap-4 flex-1">
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-[#27ae60]" />
-              <span className="text-xs text-[#888]">{cubiertos} cubiertos</span>
-            </div>
-            <div className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-[#e2844a]" />
-              <span className="text-xs text-[#888]">{pendientes} sin cubrir</span>
-            </div>
-            {tentativas.length > 0 && (
-              <div className="flex items-center gap-1.5">
-                <div className="w-2 h-2 rounded-full border-2 border-dashed border-[#4a90e2]" />
-                <span className="text-xs text-[#4a90e2] font-medium">{tentativas.length} propuestas pendientes</span>
+        {/* Tarjetas inline */}
+        <div className="flex gap-2 overflow-x-auto flex-1 min-w-0">
+          {loadingPlanes && (
+            <span className="text-[11px] text-[#ccc] italic flex items-center gap-1">
+              <Loader2 className="w-3 h-3 animate-spin" />Cargando...
+            </span>
+          )}
+          {!loadingPlanes && planes.length === 0 && (
+            <span className="text-[11px] text-[#ccc] italic">Sin escenarios.</span>
+          )}
+          {planes.map((p) => (
+            <div
+              key={p.id}
+              onClick={() => setPlanActivo(planActivo === p.id ? null : p.id)}
+              className={`flex-shrink-0 flex items-center gap-2 border rounded-lg px-2.5 py-1 cursor-pointer transition-all ${
+                planActivo === p.id
+                  ? "border-[#4a90e2] bg-blue-50"
+                  : "border-[#e8e8e8] bg-white hover:border-[#4a90e2]/40"
+              }`}>
+              <span className="text-[11px] font-semibold text-[#1a1a2e] max-w-[120px] truncate">{p.nombre}</span>
+              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${ESTADO_STYLE[p.estado]}`}>{p.estado}</span>
+              {/* Cambio rápido de estado — "Aceptado" siempre abre el modal */}
+              <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
+                {(["Borrador", "Aceptado", "Rechazado"] as const).map((est) => (
+                  <button key={est}
+                    onClick={() => {
+                      if (est === "Aceptado") {
+                        // Selecciona este plan y abre el modal de confirmación
+                        setPlanActivo(p.id);
+                        setErrorModal(null);
+                        setModalAprobar(true);
+                      } else {
+                        cambiarEstado(p.id, est);
+                      }
+                    }}
+                    className={`text-[8px] px-1 py-0.5 rounded border transition-colors ${
+                      p.estado === est ? "border-current font-bold " + ESTADO_STYLE[est] : "border-[#e8e8e8] text-[#bbb] hover:text-[#4a90e2] hover:border-[#4a90e2]"
+                    }`}>{est}</button>
+                ))}
               </div>
-            )}
-          </div>
-
-          {/* Búsqueda */}
-          <input
-            type="text"
-            placeholder="Buscar engagement o cargo..."
-            value={filtro}
-            onChange={(e) => setFiltro(e.target.value)}
-            className="text-xs border border-[#e8e8e8] rounded-lg px-3 py-1.5 w-52 focus:outline-none focus:border-[#1a1a1a] bg-[#f9f9f9] focus:bg-white transition-colors"
-          />
-
-          {/* Guardar plan */}
-          <button
-            onClick={handleGuardarPlan}
-            disabled={totalCambios === 0 || guardando}
-            className={cn(
-              "flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg text-xs font-semibold transition-all",
-              totalCambios > 0 && !guardando
-                ? "bg-[#1a1a1a] text-white hover:bg-[#333] shadow-sm"
-                : "bg-[#f0f0f0] text-[#bbb] cursor-not-allowed"
-            )}
-          >
-            {guardando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Save className="w-3.5 h-3.5" />}
-            Guardar plan
-            {totalCambios > 0 && <span>({totalCambios})</span>}
-          </button>
+              <button onClick={(e) => { e.stopPropagation(); eliminarPlan(p.id); }}
+                className="text-[#ddd] hover:text-red-400 transition-colors flex-shrink-0">
+                <X className="w-3 h-3" />
+              </button>
+            </div>
+          ))}
         </div>
 
-        {/* Mensaje */}
-        {guardadoMsg && (
-          <div className={cn(
-            "px-5 py-2 text-xs font-medium border-b",
-            guardadoMsg.startsWith("✓")
-              ? "bg-[#f0faf5] text-[#1a7a45] border-[#b2dfc8]"
-              : "bg-red-50 text-red-600 border-red-200"
-          )}>
-            {guardadoMsg}
-          </div>
-        )}
+        {/* Botón crear */}
+        <button onClick={() => setModalOpen(true)}
+          className="flex-shrink-0 flex items-center gap-1 bg-[#1a1a2e] text-white text-[11px] font-semibold px-2.5 py-1 rounded-lg hover:bg-[#2d2d4a] transition-colors">
+          <Plus className="w-3 h-3" />Crear
+        </button>
+      </div>
 
-        {/* Lista */}
-        <div className="flex-1 overflow-y-auto p-4">
-          {engFiltrados.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-48 text-[#aaa] gap-2">
-              <p className="text-sm font-medium">
-                {filtro
-                  ? "Sin resultados para tu búsqueda"
-                  : "No hay requerimientos vigentes en engagements activos"
-                }
-              </p>
-              <p className="text-xs">Solo se muestran requerimientos con fecha fin ≥ hoy</p>
-            </div>
-          ) : (
-            engFiltrados.map((eng) => (
-              <EngagementCard
-                key={eng.engagement_id}
-                eng={eng}
-                tentativas={tentativas.filter((t) =>
-                  eng.requerimientos.some((r) => r.id === t.requerimiento_id)
-                )}
-                terminaciones={terminacionesTentativas.filter((t) =>
-                  eng.requerimientos.some((r) => r.id === t.requerimiento_id)
-                )}
-                reqSeleccionado={reqSeleccionado?.id ?? null}
-                onSelectReq={handleSelectReq}
-                onRemoveTentativa={(id) => setTentativas((prev) => prev.filter((t) => t.id !== id))}
-                onProponerLiberar={handleProponerLiberar}
-                onDeshacerTerminar={handleDeshacerTerminar}
-              />
-            ))
+      {/* ── Barra de acciones del plan activo — compacta ── */}
+      {plan && (
+        <div className="flex-shrink-0 flex items-center gap-2 px-4 py-1 bg-amber-50 border-b border-amber-200">
+          <FlaskConical className="w-3 h-3 text-amber-500 flex-shrink-0" />
+          <span className="text-[11px] font-semibold text-[#1a1a2e] truncate max-w-[200px]">{plan.nombre}</span>
+          <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${ESTADO_STYLE[plan.estado]}`}>{plan.estado}</span>
+          <span className="text-[10px] text-amber-600 flex-shrink-0">🔒 Solo simulación</span>
+          <div className="flex-1" />
+
+          {/* Guardar */}
+          <button onClick={guardarPlan} disabled={guardando}
+            className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-[#1a1a2e] text-white rounded-lg hover:bg-[#2d2d4a] disabled:opacity-50 transition-colors">
+            {guardando ? <Loader2 className="w-3 h-3 animate-spin" /> : guardadoOk ? "✓ Guardado" : <><Save className="w-3 h-3" />Guardar</>}
+          </button>
+
+          {/* Aprobar — solo si está en Borrador o Rechazado */}
+          {plan.estado !== "Aceptado" && (
+            <button onClick={() => { setErrorModal(null); setModalAprobar(true); }}
+              className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
+              title="Publica este escenario y aplica sus asignaciones a la empresa">
+              ✅ Aprobar escenario
+            </button>
+          )}
+
+          {/* Deshacer aprobación — solo si está Aceptado y tiene snapshot previo */}
+          {plan.estado === "Aceptado" && plan.tieneRealPrevia && (
+            <button onClick={() => { setErrorModal(null); setModalDeshacer(true); }}
+              className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
+              title="Revierte las asignaciones reales al estado anterior a la aprobación">
+              <RotateCcw className="w-3 h-3" />Deshacer Aprobación
+            </button>
           )}
         </div>
+      )}
 
-        {/* Leyenda */}
-        <div className="px-4 py-2.5 border-t border-[#f0f0f0] bg-[#fafafa] flex items-center gap-5 flex-shrink-0">
-          <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-[#27ae60]" />
-            <span className="text-[10px] text-[#aaa]">Cubierto desde hoy</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-2 h-2 rounded-full bg-[#e2844a]" />
-            <span className="text-[10px] text-[#aaa]">Sin cubrir</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-5 h-5 rounded-full border-2 border-dashed border-[#4a90e2]" />
-            <span className="text-[10px] text-[#aaa]">Propuesto (borrador)</span>
-          </div>
-          <div className="flex items-center gap-1.5">
-            <div className="w-4 h-1.5 bg-red-300 rounded-full opacity-70" />
-            <span className="text-[10px] text-[#aaa]">Liberar propuesto (borrador)</span>
+      {/* ── Vista del plan activo: layout Inicio, datos aislados del snapshot ── */}
+      {plan ? (
+        <div className="flex-1 overflow-hidden">
+          <SandboxInicioView
+            key={plan.id}
+            planId={plan.id}
+            planNombre={plan.nombre}
+            snapshot={plan.snapshot}
+            onSnapshotChange={(engRows: any[]) => {
+              // Convierte EngRow[] → EngSnap[] y actualiza el plan en memoria
+              const nextSnapshot: EngSnap[] = engRows.map((eg) => ({
+                id: eg.id,
+                codigo: eg.codigo ?? null,
+                nombre: eg.nombre,
+                cliente: eg.cliente ?? null,
+                tipo: eg.tipo ?? "proyecto",
+                fecha_inicio: eg.fecha_inicio,
+                fecha_fin: eg.fecha_fin ?? eg.fecha_inicio,
+                personas: (eg.personas ?? []).map((p: any) => ({
+                  id: p.id,
+                  nombre: p.nombre,
+                  apellido: p.apellido,
+                  iniciales: p.iniciales ?? null,
+                  cargo: p.cargo ?? "",
+                  pct: p.pct ?? 100,
+                  fecha_inicio: p.fecha_inicio,
+                  fecha_fin: p.fecha_fin,
+                })),
+              }));
+              handleSnapshotChange(nextSnapshot);
+            }}
+          />
+        </div>
+      ) : (
+        <div className="flex-1 flex items-center justify-center text-[#ccc] text-[13px]">
+          {planes.length > 0 ? "Selecciona un escenario para visualizarlo" : ""}
+        </div>
+      )}
+
+      {/* ── Modal crear plan ────────────────────────────────── */}
+      {modalOpen && (
+        <div className="fixed inset-0 z-50 bg-black/30 flex items-center justify-center">
+          <div className="bg-white rounded-2xl shadow-xl border border-[#e8e8e8] w-full max-w-sm mx-4 p-6">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-[15px] font-bold text-[#1a1a2e]">Nuevo escenario de simulación</h3>
+              <button onClick={() => setModalOpen(false)} className="text-[#aaa] hover:text-[#555]">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <label className="block text-[11px] font-semibold text-[#888] uppercase tracking-wide mb-1">
+              Nombre del escenario
+            </label>
+            <input
+              type="text"
+              autoFocus
+              value={nombreInput}
+              onChange={(e) => setNombreInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handleCrear()}
+              placeholder="Ej: Escenario Q3 - Propuesta BHP"
+              className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:border-[#4a90e2] mb-4"
+            />
+            <p className="text-[11px] text-[#aaa] mb-4">
+              Se tomará una foto del estado actual de asignaciones. Los cambios aquí no afectarán los datos reales.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button onClick={() => setModalOpen(false)}
+                className="px-4 py-2 text-[12px] text-[#888] hover:text-[#555] border border-[#e8e8e8] rounded-lg">
+                Cancelar
+              </button>
+              <button onClick={handleCrear} disabled={cargando || !nombreInput.trim()}
+                className="flex items-center gap-1.5 px-4 py-2 text-[12px] font-semibold bg-[#4a90e2] text-white rounded-lg hover:bg-[#357abd] disabled:opacity-50 transition-colors">
+                {cargando ? <><Loader2 className="w-3.5 h-3.5 animate-spin" />Cargando...</> : "Crear escenario"}
+              </button>
+            </div>
           </div>
         </div>
-      </div>
+      )}
+      {/* ── Modal: Confirmar Aprobación ──────────────────────── */}
+      <Modal
+        open={modalAprobar}
+        onClose={() => !aprobando && setModalAprobar(false)}
+        title="¿Confirmar publicación del Plan?"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setModalAprobar(false)} disabled={aprobando}>
+              Cancelar
+            </Button>
+            <Button variant="danger" onClick={ejecutarAprobacion} loading={aprobando}>
+              {aprobando ? "Publicando..." : "Confirmar y Publicar"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div className="flex items-start gap-3 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+            <AlertTriangle className="w-5 h-5 text-amber-500 flex-shrink-0 mt-0.5" />
+            <p className="text-[13px] text-amber-800 leading-snug">
+              Al confirmar, este escenario <strong>reemplazará de forma definitiva</strong> la
+              data real de asignaciones de la empresa.
+            </p>
+          </div>
+          <p className="text-[13px] text-[#555] leading-relaxed">
+            Se guardará un <strong>respaldo automático</strong> del estado actual antes de aplicar
+            los cambios, permitiendo revertir si es necesario.
+          </p>
+          <p className="text-[13px] text-[#555]">
+            El Tablero principal (sidebar Inicio y Tablero) se actualizará automáticamente al
+            completar la operación.
+          </p>
+          {plan && (
+            <div className="p-2 bg-[#f8f8f8] rounded-lg">
+              <p className="text-[11px] text-[#888]">Escenario a publicar:</p>
+              <p className="text-[13px] font-bold text-[#1a1a2e]">{plan.nombre}</p>
+              <p className="text-[11px] text-[#aaa]">{plan.snapshot.length} proyectos · {plan.snapshot.reduce((acc, e) => acc + e.personas.length, 0)} asignaciones simuladas</p>
+            </div>
+          )}
+          {errorModal && (
+            <p className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded p-2">{errorModal}</p>
+          )}
+        </div>
+      </Modal>
 
-      {/* ── Panel derecho: fit ── */}
-      <div className={cn(
-        "flex flex-col transition-all duration-200 overflow-hidden border-l border-[#e8e8e8]",
-        reqSeleccionado ? "w-[340px]" : "w-[200px]"
-      )}>
-        <FitPanel
-          req={reqSeleccionado}
-          personas={fitPersonas}
-          loading={fitLoading}
-          onAsignar={handleAsignar}
-          onCerrar={() => { setReqSeleccionado(null); setFitPersonas([]); }}
-          asignacionIdsALiberar={terminacionesTentativas.map((t) => t.asignacion_id)}
-        />
-      </div>
+      {/* ── Modal: Confirmar Deshacer Aprobación ─────────────── */}
+      <Modal
+        open={modalDeshacer}
+        onClose={() => !deshaciendo && setModalDeshacer(false)}
+        title="Deshacer Aprobación — Volver Atrás"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setModalDeshacer(false)} disabled={deshaciendo}>
+              Cancelar
+            </Button>
+            <Button variant="danger" onClick={ejecutarDeshacer} loading={deshaciendo}>
+              {deshaciendo ? "Revirtiendo..." : "Confirmar Reversión"}
+            </Button>
+          </>
+        }
+      >
+        <div className="space-y-3">
+          <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+            <RotateCcw className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+            <p className="text-[13px] text-red-800 leading-snug">
+              Esto <strong>restaurará las asignaciones reales</strong> al estado exacto anterior
+              a la aprobación de este escenario.
+            </p>
+          </div>
+          <p className="text-[13px] text-[#555] leading-relaxed">
+            Las asignaciones actuales (aplicadas por este plan) serán eliminadas y reemplazadas
+            por el respaldo guardado automáticamente.
+          </p>
+          <p className="text-[13px] text-[#555]">
+            El estado del escenario volverá a <strong>Borrador</strong> y podrás editarlo nuevamente.
+          </p>
+          {errorModal && (
+            <p className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded p-2">{errorModal}</p>
+          )}
+        </div>
+      </Modal>
 
+      {/* ── Banner de éxito flotante ──────────────────────────── */}
+      {exitoMsg && (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-[9999] max-w-lg w-full px-4">
+          <div className="flex items-start gap-3 bg-green-50 border border-green-300 text-green-900 rounded-xl shadow-lg px-4 py-3 text-[13px]">
+            <span className="text-green-500 text-base leading-none mt-0.5">✅</span>
+            <span className="flex-1">{exitoMsg}</span>
+            <button onClick={() => setExitoMsg(null)} className="text-green-400 hover:text-green-600">
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
+
