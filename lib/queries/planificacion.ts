@@ -320,7 +320,7 @@ export async function fetchPersonasFit(
   if (req.cargo_requerido) {
     // Asociado y Consultor Senior son la misma categoría de búsqueda
     const GRUPO_SENIOR = ["Asociado", "Consultor Senior", "Asociado / Consultor Senior"];
-    const GRUPO_DIRECTOR = ["Director de Proyectos"];
+    const GRUPO_DIRECTOR = ["Director de Proyectos", "Gerente de Proyectos", "Director / Gerente de Proyectos", "Director", "Gerente"];
     if (GRUPO_SENIOR.includes(req.cargo_requerido)) {
       query = query.in("cargo_actual", ["Asociado", "Consultor Senior"]);
     } else if (GRUPO_DIRECTOR.includes(req.cargo_requerido)) {

@@ -22,7 +22,35 @@ import { DesgloceEngagements, type PanelInfo, type SimAsigPayload } from "@/comp
 import { DisponiblesTablero, type AsigDetalle } from "@/components/inicio/DisponiblesTablero";
 import { PanelFitAsignacion } from "@/components/engagements/PanelFitAsignacion";
 import { PersonaResumenModal } from "@/components/personas/PersonaResumenModal";
+import { Modal } from "@/components/ui/Modal";
+import { Button } from "@/components/ui/Button";
 import type { Persona } from "@/lib/types/database";
+
+// ── Tipos ausencia ────────────────────────────────────────────
+interface AusenciaPeriodo { fecha_inicio: string; fecha_fin: string; tipo: string; }
+
+/** Segmenta [inicio, fin] excluyendo los períodos de ausencia. */
+function segmentarSinAusencias(
+  inicio: string, fin: string,
+  ausencias: AusenciaPeriodo[]
+): { inicio: string; fin: string }[] {
+  const ordenadas = [...ausencias]
+    .filter((a) => a.fecha_inicio <= fin && a.fecha_fin >= inicio)
+    .sort((a, b) => a.fecha_inicio.localeCompare(b.fecha_inicio));
+  const segmentos: { inicio: string; fin: string }[] = [];
+  let cursor = inicio;
+  for (const aus of ordenadas) {
+    if (cursor < aus.fecha_inicio) segmentos.push({ inicio: cursor, fin: addDias(aus.fecha_inicio, -1) });
+    if (aus.fecha_fin >= cursor) cursor = addDias(aus.fecha_fin, 1);
+  }
+  if (cursor <= fin) segmentos.push({ inicio: cursor, fin });
+  return segmentos.filter((s) => s.inicio <= s.fin);
+}
+function addDias(fecha: string, dias: number): string {
+  const d = new Date(fecha + "T00:00:00");
+  d.setDate(d.getDate() + dias);
+  return d.toISOString().split("T")[0];
+}
 
 // ── Constantes (idénticas a inicio/page.tsx) ──────────────────
 
@@ -82,8 +110,24 @@ function snapToEngRows(snapshot: EngSnap[]): any[] {
     fecha_inicio: e.fecha_inicio,
     fecha_fin: e.fecha_fin,
     sort_order: i,
-    reqs: [],
-    actividades: [],
+    // Restaura reqs del snapshot (preserva eliminaciones hechas en simulación)
+    reqs: (e.reqs ?? []).map((r: any) => ({
+      id: r.id,
+      cargo_requerido: r.cargo_requerido ?? null,
+      pct_dedicacion: r.pct_dedicacion ?? 100,
+      fecha_inicio: r.fecha_inicio,
+      fecha_fin: r.fecha_fin ?? e.fecha_fin,
+      fase_nombre: r.fase_nombre ?? null,
+    })),
+    // Restaura actividades (viajes/talleres) del snapshot
+    actividades: (e.actividades ?? []).map((a: any) => ({
+      id: a.id,
+      tipo: a.tipo,
+      titulo: a.titulo ?? "",
+      descripcion: "",
+      fecha_inicio: a.fecha_inicio,
+      fecha_fin: a.fecha_fin,
+    })),
     extensiones: [],
     raw: { id: e.id, codigo: e.codigo, nombre: e.nombre, cliente: e.cliente,
            tipo: e.tipo, estado: "activo", fecha_inicio: e.fecha_inicio,
@@ -135,6 +179,43 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
   const registerSimHandler = useCallback((handler: (p: SimAsigPayload) => void) => {
     simAsigHandlerRef.current = handler;
   }, []);
+
+  // ── Modal de ausencias detectadas ────────────────────────────
+  const [ausenciaModal, setAusenciaModal] = useState<{
+    payload: SimAsigPayload;
+    ausencias: AusenciaPeriodo[];
+    segmentos: { inicio: string; fin: string }[];
+  } | null>(null);
+
+  /** Valida ausencias antes de inyectar la asignación simulada (panel Y drag&drop) */
+  async function handleSimAsignarConValidacion(payload: SimAsigPayload) {
+    const sb = createAnyClient();
+    const { data: aus } = await sb
+      .from("ausencia")
+      .select("fecha_inicio, fecha_fin, tipo")
+      .eq("persona_id", payload.personaId)
+      .lte("fecha_inicio", payload.fechaFin)
+      .gte("fecha_fin", payload.fechaInicio);
+
+    const ausencias = (aus ?? []) as AusenciaPeriodo[];
+    if (ausencias.length === 0) {
+      simAsigHandlerRef.current?.(payload);
+      return;
+    }
+    const segmentos = segmentarSinAusencias(payload.fechaInicio, payload.fechaFin, ausencias);
+    // segmentos vacíos = ausencia total → modal bloqueante; si hay segmentos = parcial → modal confirmación
+    setAusenciaModal({ payload, ausencias, segmentos });
+  }
+
+  function confirmarConAusencias() {
+    if (!ausenciaModal) return;
+    const { payload, segmentos } = ausenciaModal;
+    // Inyectar un segmento por cada período libre (saltando ausencias)
+    for (const seg of segmentos) {
+      simAsigHandlerRef.current?.({ ...payload, fechaInicio: seg.inicio, fechaFin: seg.fin });
+    }
+    setAusenciaModal(null);
+  }
 
   // Layout (idéntico a Inicio)
   const [equipoEstado, setEquipoEstado] = useState<"normal" | "colapsado" | "expandido">("normal");
@@ -360,6 +441,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
                 externalReloadKey={tableroReloadKey}
                 onSimPersonaAsignada={registerSimHandler}
                 onSimEngsChange={onSnapshotChange}
+                onSimDropRequest={handleSimAsignarConValidacion}
               />
             </div>
           </div>
@@ -452,11 +534,11 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
                   engagementId={panelReq.engId}
                   engagementNombre={panelReq.engNombre}
                   engagementCliente={panelReq.engCliente}
+                  engInicio={panelReq.engInicio}
+                  engFin={panelReq.engFin}
+                  cargo={panelReq.cargo}
                   simulationMode={true}
-                  onSimAsignar={(payload) => {
-                    // Inyecta directamente en el estado local de DesgloceEngagements
-                    simAsigHandlerRef.current?.(payload);
-                  }}
+                  onSimAsignar={handleSimAsignarConValidacion}
                   onClose={() => setPanelReq(null)}
                   onCollapse={() => setPanelColapsado(true)}
                   onAsignado={() => {
@@ -471,6 +553,69 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
         </div>
 
       </div>
+
+      {/* ── Modal: Ausencias detectadas ──────────────────────── */}
+      <Modal
+        open={!!ausenciaModal}
+        onClose={() => setAusenciaModal(null)}
+        title={ausenciaModal?.segmentos.length === 0
+          ? "⛔ No se puede staffear"
+          : "⚠ Ausencias detectadas en este período"}
+        footer={
+          ausenciaModal?.segmentos.length === 0 ? (
+            // Ausencia TOTAL → solo botón cerrar (bloqueante)
+            <Button variant="secondary" onClick={() => setAusenciaModal(null)}>Entendido</Button>
+          ) : (
+            // Ausencia PARCIAL → cancelar o confirmar con segmentación
+            <>
+              <Button variant="secondary" onClick={() => setAusenciaModal(null)}>Cancelar</Button>
+              <Button variant="danger" onClick={confirmarConAusencias}>
+                {`Asignar (${ausenciaModal?.segmentos.length} segmento${(ausenciaModal?.segmentos.length ?? 0) > 1 ? "s" : ""})`}
+              </Button>
+            </>
+          )
+        }
+      >
+        {ausenciaModal && (
+          <div className="space-y-3 text-[13px]">
+            <p className="text-[#555]">
+              <strong>{ausenciaModal.payload.nombre} {ausenciaModal.payload.apellido}</strong> tiene
+              ausencias registradas en el rango de este engagement:
+            </p>
+            <ul className="space-y-1">
+              {ausenciaModal.ausencias.map((a, i) => {
+                const dias = Math.round(
+                  (new Date(a.fecha_fin + "T00:00:00").getTime() - new Date(a.fecha_inicio + "T00:00:00").getTime()) / 86400000
+                ) + 1;
+                return (
+                  <li key={i} className="flex items-center gap-2 px-3 py-1.5 bg-amber-50 border border-amber-200 rounded-lg">
+                    <span className="text-amber-500">⚠</span>
+                    <span className="text-[#555]">
+                      {a.fecha_inicio} → {a.fecha_fin}
+                      <span className="ml-1.5 text-[11px] font-semibold text-amber-600">({dias} día{dias !== 1 ? "s" : ""})</span>
+                      <span className="ml-1.5 text-[10px] text-[#aaa]">{a.tipo?.replace(/_/g, " ")}</span>
+                    </span>
+                  </li>
+                );
+              })}
+            </ul>
+            {ausenciaModal.segmentos.length === 0 ? (
+              <p className="text-red-700 text-[13px] font-medium bg-red-50 border border-red-200 rounded-lg p-3">
+                No se puede staffear. <strong>{ausenciaModal.payload.nombre} {ausenciaModal.payload.apellido}</strong> está ausente durante todo el período del proyecto.
+              </p>
+            ) : ausenciaModal.segmentos.length > 0 ? (
+              <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
+                <p className="text-green-700 text-[12px] font-medium mb-1">Asignación se dividirá en:</p>
+                {ausenciaModal.segmentos.map((s, i) => (
+                  <p key={i} className="text-[12px] text-green-600">
+                    Segmento {i + 1}: {s.inicio} → {s.fin}
+                  </p>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

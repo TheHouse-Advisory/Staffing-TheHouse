@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import { format, startOfISOWeek, addWeeks, addDays } from "date-fns";
 import { es } from "date-fns/locale";
 import { Plus, X, Loader2, FlaskConical, Save, AlertTriangle, RotateCcw } from "lucide-react";
@@ -22,6 +23,23 @@ interface PersonaAsig {
   fecha_fin: string;
 }
 
+interface ReqSnap {
+  id: string;
+  cargo_requerido: string | null;
+  pct_dedicacion: number;
+  fecha_inicio: string;
+  fecha_fin: string | null;
+  fase_nombre: string | null;
+}
+
+interface ActividadSnap {
+  id?: string;
+  tipo: string;
+  titulo: string;
+  fecha_inicio: string;
+  fecha_fin: string;
+}
+
 interface EngSnap {
   id: string;
   codigo: string | null;
@@ -31,6 +49,8 @@ interface EngSnap {
   fecha_inicio: string;
   fecha_fin: string;
   personas: PersonaAsig[];
+  reqs?: ReqSnap[];
+  actividades?: ActividadSnap[]; // viajes y talleres del engagement
 }
 
 interface PlanSimulacion {
@@ -109,13 +129,21 @@ async function persistirPlan(plan: PlanSimulacion): Promise<void> {
 }
 
 /** Elimina el plan de Supabase + localStorage. */
+/**
+ * Elimina SOLO el contenedor del escenario (plan_simulacion + localStorage).
+ * NUNCA toca las tablas reales (asignacion, engagement, etc.).
+ * Si el plan estaba "Aceptado", su data ya está en el Tablero real y debe permanecer intacta.
+ */
 async function eliminarPlanRemoto(id: string): Promise<void> {
+  // 1. Borrar de localStorage
   try {
     const local = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]") as PlanSimulacion[];
     localStorage.setItem(LS_KEY, JSON.stringify(local.filter((p) => p.id !== id)));
   } catch {}
+  // 2. Borrar SOLO la fila de plan_simulacion (no toca asignacion ni engagement)
   const sb = createAnyClient();
   await (sb as any).from("plan_simulacion").delete().eq("id", id);
+  // ✅ Las tablas reales (asignacion, engagement) quedan intactas
 }
 
 // ─── Query snapshot ───────────────────────────────────────────
@@ -135,7 +163,8 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
       .select("id, persona_id, engagement_id, pct_dedicacion, fecha_inicio, fecha_fin, persona:persona_id(nombre, apellido, iniciales, cargo_actual)")
       .eq("estado", "activa")
       .lte("fecha_inicio", fin)
-      .gte("fecha_fin", hoy) as any,
+      // incluye fecha_fin=null (asignaciones abiertas, ej: proyectos internos)
+      .or(`fecha_fin.gte.${hoy},fecha_fin.is.null`) as any,
   ]);
 
   const engs = (engsRes.data ?? []) as any[];
@@ -173,6 +202,7 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
 // ─── Componente principal ─────────────────────────────────────
 
 export function GanttPlanificacion() {
+  const router = useRouter();
   const [planes, setPlanes]           = useState<PlanSimulacion[]>([]);
   const [planActivo, setPlanActivo]   = useState<string | null>(null);
   const [modalOpen, setModalOpen]     = useState(false);
@@ -194,6 +224,129 @@ export function GanttPlanificacion() {
   }, []);
 
   const plan = planes.find((p) => p.id === planActivo) ?? null;
+  const [sincronizando, setSincronizando] = useState(false);
+
+  /**
+   * Smart Pull: abre un escenario fusionando su snapshot con el Tablero real.
+   *
+   * Reglas de merge:
+   * A) Proyectos NUEVOS en producción → se inyectan completos al escenario.
+   * B) Proyectos EXISTENTES en el escenario:
+   *    - Personas presentes en producción pero NO en el escenario → se añaden.
+   *    - Personas presentes en el escenario pero NO en producción → se conservan
+   *      (fueron añadidas en simulación).
+   *    - Personas en ambos → se conservan las fechas/datos de la simulación
+   *      (el planificador manda sobre el Tablero real).
+   * C) Estado "Aceptado" + hay diferencias → pasa a "Borrador" automáticamente.
+   */
+  async function abrirEscenarioConPull(id: string) {
+    if (planActivo === id) { setPlanActivo(null); return; }
+
+    setPlanActivo(id);
+    const planSeleccionado = planes.find((p) => p.id === id);
+    if (!planSeleccionado) return;
+
+    setSincronizando(true);
+    try {
+      // Pull paralelo: tablero + personas activas + ausencias vigentes
+      const hoy = format(new Date(), "yyyy-MM-dd");
+      const sb = createAnyClient();
+      const [tableroProd, persRes, ausRes] = await Promise.all([
+        fetchSnapshot(),
+        sb.from("persona").select("id, nombre, apellido, iniciales, cargo_actual, is_leverager").eq("activo", true),
+        sb.from("ausencia").select("persona_id, fecha_inicio, fecha_fin, tipo")
+          .lte("fecha_inicio", format(addDays(new Date(), 30), "yyyy-MM-dd"))
+          .gte("fecha_fin", hoy),
+      ]);
+
+      // Actualizar personas y ausencias en el snapshot (para que el cuadrante EQUIPO
+      // y las validaciones de ausencias usen datos frescos)
+      // Estos se usan en SandboxInicioView que ya los carga en su propio useEffect,
+      // pero los guardamos en el snapshot para coherencia del merge.
+      const personasActuales = (persRes.data ?? []) as any[];
+      const ausenciasActuales = (ausRes.data ?? []) as any[];
+      console.log(`[Smart Pull] Datos frescos: ${tableroProd.length} engs, ${personasActuales.length} personas, ${ausenciasActuales.length} ausencias`);
+
+      const prodMap = new Map(tableroProd.map((e) => [e.id, e]));
+      const snapshotActual = planSeleccionado.snapshot;
+      const idsEnSnapshot = new Set(snapshotActual.map((e) => e.id));
+
+      let huboMerge = false;
+
+      // Mapa de personas actuales para actualizar nombre/cargo en snapshot
+      const personaMap = new Map(personasActuales.map((p: any) => [p.id, p]));
+
+      // B) Merge de proyectos existentes
+      const snapshotMergeado: EngSnap[] = snapshotActual.map((engSim) => {
+        const engProd = prodMap.get(engSim.id);
+
+        // Actualizar nombre/cargo de personas ya en el escenario con datos frescos de DB
+        const personasActualizadas = engSim.personas.map((p) => {
+          const pReal = personaMap.get(p.id);
+          if (!pReal) return p; // persona eliminada, conservar en simulación
+          // Actualiza nombre e iniciales si cambiaron, pero preserva fechas de simulación
+          return {
+            ...p,
+            nombre:    pReal.nombre    ?? p.nombre,
+            apellido:  pReal.apellido  ?? p.apellido,
+            iniciales: pReal.iniciales ?? p.iniciales,
+            cargo:     pReal.cargo_actual ?? p.cargo, // cargo actualizado
+          };
+        });
+
+        if (!engProd) return { ...engSim, personas: personasActualizadas };
+
+        // IDs de personas ya en el escenario para este engagement
+        const idsPersonasSim = new Set(engSim.personas.map((p) => p.id));
+
+        // Personas nuevas en producción que el escenario no tiene aún
+        const personasNuevasDeProd = engProd.personas.filter(
+          (p) => !idsPersonasSim.has(p.id)
+        );
+
+        if (personasNuevasDeProd.length === 0 &&
+            JSON.stringify(personasActualizadas) === JSON.stringify(engSim.personas)) {
+          return engSim;
+        }
+
+        huboMerge = true;
+        return {
+          ...engSim,
+          personas: [...personasActualizadas, ...personasNuevasDeProd],
+        };
+      });
+
+      // A) Proyectos NUEVOS en producción → inyectar completos
+      const engNuevos = tableroProd.filter((e) => !idsEnSnapshot.has(e.id));
+      if (engNuevos.length > 0) huboMerge = true;
+
+      if (!huboMerge) return; // nada cambió, no mutar estado
+
+      const nuevoSnapshot: EngSnap[] = [...snapshotMergeado, ...engNuevos];
+
+      // C) "Aceptado" + cambios → Borrador
+      const nuevoEstado = planSeleccionado.estado === "Aceptado" ? "Borrador" : planSeleccionado.estado;
+
+      const planActualizado: PlanSimulacion = {
+        ...planSeleccionado,
+        snapshot: nuevoSnapshot,
+        estado: nuevoEstado as PlanSimulacion["estado"],
+        tieneRealPrevia: nuevoEstado === "Borrador" ? false : planSeleccionado.tieneRealPrevia,
+      };
+
+      setPlanes((prev) => prev.map((p) => p.id === id ? planActualizado : p));
+      try {
+        const local = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]") as PlanSimulacion[];
+        localStorage.setItem(LS_KEY, JSON.stringify(local.map((p) => p.id === id ? planActualizado : p)));
+      } catch {}
+
+      console.log(`[Smart Pull] Merge completado en "${planSeleccionado.nombre}":`,
+        { engNuevos: engNuevos.length, personasMergeadas: snapshotMergeado.filter((_, i) => snapshotActual[i]?.personas.length !== snapshotMergeado[i]?.personas.length).length }
+      );
+    } finally {
+      setSincronizando(false);
+    }
+  }
 
   // ── Crear plan ──────────────────────────────────────────────
   async function handleCrear() {
@@ -236,29 +389,31 @@ export function GanttPlanificacion() {
   // ── Mutaciones del snapshot (drag&drop, pct, eliminación) ──────────────
   function handleSnapshotChange(nextSnapshot: EngSnap[]) {
     if (!planActivo) return;
-    const planActualizado = planes.find((p) => p.id === planActivo);
-    if (!planActualizado) return;
-    const nuevo = { ...planActualizado, snapshot: nextSnapshot };
-    setPlanes(planes.map((p) => p.id !== planActivo ? p : nuevo));
-    // Persistencia inmediata en localStorage (sin esperar Supabase)
-    try {
-      const local = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]") as PlanSimulacion[];
-      const upd = local.some((p) => p.id === planActivo)
-        ? local.map((p) => p.id === planActivo ? nuevo : p)
-        : [nuevo, ...local];
-      localStorage.setItem(LS_KEY, JSON.stringify(upd));
-    } catch {}
+    // Usa setPlanes funcional para siempre leer el estado más reciente (evita stale closure)
+    setPlanes((prev) => {
+      const planActualizado = prev.find((p) => p.id === planActivo);
+      if (!planActualizado) return prev;
+      const nuevo = { ...planActualizado, snapshot: nextSnapshot };
+      const siguientes = prev.map((p) => p.id !== planActivo ? p : nuevo);
+      // Persistencia inmediata en localStorage
+      try {
+        localStorage.setItem(LS_KEY, JSON.stringify(siguientes));
+      } catch {}
+      return siguientes;
+    });
   }
 
   // ── Guardar cambios del plan (persiste en localStorage; no toca tablas reales) ──
   const [guardando, setGuardando] = useState(false);
   const [guardadoOk, setGuardadoOk] = useState(false);
   async function guardarPlan() {
-    if (!plan) return;
+    if (!planActivo) return;
     setGuardando(true);
     try {
-      // Persiste snapshot actual en Supabase (columna data_simulada) + localStorage
-      await persistirPlan(plan);
+      // Lee el plan más reciente desde el estado (evita stale closure)
+      const planActual = planes.find((p) => p.id === planActivo);
+      if (!planActual) return;
+      await persistirPlan(planActual);
       setGuardadoOk(true);
       setTimeout(() => setGuardadoOk(false), 2500);
     } finally {
@@ -280,9 +435,24 @@ export function GanttPlanificacion() {
     setAprobando(true);
     setErrorModal(null);
     try {
-      // 0. Guarda el snapshot simulado más reciente en plan_simulacion
-      await persistirPlan(plan);
+      // 0. Guarda el snapshot más reciente (lee del estado actual, no del closure stale)
+      const planActual = planes.find((p) => p.id === plan.id) ?? plan;
+      await persistirPlan(planActual);
       const sb = createAnyClient();
+
+      // 0b. Leer data_simulada CONFIRMADA desde Supabase (evita problemas de closure/stale state)
+      const { data: planRow, error: planReadErr } = await (sb as any)
+        .from("plan_simulacion")
+        .select("data_simulada")
+        .eq("id", plan.id)
+        .single();
+      if (planReadErr) throw planReadErr;
+      const snapshotConfirmado: EngSnap[] = (planRow?.data_simulada ?? []) as EngSnap[];
+      console.log(`[Aprobación] Snapshot leído desde Supabase: ${snapshotConfirmado.length} engagements`);
+      snapshotConfirmado.forEach(e => {
+        console.log(`  → ${e.nombre} [${e.id}]: ${e.personas?.length ?? 0} personas, tipo: ${e.tipo}`);
+        (e.personas ?? []).forEach(p => console.log(`      persona: ${p.nombre} ${p.apellido} | cargo: ${p.cargo} | ${p.fecha_inicio} → ${p.fecha_fin}`));
+      });
 
       // A. Snapshot de asignaciones reales actuales → data_real_previa
       const { data: asigActuales, error: fetchErr } = await sb
@@ -297,6 +467,35 @@ export function GanttPlanificacion() {
         .eq("id", plan.id);
       if (backupErr) throw backupErr;
 
+      // B.1 Detectar e insertar engagements NUEVOS del snapshot (creados en simulación)
+      //     Los ids de simulación empiezan con "sim_eng_"; los reales son UUIDs.
+      const engIdsSnapshot = snapshotConfirmado.map((e) => e.id);
+      const engNuevos = snapshotConfirmado.filter((e) => e.id.startsWith("sim_eng_"));
+      const engExistentesCheck = engIdsSnapshot.filter((id) => !id.startsWith("sim_eng_"));
+
+      // Mapa: sim_eng_id → id real generado (para reasignar asignaciones)
+      const idMap = new Map<string, string>();
+
+      if (engNuevos.length > 0) {
+        for (const eng of engNuevos) {
+          const { data: newEng, error: engInsErr } = await (sb as any)
+            .from("engagement")
+            .insert({
+              nombre:            eng.nombre,
+              codigo:            eng.codigo,
+              cliente:           eng.cliente,
+              tipo:              eng.tipo ?? "proyecto",
+              estado:            "activo",
+              fecha_inicio:      eng.fecha_inicio,
+              fecha_fin_estimada: eng.fecha_fin,
+            })
+            .select("id")
+            .single();
+          if (engInsErr) throw engInsErr;
+          idMap.set(eng.id, newEng.id); // sim_eng_xxx → UUID real
+        }
+      }
+
       // B. Borrar asignaciones reales activas actuales
       const { error: deleteErr } = await sb
         .from("asignacion")
@@ -305,32 +504,88 @@ export function GanttPlanificacion() {
       if (deleteErr) throw deleteErr;
 
       // C. Insertar asignaciones del plan simulado en la tabla real
-      const nuevasAsig = plan.snapshot.flatMap((eng) =>
-        eng.personas.map((p) => ({
-          engagement_id:   eng.id,
-          persona_id:      p.id,
-          cargo_al_momento: p.cargo || null,
-          pct_dedicacion:  p.pct,
-          fecha_inicio:    p.fecha_inicio,
-          fecha_fin:       p.fecha_fin,
-          estado:          "activa",
-          estado_staffing: "CONFIRMADO",
-          requerimiento_id: null,
-        }))
-      );
+      // Reemplazar IDs simulados por los UUIDs reales generados en B.1
+      const nuevasAsig = snapshotConfirmado.flatMap((eng) =>
+        eng.personas.map((p) => {
+          // Usar cargo del requerimiento si existe (para que aparezca bajo el grupo correcto en Tablero)
+          const reqSnap = p.requerimiento_id
+            ? (eng.reqs ?? []).find((r) => r.id === p.requerimiento_id)
+            : null;
+          const cargoFinal = reqSnap?.cargo_requerido || p.cargo || null;
+          return {
+            engagement_id:    idMap.get(eng.id) ?? eng.id,
+            persona_id:       p.id,
+            cargo_al_momento: cargoFinal,
+            pct_dedicacion:   p.pct ?? 100,
+            fecha_inicio:     p.fecha_inicio ?? eng.fecha_inicio,
+            fecha_fin:        p.fecha_fin    ?? eng.fecha_fin,
+            estado:           "activa",
+            estado_staffing:  "CONFIRMADO",
+            requerimiento_id: null, // los IDs simulados no existen en DB real
+          };
+        })
+      ).filter((a) => a.persona_id && a.engagement_id && a.fecha_inicio && a.fecha_fin);
+
+      console.log(`[Aprobación] Insertando ${nuevasAsig.length} asignaciones:`, nuevasAsig);
 
       if (nuevasAsig.length > 0) {
-        // Insertar en lotes de 100 para evitar límites
         for (let i = 0; i < nuevasAsig.length; i += 100) {
           const lote = nuevasAsig.slice(i, i + 100);
-          const { error: insertErr } = await (sb as any)
+          const { error: insertErr, data: insertData } = await (sb as any)
             .from("asignacion")
-            .insert(lote);
-          if (insertErr) throw insertErr;
+            .insert(lote)
+            .select("id");
+          if (insertErr) throw new Error(`Error inserting assignments: ${insertErr.message}`);
+          console.log(`[Aprobación] Lote ${i/100 + 1} insertado:`, insertData?.length, "filas");
         }
       }
 
-      // D. Marcar plan como Aceptado en plan_simulacion
+      // D. Sincronizar metadatos de engagements existentes (nombre, fechas, cliente)
+      for (const eng of snapshotConfirmado.filter((e) => !e.id.startsWith("sim_eng_"))) {
+        await (sb as any).from("engagement")
+          .update({
+            nombre:             eng.nombre,
+            codigo:             eng.codigo,
+            cliente:            eng.cliente ?? null,
+            fecha_inicio:       eng.fecha_inicio,
+            fecha_fin_estimada: eng.fecha_fin ?? null,
+          })
+          .eq("id", eng.id);
+        // No lanzamos error si falla (el eng puede no existir o tener restricciones)
+      }
+
+      // E. Sincronizar actividades (viajes/talleres) de todos los engagements del plan
+      const engIdsReales = snapshotConfirmado.map((e) => idMap.get(e.id) ?? e.id)
+        .filter((id) => !id.startsWith("sim_eng_"));
+
+      if (engIdsReales.length > 0) {
+        // Borrar actividades actuales de estos engagements
+        await (sb as any).from("engagement_actividades")
+          .delete()
+          .in("engagement_id", engIdsReales);
+
+        // Insertar actividades del snapshot
+        const nuevasActividades = snapshotConfirmado.flatMap((eng) => {
+          const realId = idMap.get(eng.id) ?? eng.id;
+          return (eng.actividades ?? []).map((a) => ({
+            engagement_id: realId,
+            tipo:          a.tipo,
+            titulo:        a.titulo ?? "",
+            descripcion:   "",
+            fecha_inicio:  a.fecha_inicio,
+            fecha_fin:     a.fecha_fin,
+          }));
+        });
+
+        if (nuevasActividades.length > 0) {
+          const { error: actErr } = await (sb as any)
+            .from("engagement_actividades")
+            .insert(nuevasActividades);
+          if (actErr) console.warn("[Planificación] Error al insertar actividades:", actErr.message);
+        }
+      }
+
+      // F. Marcar plan como Aceptado en plan_simulacion
       const { error: updatePlanErr } = await (sb as any)
         .from("plan_simulacion")
         .update({ estado: "Aceptado" })
@@ -342,9 +597,12 @@ export function GanttPlanificacion() {
       // E. Actualiza estado local + refresca todos los componentes del dashboard
       const actualizado = { ...plan, estado: "Aceptado" as const, tieneRealPrevia: true };
       setPlanes((prev) => prev.map((p) => p.id === plan.id ? actualizado : p));
+      // planAprobado → fuerza re-fetch completo del Tablero en Inicio
+      window.dispatchEvent(new CustomEvent("planAprobado"));
       window.dispatchEvent(new CustomEvent("asignacionChanged"));
+      router.refresh();
       setModalAprobar(false);
-      setExitoMsg(`✅ Escenario "${plan.nombre}" publicado. ${nuevasAsig.length} asignaciones aplicadas al Tablero real de la empresa.`);
+      setExitoMsg(`✅ Escenario "${plan.nombre}" publicado. ${nuevasAsig.length} asignaciones aplicadas. Ve a Inicio > Tablero para ver los cambios.`);
       setTimeout(() => setExitoMsg(null), 8000);
     } catch (err: any) {
       console.error("[Planificación] Error en aprobación:", err);
@@ -403,7 +661,9 @@ export function GanttPlanificacion() {
 
       const actualizado = { ...plan, estado: "Borrador" as const, tieneRealPrevia: false };
       setPlanes((prev) => prev.map((p) => p.id === plan.id ? actualizado : p));
+      window.dispatchEvent(new CustomEvent("planAprobado"));
       window.dispatchEvent(new CustomEvent("asignacionChanged"));
+      router.refresh(); // invalida caché → re-fetch al navegar a Inicio
       setModalDeshacer(false);
       setExitoMsg(`↩ Aprobación revertida. ${realPrevia.length} asignaciones originales restauradas.`);
       setTimeout(() => setExitoMsg(null), 8000);
@@ -417,8 +677,23 @@ export function GanttPlanificacion() {
 
   // ── Eliminar plan ───────────────────────────────────────────
   async function eliminarPlan(id: string) {
-    setPlanes(planes.filter((p) => p.id !== id));
+    const planAEliminar = planes.find((p) => p.id === id);
+
+    if (planAEliminar?.estado === "Aceptado") {
+      // Plan Aceptado: advertir que los datos reales quedan intactos
+      const confirmar = window.confirm(
+        `¿Eliminar el escenario "${planAEliminar.nombre}"?\n\n` +
+        `✅ Este escenario está Aceptado. Sus cambios YA están reflejados en el Tablero real (Inicio).\n` +
+        `Al eliminarlo solo se borra el registro de planificación — el Tablero real NO se modifica.`
+      );
+      if (!confirmar) return;
+    }
+
+    // Actualizar estado local
+    setPlanes((prev) => prev.filter((p) => p.id !== id));
     if (planActivo === id) setPlanActivo(null);
+
+    // Borrar SOLO el contenedor del escenario (salvaguarda: no toca tablas reales)
     await eliminarPlanRemoto(id);
   }
 
@@ -445,7 +720,7 @@ export function GanttPlanificacion() {
           {planes.map((p) => (
             <div
               key={p.id}
-              onClick={() => setPlanActivo(planActivo === p.id ? null : p.id)}
+              onClick={() => abrirEscenarioConPull(p.id)}
               className={`flex-shrink-0 flex items-center gap-2 border rounded-lg px-2.5 py-1 cursor-pointer transition-all ${
                 planActivo === p.id
                   ? "border-[#4a90e2] bg-blue-50"
@@ -494,6 +769,11 @@ export function GanttPlanificacion() {
           <span className="text-[11px] font-semibold text-[#1a1a2e] truncate max-w-[200px]">{plan.nombre}</span>
           <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${ESTADO_STYLE[plan.estado]}`}>{plan.estado}</span>
           <span className="text-[10px] text-amber-600 flex-shrink-0">🔒 Solo simulación</span>
+          {sincronizando && (
+            <span className="flex items-center gap-1 text-[10px] text-blue-600 flex-shrink-0">
+              <Loader2 className="w-3 h-3 animate-spin" />Sincronizando con Tablero...
+            </span>
+          )}
           <div className="flex-1" />
 
           {/* Guardar */}
@@ -531,7 +811,7 @@ export function GanttPlanificacion() {
             planNombre={plan.nombre}
             snapshot={plan.snapshot}
             onSnapshotChange={(engRows: any[]) => {
-              // Convierte EngRow[] → EngSnap[] y actualiza el plan en memoria
+              // Convierte EngRow[] → EngSnap[] preservando reqs del estado local
               const nextSnapshot: EngSnap[] = engRows.map((eg) => ({
                 id: eg.id,
                 codigo: eg.codigo ?? null,
@@ -549,6 +829,22 @@ export function GanttPlanificacion() {
                   pct: p.pct ?? 100,
                   fecha_inicio: p.fecha_inicio,
                   fecha_fin: p.fecha_fin,
+                })),
+                reqs: (eg.reqs ?? []).map((r: any) => ({
+                  id: r.id,
+                  cargo_requerido: r.cargo_requerido ?? null,
+                  pct_dedicacion: r.pct_dedicacion ?? 100,
+                  fecha_inicio: r.fecha_inicio,
+                  fecha_fin: r.fecha_fin ?? null,
+                  fase_nombre: r.fase_nombre ?? null,
+                })),
+                // Preserva actividades (viajes/talleres) del engagement
+                actividades: (eg.actividades ?? []).map((a: any) => ({
+                  id: a.id,
+                  tipo: a.tipo,
+                  titulo: a.titulo ?? "",
+                  fecha_inicio: a.fecha_inicio,
+                  fecha_fin: a.fecha_fin,
                 })),
               }));
               handleSnapshotChange(nextSnapshot);
