@@ -48,6 +48,8 @@ interface ReqRow {
   pct_dedicacion: string;
   fecha_inicio: string;
   fecha_fin: string;
+  /** Solo en simulación: períodos de ausencia dentro del rango (para badge informativo) */
+  ausenciasPeriodo?: { desde: string; hasta: string }[];
 }
 
 interface ActividadRow {
@@ -65,6 +67,13 @@ interface EngagementFormProps {
   onClose: () => void;
   onSuccess: () => void;
   engagement?: Engagement;
+  /** Simulación: skip Supabase, devuelve los datos del form al padre */
+  simulationMode?: boolean;
+  onSimSuccess?: (eng: { id: string; codigo: string | null; nombre: string; cliente: string; tipo: string; fecha_inicio: string; fecha_fin: string; reqs: ReqRow[]; actividades: ActividadRow[] }) => void;
+  /** Reqs del snapshot local (simulación): evita recargar desde Supabase real */
+  simulationReqs?: ReqRow[];
+  /** Actividades del snapshot local (simulación): evita recargar desde Supabase real */
+  simulationActividades?: ActividadRow[];
 }
 
 const EMPTY_ENG = {
@@ -79,7 +88,7 @@ const EMPTY_REQ: ReqRow = {
   pct_dedicacion: "100", fecha_inicio: "", fecha_fin: "",
 };
 
-export function EngagementForm({ open, onClose, onSuccess, engagement }: EngagementFormProps) {
+export function EngagementForm({ open, onClose, onSuccess, engagement, simulationMode = false, onSimSuccess, simulationReqs, simulationActividades }: EngagementFormProps) {
   const router = useRouter();
   const [form, setForm] = useState({ ...EMPTY_ENG });
   const [reqs, setReqs] = useState<ReqRow[]>([]);
@@ -161,22 +170,77 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
           capacidades: (ecData ?? []).map((r: any) => r.capacidad_id),
           tematicas: (etData ?? []).map((r: any) => r.tematica_id),
         });
-        setReqs((reqData ?? []).map((r: RequerimientoEngagement) => ({
-          id: r.id,
-          fase_nombre: r.fase_nombre ?? "",
-          cargo_requerido: toCargoOption(r.cargo_requerido),
-          descripcion: r.descripcion ?? "",
-          pct_dedicacion: String(r.pct_dedicacion),
-          fecha_inicio: r.fecha_inicio ?? "",
-          fecha_fin: r.fecha_fin ?? "",
-        })));
-        // Cargar actividades existentes
-        const { data: actData } = await (supabase as any)
-          .from("engagement_actividades").select("*").eq("engagement_id", engagement.id).order("fecha_inicio");
-        setActividades((actData ?? []).map((a: any) => ({
-          id: a.id, tipo: a.tipo, titulo: a.titulo,
-          descripcion: a.descripcion ?? "", fecha_inicio: a.fecha_inicio, fecha_fin: a.fecha_fin,
-        })));
+        // En simulación: consolida solo tramos ADYACENTES del mismo cargo (gap ≤ 90 días).
+        // Tramos de personas distintas con el mismo cargo NO se fusionan.
+        if (simulationMode && simulationReqs) {
+          const sortedReqs = [...simulationReqs].sort((a, b) =>
+            (a.fecha_inicio ?? "").localeCompare(b.fecha_inicio ?? "")
+          );
+          const consolidados: ReqRow[] = [];
+
+          for (const r of sortedReqs) {
+            const cargoNorm = (r.cargo_requerido ?? "").trim().toLowerCase();
+            // Buscar grupo existente del mismo cargo cuya fecha_fin sea adyacente (gap ≤ 90 días)
+            const grupoIdx = consolidados.findIndex((c) => {
+              const cCargo = typeof c.cargo_requerido === "object"
+                ? (c.cargo_requerido as any)?.value?.trim().toLowerCase()
+                : (c.cargo_requerido ?? "").trim().toLowerCase();
+              if (cCargo !== cargoNorm) return false;
+              if (!c.fecha_fin || !r.fecha_inicio) return false;
+              const gapDias = (new Date(r.fecha_inicio + "T00:00:00").getTime() -
+                               new Date(c.fecha_fin    + "T00:00:00").getTime()) / 86400000;
+              return gapDias > 0 && gapDias <= 90;
+            });
+
+            if (grupoIdx !== -1) {
+              const g = consolidados[grupoIdx];
+              const dFinGap = new Date(g.fecha_fin + "T00:00:00");
+              dFinGap.setDate(dFinGap.getDate() + 1);
+              const dIniGap = new Date(r.fecha_inicio + "T00:00:00");
+              dIniGap.setDate(dIniGap.getDate() - 1);
+              consolidados[grupoIdx] = {
+                ...g,
+                fecha_fin: r.fecha_fin ?? g.fecha_fin,
+                ausenciasPeriodo: [
+                  ...(g.ausenciasPeriodo ?? []),
+                  { desde: dFinGap.toISOString().split("T")[0], hasta: dIniGap.toISOString().split("T")[0] },
+                ],
+              };
+            } else {
+              consolidados.push({
+                id: r.id,
+                fase_nombre: r.fase_nombre ?? "",
+                cargo_requerido: toCargoOption(r.cargo_requerido ?? ""),
+                descripcion: r.descripcion ?? "",
+                pct_dedicacion: String(r.pct_dedicacion ?? 100),
+                fecha_inicio: r.fecha_inicio ?? "",
+                fecha_fin: r.fecha_fin ?? "",
+              });
+            }
+          }
+          setReqs(consolidados);
+        } else {
+          setReqs((reqData ?? []).map((r: RequerimientoEngagement) => ({
+            id: r.id,
+            fase_nombre: r.fase_nombre ?? "",
+            cargo_requerido: toCargoOption(r.cargo_requerido),
+            descripcion: r.descripcion ?? "",
+            pct_dedicacion: String(r.pct_dedicacion),
+            fecha_inicio: r.fecha_inicio ?? "",
+            fecha_fin: r.fecha_fin ?? "",
+          })));
+        }
+        // En simulación: usar actividades del snapshot local
+        if (simulationMode && simulationActividades) {
+          setActividades(simulationActividades);
+        } else {
+          const { data: actData } = await (supabase as any)
+            .from("engagement_actividades").select("*").eq("engagement_id", engagement.id).order("fecha_inicio");
+          setActividades((actData ?? []).map((a: any) => ({
+            id: a.id, tipo: a.tipo, titulo: a.titulo,
+            descripcion: a.descripcion ?? "", fecha_inicio: a.fecha_inicio, fecha_fin: a.fecha_fin,
+          })));
+        }
       }
     }
     load();
@@ -186,28 +250,39 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
   ) => setForm((f) => ({ ...f, [field]: e.target.value }));
 
-  // Cambia fecha_inicio y recorta reqs cuyo inicio quedó antes del nuevo límite
+  /** Desplaza una fecha ISO en N días */
+  const shiftDate = (fecha: string, deltaDays: number): string => {
+    const d = new Date(fecha + "T00:00:00");
+    d.setDate(d.getDate() + deltaDays);
+    return d.toISOString().split("T")[0];
+  };
+
+  // Cambia fecha_inicio: en simulación los reqs adoptan la misma fecha del engagement
   const handleFechaInicioChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const nuevo = e.target.value;
     setForm((f) => ({ ...f, fecha_inicio: nuevo }));
-    if (nuevo) {
-      setReqs((prev) =>
-        prev.map((r) =>
-          r.fecha_inicio && r.fecha_inicio < nuevo ? { ...r, fecha_inicio: nuevo } : r
-        )
-      );
+    if (!nuevo) return;
+    if (simulationMode) {
+      // Reqs adoptan exactamente la nueva fecha de inicio del engagement
+      setReqs((prev) => prev.map((r) => ({ ...r, fecha_inicio: nuevo })));
+    } else {
+      setReqs((prev) => prev.map((r) =>
+        r.fecha_inicio && r.fecha_inicio < nuevo ? { ...r, fecha_inicio: nuevo } : r
+      ));
     }
   };
 
-  // Cambia fecha_fin_estimada y recorta reqs cuyo fin supera el nuevo límite
+  // Cambia fecha_fin_estimada: en simulación los reqs adoptan la misma fecha del engagement
   const applyFechaFin = (nuevo: string) => {
     setForm((f) => ({ ...f, fecha_fin_estimada: nuevo }));
-    if (nuevo) {
-      setReqs((prev) =>
-        prev.map((r) =>
-          r.fecha_fin && r.fecha_fin > nuevo ? { ...r, fecha_fin: nuevo } : r
-        )
-      );
+    if (!nuevo) return;
+    if (simulationMode) {
+      // Reqs adoptan exactamente la nueva fecha de fin del engagement
+      setReqs((prev) => prev.map((r) => ({ ...r, fecha_fin: nuevo })));
+    } else {
+      setReqs((prev) => prev.map((r) =>
+        r.fecha_fin && r.fecha_fin > nuevo ? { ...r, fecha_fin: nuevo } : r
+      ));
     }
   };
   const handleFechaFinChange = (e: React.ChangeEvent<HTMLInputElement>) => applyFechaFin(e.target.value);
@@ -380,6 +455,27 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
   const handleSubmit = async () => {
     if (!validate()) return;
     setLoading(true); setServerError(null);
+
+    // ── SIMULACIÓN: sin Supabase, notifica al padre con los datos del form ──
+    if (simulationMode) {
+      const simId = engagement?.id ?? `sim_eng_${Date.now()}`;
+      onSimSuccess?.({
+        id: simId,
+        codigo: form.codigo.trim() || null,
+        nombre: form.nombre.trim(),
+        cliente: form.cliente.trim(),
+        tipo: form.tipo,
+        fecha_inicio: form.fecha_inicio,
+        fecha_fin: form.fecha_fin_estimada,
+        reqs,
+        actividades, // viajes y talleres del engagement
+      });
+      setLoading(false);
+      onSuccess();
+      return;
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     const supabase = createAnyClient();
 
     const payload = {
@@ -753,7 +849,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
               options={[
                 { value: "propuesta", label: "Propuesta comercial" },
                 { value: "proyecto", label: "Proyecto" },
-                { value: "ayuda_interna", label: "Ayuda interna" },
+                { value: "ayuda_interna", label: "Desarrollo interno" },
               ]} />
           </FieldWrapper>
           <FieldWrapper label="Estado">
@@ -979,11 +1075,22 @@ export function EngagementForm({ open, onClose, onSuccess, engagement }: Engagem
                     className="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-[#fafafa] transition-colors"
                     onClick={toggleReq}
                   >
-                    <span className="text-xs font-semibold text-[#888]">
-                      Requerimiento {i + 1}
-                      {r.fase_nombre && <span className="ml-1.5 font-normal text-[#aaa]">· {r.fase_nombre}</span>}
-                      {r.cargo_requerido && <span className="ml-1.5 font-normal text-[#aaa]">· {r.cargo_requerido}</span>}
-                    </span>
+                    <div className="flex flex-col gap-0.5">
+                      <span className="text-xs font-semibold text-[#888]">
+                        Requerimiento {i + 1}
+                        {r.fase_nombre && <span className="ml-1.5 font-normal text-[#aaa]">· {r.fase_nombre}</span>}
+                        {r.cargo_requerido && <span className="ml-1.5 font-normal text-[#aaa]">· {r.cargo_requerido}</span>}
+                      </span>
+                      {/* Badge de ausencias en simulación */}
+                      {r.ausenciasPeriodo && r.ausenciasPeriodo.length > 0 && (
+                        <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 w-fit">
+                          ⚠ Ausencia{r.ausenciasPeriodo.length > 1 ? "s" : ""} en periodo:{" "}
+                          {r.ausenciasPeriodo.map((a, j) => (
+                            <span key={j}>{j > 0 ? " · " : ""}{a.desde} → {a.hasta}</span>
+                          ))}
+                        </span>
+                      )}
+                    </div>
                     <div className="flex items-center gap-2">
                       <button
                         type="button"

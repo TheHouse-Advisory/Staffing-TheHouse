@@ -1,11 +1,12 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
+import { Search } from "lucide-react";
 import { addDays, addMonths, format, isWeekend, startOfMonth } from "date-fns";
 import { es } from "date-fns/locale";
 import { createAnyClient } from "@/lib/supabase/client";
 import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
-import { expandirRango } from "@/lib/queries/ausencias";
+import { expandirRango, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 
 const JERARQUIA: Record<string, number> = {
   "Socio": 1, "Director de Proyectos": 2, "Director": 2,
@@ -91,6 +92,7 @@ function calcDiasEngagement(inicio: string, fin: string | null) {
 export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
   const [filas, setFilas] = useState<PersonaFila[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
 
   const pv = periodoVista ?? "dia";
 
@@ -126,14 +128,18 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
         .map((p) => {
           const asigs = ((asigRes.data ?? []) as any[])
             .filter((a) => a.persona_id === p.id)
-            .map((a) => ({
-              id: a.engagement?.id ?? "",
-              nombre: a.engagement?.codigo ? `${a.engagement.codigo}: ${a.engagement.nombre ?? "—"}` : a.engagement?.nombre ?? "—",
-              cliente: a.engagement?.cliente ?? "",
+            .map((a) => {
+            // Supabase puede devolver el join como objeto o array[0]
+            const eng = Array.isArray(a.engagement) ? a.engagement[0] : a.engagement;
+            return {
+              id: eng?.id ?? "",
+              nombre: eng?.codigo ? `${eng.codigo}: ${eng.nombre ?? "—"}` : eng?.nombre ?? "—",
+              cliente: eng?.cliente ?? "",
               inicio: a.fecha_inicio,
               fin: a.fecha_fin,
               pct: a.pct_dedicacion,
-            }));
+            };
+          });
           const ausencias = ((ausenRes.data ?? []) as any[])
             .filter((a) => a.persona_id === p.id)
             .map((a) => ({ inicio: a.fecha_inicio, fin: a.fecha_fin, tipo: a.tipo }));
@@ -160,6 +166,21 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
   const hoy = format(new Date(), "yyyy-MM-dd");
   const columnas = getColumnas(semanaInicio, pv);
 
+  // Filtrado frontend por persona, cargo o engagement
+  const q = searchQuery.toLowerCase().trim();
+  const filasFiltradas = q
+    ? filas.filter((f) =>
+        `${f.nombre} ${f.apellido}`.toLowerCase().includes(q) ||
+        // Búsqueda por iniciales (ej: "MH" → "Mariana Hernández")
+        `${f.nombre[0] ?? ""}${f.apellido[0] ?? ""}`.toLowerCase() === q ||
+        f.cargo.toLowerCase().includes(q) ||
+        f.proyectos.some((p) =>
+          p.nombre.toLowerCase().includes(q) ||       // "CMPC14: Prioridad..." o solo nombre
+          (p.cliente ?? "").toLowerCase().includes(q) // cliente/empresa
+        )
+      )
+    : filas;
+
   // En modo día: filtrar fines de semana
   const columnasMostradas = pv === "dia"
     ? columnas.filter((c) => {
@@ -169,7 +190,19 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
     : columnas;
 
   return (
-    <div className="overflow-auto h-full">
+    <div className="flex flex-col h-full overflow-hidden">
+      {/* Buscador */}
+      <div className="relative mb-2 flex-shrink-0">
+        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Buscar por persona, cargo o engagement..."
+          className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-[#4a90e2] focus:border-[#4a90e2]"
+        />
+      </div>
+    <div className="overflow-auto flex-1">
       <table className="w-full text-xs border-collapse" style={{ minWidth: 520 }}>
         <thead className="sticky top-0 bg-white z-20">
           <tr>
@@ -194,11 +227,11 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
         <tbody>
           {(() => {
             const cargoOrden = [...CARGOS];
-            const sinCargo = filas.filter(
+            const sinCargo = filasFiltradas.filter(
               (f) => !cargoOrden.includes(f.cargo as typeof CARGOS[number])
             );
             const grupos = [
-              ...cargoOrden.map((c) => ({ cargo: c, lista: filas.filter((f) => f.cargo === c) })),
+              ...cargoOrden.map((c) => ({ cargo: c, lista: filasFiltradas.filter((f) => f.cargo === c) })),
               ...(sinCargo.length > 0 ? [{ cargo: "Sin cargo", lista: sinCargo }] : []),
             ].filter((g) => g.lista.length > 0);
 
@@ -291,11 +324,13 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
                       <p className="text-orange-400 pl-2 truncate max-w-[130px]">Ausencia</p>
                     </td>
                     {columnasMostradas.map((col, i) => {
-                      const activa = persona.ausencias.some((a) => overlapsColumna(a.inicio, a.fin, col));
+                      // Toma la primera ausencia activa en la columna para obtener su tipo y color
+                      const ausActiva = persona.ausencias.find((a) => overlapsColumna(a.inicio, a.fin, col));
+                      const cfg = ausActiva ? (COLOR_AUSENCIA[ausActiva.tipo as keyof typeof COLOR_AUSENCIA] ?? { bg: "#9ca3af" }) : null;
                       return (
                         <td key={i} className="py-0.5 px-0.5">
-                          {activa ? (
-                            <div className="h-5 rounded" style={{ background: "#fed7aa" }} />
+                          {cfg ? (
+                            <div className="h-5 rounded" style={{ background: cfg.bg }} />
                           ) : (
                             <div className="h-5 rounded bg-gray-50" />
                           )}
@@ -313,6 +348,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
           })()}
         </tbody>
       </table>
+    </div>
     </div>
   );
 }

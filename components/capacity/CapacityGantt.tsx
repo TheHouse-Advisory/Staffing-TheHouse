@@ -884,7 +884,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                 <div className="flex items-center gap-2">
                   <TrendingUp className="w-3.5 h-3.5 text-[#4a90e2] flex-shrink-0" />
                   <p className="text-[10px] font-bold text-white uppercase tracking-wide leading-tight">
-                    Cap. Real de Venta
+                    Cap. ejecución de proyectos
                   </p>
                 </div>
               </td>

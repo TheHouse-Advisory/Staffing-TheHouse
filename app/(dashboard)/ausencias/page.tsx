@@ -8,24 +8,18 @@ import { HeatmapAusencias } from "@/components/ausencias/HeatmapAusencias";
 import { HeatmapAusenciasMes } from "@/components/ausencias/HeatmapAusenciasMes";
 import { HeatmapAusenciasSemana } from "@/components/ausencias/HeatmapAusenciasSemana";
 import { ResumenVacaciones } from "@/components/ausencias/ResumenVacaciones";
+import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
 
 // ── Constantes ─────────────────────────────────────────────────
+// Feriado: entrada fija no gestionada desde BD
+const LEYENDA_FERIADO = { id: "feriado", label: "Día feriado", color_bg: "#9ca3af", color_text: "#fff" };
+
 const MESES = [
   "Enero","Febrero","Marzo","Abril","Mayo","Junio",
   "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre",
 ];
 const MESES_CORTO = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
 
-const LEYENDA = [
-  { tipo: "vacaciones_confirmadas",   label: "Vacaciones confirmadas",     color: "#38bdf8" },
-  { tipo: "vacaciones_por_confirmar", label: "Vacaciones por confirmar",   color: "#fbbf24" },
-  { tipo: "permiso_sin_goce",         label: "Permiso sin goce de sueldo", color: "#92400e" },
-  { tipo: "dia_post_proyecto",        label: "Día post proyecto",          color: "#f97316" },
-  { tipo: "dia_beneficio",            label: "Día beneficio",              color: "#a855f7" },
-  { tipo: "dia_administrativo",       label: "Día administrativo",         color: "#22c55e" },
-  { tipo: "otro",                     label: "Otro",                       color: "#9ca3af" },
-  { tipo: "feriado",                  label: "Día feriado",                color: "#9ca3af" },
-];
 
 type VistaActiva = "week" | "month" | "year";
 const VISTAS: { key: VistaActiva; label: string }[] = [
@@ -56,6 +50,9 @@ export default function AusenciasPage() {
   const now = new Date();
   const [rol, setRol] = useState<RolSistema | null>(null);
   const isReadOnly = rol === "Desarrollo";
+  const { tipos: tiposDB } = useTiposAusencia();
+  // Leyenda = tipos de BD + feriado fijo al final
+  const leyendaDinamica = [...tiposDB, LEYENDA_FERIADO];
 
   useEffect(() => {
     (async () => {
@@ -181,13 +178,13 @@ export default function AusenciasPage() {
           </div>
         </div>
 
-        {/* Leyenda */}
+        {/* Leyenda dinámica */}
         <div className="flex items-center gap-5 px-6 pb-3 flex-wrap">
-          {LEYENDA.map((l) => (
-            <div key={l.tipo} className="flex items-center gap-2 flex-shrink-0">
+          {leyendaDinamica.map((l) => (
+            <div key={l.id} className="flex items-center gap-2 flex-shrink-0">
               <span
                 className="w-3 h-3 rounded flex-shrink-0"
-                style={{ background: l.color, opacity: l.tipo === "feriado" ? 0.4 : 1 }}
+                style={{ background: l.color_bg, opacity: l.id === "feriado" ? 0.4 : 1 }}
               />
               <span className="text-[12px] text-[#555]">{l.label}</span>
             </div>

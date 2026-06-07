@@ -58,12 +58,15 @@ interface Props {
   defaultTab?: "asignacion" | "perfil";
   onClose: () => void;
   onGuardado: () => void;
+  /** Simulación: skip Supabase, notifica los rangos al padre para actualizar engs local */
+  simulationMode?: boolean;
+  onSimGuardado?: (rangos: { inicio: string; fin: string }[]) => void;
 }
 
 export function ColaboradorModal({
   personaId, personaNombre, engagementId, engagementNombre,
   engInicio, engFin, requerimientoId, cargo, pct, estadoStaffing,
-  defaultTab = "asignacion",
+  defaultTab = "asignacion", simulationMode = false, onSimGuardado,
   onClose, onGuardado,
 }: Props) {
   const [tab, setTab] = useState<"asignacion" | "perfil">(defaultTab);
@@ -195,6 +198,16 @@ export function ColaboradorModal({
     }
 
     setError(null); setSaving(true);
+
+    // ── SIMULACIÓN: actualiza solo el estado local del plan, sin tocar Supabase ──
+    if (simulationMode) {
+      onSimGuardado?.(rangos);
+      setSaving(false);
+      onGuardado();
+      return;
+    }
+    // ─────────────────────────────────────────────────────────────────────────────
+
     const sb = createAnyClient();
     const delQ = (sb as any).from("asignacion").delete()
       .eq("persona_id", personaId).eq("engagement_id", engagementId);

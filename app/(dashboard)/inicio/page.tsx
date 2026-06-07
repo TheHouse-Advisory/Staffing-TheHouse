@@ -198,6 +198,13 @@ export default function InicioPage() {
     return () => window.removeEventListener("asignacionChanged", refreshOcupacion);
   }, [refreshOcupacion]);
 
+  // Escucha aprobación de plan de simulación → fuerza re-fetch completo del Tablero
+  useEffect(() => {
+    const handler = () => setTableroReloadKey((k) => k + 1);
+    window.addEventListener("planAprobado", handler);
+    return () => window.removeEventListener("planAprobado", handler);
+  }, []);
+
   function abrirResumen(p: Persona) { setSeleccionada(p); }
 
   // Agrupar personas por cargo — memoizado: solo cambia con `personas`,

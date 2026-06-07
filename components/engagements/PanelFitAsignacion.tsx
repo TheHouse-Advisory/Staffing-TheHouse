@@ -342,10 +342,19 @@ interface Props {
   onClose: () => void;
   onAsignado: () => void;
   onCollapse?: () => void;
+  /** Simulación: skip Supabase insert, llama onSimAsignar con los datos */
+  simulationMode?: boolean;
+  onSimAsignar?: (payload: { engagementId: string; reqId: string; personaId: string; nombre: string; apellido: string; cargo: string; pct: number; fechaInicio: string; fechaFin: string }) => void;
+  /** Fechas del engagement (requeridas en simulación para construir req sintético) */
+  engInicio?: string;
+  engFin?: string;
+  /** Cargo seleccionado (para filtrar recomendaciones en simulación) */
+  cargo?: string;
 }
 
 export function PanelFitAsignacion({
   reqId, engagementId, engagementNombre, engagementCliente, onClose, onAsignado, onCollapse,
+  simulationMode = false, onSimAsignar, engInicio, engFin, cargo,
 }: Props) {
   const [req, setReq] = useState<ReqConEstado | null>(null);
   const [personas, setPersonas] = useState<PersonaFit[]>([]);
@@ -422,6 +431,35 @@ export function PanelFitAsignacion({
   useEffect(() => {
     async function load() {
       setLoading(true);
+
+      // ── SIMULACIÓN: req sintético con fechas del engagement, sin Supabase ──
+      if (simulationMode) {
+        const hoyStr = today();
+        const reqSint = {
+          id: reqId,
+          engagement_id: engagementId,
+          cargo_requerido: cargo ?? null,
+          pct_dedicacion: 100,
+          fecha_inicio: engInicio ?? hoyStr,
+          fecha_fin: engFin ?? hoyStr,
+          fase_nombre: null,
+          asignadosPct: 0,
+          diasCriticos: [],
+          dias_criticos: [],
+          asignaciones: [],     // requerido por fetchPersonasFit
+          cubierto: false,
+          cubierto_desde_hoy: false,
+        } as any;
+        setReq(reqSint);
+        // Carga personas candidatas desde Supabase (lectura OK en simulación)
+        const sb = createAnyClient();
+        const { personas: pFit } = await fetchPersonasFit(sb, reqSint, [], []);
+        setPersonas(pFit);
+        setLoading(false);
+        return;
+      }
+      // ─────────────────────────────────────────────────────────────────────────
+
       const sb = createAnyClient();
       const hoy = today();
 
@@ -510,8 +548,27 @@ export function PanelFitAsignacion({
     if (!req || asignando) return;
     setAsignando(p.persona_id);
     setErr(null);
-    const sb = createAnyClient();
 
+    // ── SIMULACIÓN: sin escritura en Supabase ─────────────────────────
+    if (simulationMode) {
+      onSimAsignar?.({
+        engagementId, reqId,
+        personaId: p.persona_id,
+        nombre: p.nombre,
+        apellido: p.apellido,
+        cargo: p.cargo_actual ?? "",
+        pct: req.pct_dedicacion ?? 100,
+        fechaInicio: req.fecha_inicio,
+        fechaFin: req.fecha_fin,
+      });
+      setExito(`[Simulación] ${p.nombre} ${p.apellido} añadido al escenario.`);
+      setAsignando(null);
+      setTimeout(() => { onAsignado(); onClose(); }, 900);
+      return;
+    }
+    // ─────────────────────────────────────────────────────────────────
+
+    const sb = createAnyClient();
     const { error } = await (sb as any).from("asignacion").insert({
       engagement_id: engagementId,
       requerimiento_id: reqId,
