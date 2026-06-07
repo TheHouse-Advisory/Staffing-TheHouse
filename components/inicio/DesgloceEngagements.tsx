@@ -240,7 +240,6 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
             pct_dedicacion: payload.pct,
             fecha_inicio: payload.fechaInicio,
             fecha_fin: payload.fechaFin,
-            fase_nombre: null,
           };
           nuevosReqs = [...eg.reqs, nuevoReq];
           reqId = nuevoReqId;
@@ -2546,7 +2545,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               fecha_inicio: eng.fecha_inicio, fecha_fin: eng.fecha_fin,
               personas: [], reqs: nuevosReqs, actividades: [], extensiones: [],
               sort_order: prev.length + 1,
-              raw: { id: eng.id, ...eng } as any,
+              raw: { ...eng, id: eng.id } as any,
             }];
           });
           setFormOpen(false);

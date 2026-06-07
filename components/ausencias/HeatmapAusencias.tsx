@@ -271,7 +271,7 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
       if (err) { setError((err as { message: string }).message); return; }
     } else {
       const { error: err } = await crearAusencia(supabase, {
-        persona_id: personaId, tipo,
+        persona_id: personaId, tipo: tipo as any,
         fecha_inicio: fechaInicio, fecha_fin: fechaFin,
         descripcion: descripcion || undefined,
       });
@@ -283,7 +283,7 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
     onClose();
   }
 
-  const colorPreview = COLOR_AUSENCIA[tipo]?.bg ?? "#ccc";
+  const colorPreview = COLOR_AUSENCIA[tipo as TipoAusencia]?.bg ?? "#ccc";
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
@@ -319,7 +319,7 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
             ) : (
               <select
                 value={personaId}
-                onChange={(e) => pushAndSet(setPersonaId, e.target.value, { personaId, tipo, fechaInicio, fechaFin, descripcion })}
+                onChange={(e) => pushAndSet(setPersonaId, e.target.value, { personaId, tipo: tipo as TipoAusencia, fechaInicio, fechaFin, descripcion })}
                 className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] bg-white focus:outline-none focus:border-[#1a1a1a] transition-colors"
               >
                 <option value="">Seleccionar persona...</option>
@@ -398,7 +398,7 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
               <input
                 type="date"
                 value={fechaInicio}
-                onChange={(e) => pushAndSet(setFechaInicio, e.target.value, { personaId, tipo, fechaInicio, fechaFin, descripcion })}
+                onChange={(e) => pushAndSet(setFechaInicio, e.target.value, { personaId, tipo: tipo as TipoAusencia, fechaInicio, fechaFin, descripcion })}
                 className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] focus:outline-none focus:border-[#1a1a1a] transition-colors"
               />
             </div>
@@ -410,7 +410,7 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
                 type="date"
                 value={fechaFin}
                 min={fechaInicio}
-                onChange={(e) => pushAndSet(setFechaFin, e.target.value, { personaId, tipo, fechaInicio, fechaFin, descripcion })}
+                onChange={(e) => pushAndSet(setFechaFin, e.target.value, { personaId, tipo: tipo as TipoAusencia, fechaInicio, fechaFin, descripcion })}
                 className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] focus:outline-none focus:border-[#1a1a1a] transition-colors"
               />
             </div>
@@ -424,7 +424,7 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
             <input
               type="text"
               value={descripcion}
-              onChange={(e) => pushAndSet(setDescripcion, e.target.value, { personaId, tipo, fechaInicio, fechaFin, descripcion })}
+              onChange={(e) => pushAndSet(setDescripcion, e.target.value, { personaId, tipo: tipo as TipoAusencia, fechaInicio, fechaFin, descripcion })}
               placeholder="Ej: vacaciones de invierno"
               className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] placeholder-[#ccc] focus:outline-none focus:border-[#1a1a1a] transition-colors"
             />

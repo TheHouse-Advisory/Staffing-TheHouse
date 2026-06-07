@@ -94,9 +94,13 @@ interface PersonaSnap {
   id: string; nombre: string; apellido: string; iniciales: string | null;
   cargo: string; pct: number; fecha_inicio: string; fecha_fin: string;
 }
+interface ReqSnapLocal { id: string; cargo_requerido: string | null; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string | null; fase_nombre: string | null; }
+interface ActividadSnapLocal { id?: string; tipo: string; titulo: string; fecha_inicio: string; fecha_fin: string; }
 interface EngSnap {
   id: string; codigo: string | null; nombre: string; cliente: string | null;
   tipo: string; fecha_inicio: string; fecha_fin: string; personas: PersonaSnap[];
+  reqs?: ReqSnapLocal[];
+  actividades?: ActividadSnapLocal[];
 }
 
 /** Convierte EngSnap[] → EngRow[] que acepta DesgloceEngagements como initialEngs */
@@ -497,7 +501,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
             </div>
             <div className="flex-1 overflow-auto min-h-0">
               {vistaResumen === "gantt"
-                ? <GanttAusencias vistaExterna={periodoResumen} baseExterna={semanaResumen} />
+                ? <GanttAusencias vistaExterna={periodoResumen} baseExterna={semanaResumen} onVerPersona={() => {}} />
                 : <PerfilIndividualTablero semanaInicio={semanaResumen} periodoVista={periodoResumen} />
               }
             </div>

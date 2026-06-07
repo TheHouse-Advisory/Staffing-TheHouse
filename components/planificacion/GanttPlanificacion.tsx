@@ -21,6 +21,7 @@ interface PersonaAsig {
   pct: number;
   fecha_inicio: string;
   fecha_fin: string;
+  requerimiento_id?: string | null;
 }
 
 interface ReqSnap {

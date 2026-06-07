@@ -185,7 +185,7 @@ function ModalAusencia({ personas, fechaInicial, personaInicial, editarId, onClo
       if (err) { setError((err as { message: string }).message); return; }
     } else {
       const { error: err } = await crearAusencia(supabase, {
-        persona_id: personaId, tipo,
+        persona_id: personaId, tipo: tipo as any,
         fecha_inicio: fechaInicio, fecha_fin: fechaFin,
         descripcion: descripcion || undefined,
       });
