@@ -105,7 +105,19 @@ interface EngSnap {
 
 /** Convierte EngSnap[] → EngRow[] que acepta DesgloceEngagements como initialEngs */
 function snapToEngRows(snapshot: EngSnap[]): any[] {
-  return snapshot.map((e, i) => ({
+  // Deduplicar por id Y por huella lógica (nombre+tipo+cliente).
+  // Snapshots de planes aprobados varias veces pueden tener sim_eng_* + UUID_A + UUID_B
+  // del mismo engagement con IDs distintos. Primer hit gana (preserva orden de sort_order).
+  const seenId    = new Set<string>();
+  const seenLogic = new Set<string>();
+  const unique = snapshot.filter((e) => {
+    const huella = `${e.nombre}|${e.tipo}|${(e.cliente ?? "").trim().toLowerCase()}`;
+    if (seenId.has(e.id) || seenLogic.has(huella)) return false;
+    seenId.add(e.id);
+    seenLogic.add(huella);
+    return true;
+  });
+  return unique.map((e, i) => ({
     id: e.id,
     codigo: e.codigo,
     nombre: e.nombre,
@@ -184,6 +196,12 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
     simAsigHandlerRef.current = handler;
   }, []);
 
+  // Ref al pushUndo interno de DesgloceEngagements, expuesto vía onRegisterUndoPush
+  const pushUndoRef = useRef<((action: any) => void) | null>(null);
+  const registerUndoPush = useCallback((pushFn: (action: any) => void) => {
+    pushUndoRef.current = pushFn;
+  }, []);
+
   // ── Modal de ausencias detectadas ────────────────────────────
   const [ausenciaModal, setAusenciaModal] = useState<{
     payload: SimAsigPayload;
@@ -203,7 +221,9 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
 
     const ausencias = (aus ?? []) as AusenciaPeriodo[];
     if (ausencias.length === 0) {
-      simAsigHandlerRef.current?.(payload);
+      const simId = `sim_panel_${payload.personaId}_${payload.engagementId}_${Date.now()}`;
+      simAsigHandlerRef.current?.({ ...payload, simId });
+      pushUndoRef.current?.({ type: "staffear", engId: payload.engagementId, label: `Staffear ${payload.nombre} ${payload.apellido}`, ids: [simId] });
       return;
     }
     const segmentos = segmentarSinAusencias(payload.fechaInicio, payload.fechaFin, ausencias);
@@ -216,7 +236,9 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
     const { payload, segmentos } = ausenciaModal;
     // Inyectar un segmento por cada período libre (saltando ausencias)
     for (const seg of segmentos) {
-      simAsigHandlerRef.current?.({ ...payload, fechaInicio: seg.inicio, fechaFin: seg.fin });
+      const simId = `sim_panel_${payload.personaId}_${payload.engagementId}_${seg.inicio}`;
+      simAsigHandlerRef.current?.({ ...payload, fechaInicio: seg.inicio, fechaFin: seg.fin, simId });
+      pushUndoRef.current?.({ type: "staffear", engId: payload.engagementId, label: `Staffear ${payload.nombre} ${payload.apellido}`, ids: [simId] });
     }
     setAusenciaModal(null);
   }
@@ -446,6 +468,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
                 onSimPersonaAsignada={registerSimHandler}
                 onSimEngsChange={onSnapshotChange}
                 onSimDropRequest={handleSimAsignarConValidacion}
+                onRegisterUndoPush={registerUndoPush}
               />
             </div>
           </div>

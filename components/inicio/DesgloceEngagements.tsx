@@ -163,12 +163,15 @@ interface Props {
   onSimEngsChange?: (engs: EngRow[]) => void;
   /** En simulationMode: en lugar de insertar directo, delega al padre para validar ausencias */
   onSimDropRequest?: (payload: SimAsigPayload) => void;
+  /** Expone pushUndo al padre → permite que planificación registre acciones en el undoStack interno */
+  onRegisterUndoPush?: (pushFn: (action: UndoEntry) => void) => void;
 }
 
 export interface SimAsigPayload {
   engagementId: string; reqId: string; personaId: string;
   nombre: string; apellido: string; cargo: string;
   pct: number; fechaInicio: string; fechaFin: string;
+  simId?: string; // ID controlado por el padre para sincronizar undo
 }
 
 // ── Tipo para el undo stack (fuera del componente para evitar re-declaraciones) ──
@@ -177,9 +180,11 @@ type UndoEntry =
   | { type: "desasignar";  engId: string; label: string; asig: { engagement_id: string; requerimiento_id: string; persona_id: string; cargo_al_momento: string | null; pct_dedicacion: number | null; estado: string; estado_staffing: string; fecha_inicio: string; fecha_fin: string } }
   | { type: "resize";      engId: string; label: string; asignacionId: string; edge: "start" | "end"; prevDate: string }
   | { type: "resize_eng";  engId: string; label: string; field: string; prevDate: string }
-  | { type: "move_eng";    engId: string; label: string; prevInicio: string; prevFin: string; finField: string };
+  | { type: "move_eng";    engId: string; label: string; prevInicio: string; prevFin: string; finField: string }
+  | { type: "color_semana"; engId: string; label: string; fecha: string; fecha_fin: string; prevEntry: { fecha: string; fecha_fin: string | null; intensidad: string } | null }
+  | { type: "edit_reqs";   engId: string; label: string; engNombre: string; prevReqs: ReqData[]; prevPersonas: PersonaAsig[] };
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDropRequest }: Props) {
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDropRequest, onRegisterUndoPush }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
   const [baseInterna, setBaseInterna] = useState<Date>(new Date());
 
@@ -227,7 +232,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           return !eg.personas.some((p) => p.requerimiento_id === r.id);
         });
 
-        const simId = `sim_panel_${Date.now()}`;
+        const simId = payload.simId ?? `sim_panel_${Date.now()}`;
 
         // Si no hay req libre, crear uno nuevo en eg.reqs para esta segunda persona
         let reqId: string | null = reqLibre?.id ?? null;
@@ -273,6 +278,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const [engModal, setEngModal] = useState<EngRow | null>(null);
   const [modalIndustria, setModalIndustria] = useState<string | null>(null);
   const modalRef = useRef<HTMLDivElement>(null);
+  // Captura reqs previos al abrir el form (para undo en modo no-simulación)
+  const prevReqsForUndoRef = useRef<ReqData[]>([]);
 
   // Toast de alertas
   const [toast, setToast] = useState<string | null>(null);
@@ -297,6 +304,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   function pushUndo(entry: UndoEntry) {
     setUndoStack(s => [...s.slice(-2), entry]);
   }
+
+  // Expone pushUndo al padre (solo en simulationMode) → planificación lo llama tras cada acción sim
+  useEffect(() => {
+    if (simulationMode && onRegisterUndoPush) onRegisterUndoPush(pushUndo);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [simulationMode, onRegisterUndoPush]);
 
   async function handleUndo() {
     if (!undoStack.length || undoing) return;
@@ -360,6 +373,19 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
             raw: { ...(eg.raw as any), fecha_inicio: last.prevInicio, [last.finField]: last.prevFin },
           }
         ));
+      } else if (last.type === "color_semana") {
+        setDiasCriticosMap((prev) => {
+          const next = new Map(prev);
+          const sin = (next.get(last.engId) ?? []).filter(
+            (dc) => !(dc.fecha === last.fecha && (dc.fecha_fin ?? last.fecha) === last.fecha_fin)
+          );
+          next.set(last.engId, last.prevEntry ? [...sin, last.prevEntry] : sin);
+          return next;
+        });
+      } else if (last.type === "edit_reqs") {
+        setEngs((prev) => prev.map((eg) =>
+          eg.id !== last.engId ? eg : { ...eg, reqs: last.prevReqs, personas: last.prevPersonas }
+        ));
       }
       setUndoStack(s => s.slice(0, -1));
       setUndoing(false);
@@ -389,6 +415,26 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       await (sb as any).from("engagement")
         .update({ fecha_inicio: last.prevInicio, [last.finField]: last.prevFin })
         .eq("id", last.engId);
+    } else if (last.type === "color_semana") {
+      // Eliminar color actual y restaurar el previo (si existía)
+      await sb.from("dia_critico").delete().eq("engagement_id", last.engId).eq("fecha", last.fecha);
+      if (last.prevEntry) {
+        await (sb as any).from("dia_critico").insert({ engagement_id: last.engId, fecha: last.prevEntry.fecha, fecha_fin: last.prevEntry.fecha_fin, intensidad: last.prevEntry.intensidad });
+      }
+      setDiasCriticosMap((prev) => {
+        const next = new Map(prev);
+        const sin = (next.get(last.engId) ?? []).filter((dc) => !(dc.fecha === last.fecha && (dc.fecha_fin ?? last.fecha) === last.fecha_fin));
+        next.set(last.engId, last.prevEntry ? [...sin, last.prevEntry] : sin);
+        return next;
+      });
+    } else if (last.type === "edit_reqs") {
+      // Borrar todos los reqs actuales y restaurar los anteriores con sus IDs originales
+      await sb.from("requerimiento_engagement").delete().eq("engagement_id", last.engId);
+      if (last.prevReqs.length) {
+        await (sb as any).from("requerimiento_engagement").insert(
+          last.prevReqs.map((r) => ({ id: r.id, engagement_id: last.engId, cargo_requerido: r.cargo_requerido, fecha_inicio: r.fecha_inicio, fecha_fin: r.fecha_fin, pct_dedicacion: r.pct_dedicacion ?? 100 }))
+        );
+      }
     }
     setUndoStack(s => s.slice(0, -1));
     setUndoing(false);
@@ -607,8 +653,31 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const lookbackStr = format(addDays(columnas[0].inicio, -90), "yyyy-MM-dd");
 
   useEffect(() => {
-    // ── SIMULACIÓN: no re-fetch; el snapshot inicial ya se cargó al crear el escenario ──
-    if (simulationMode) { setLoading(false); return; }
+    // ── SIMULACIÓN: no re-fetch de engs/asigs, pero SÍ buscamos ausencias en vivo ──────
+    if (simulationMode) {
+      function fetchAusenciasSimulacion() {
+        const sb = createAnyClient();
+        sb.from("ausencia")
+          .select("persona_id, fecha_inicio, fecha_fin, tipo")
+          .lte("fecha_inicio", finStr)
+          .gte("fecha_fin", inicioStr)
+          .then(({ data }: { data: any }) => {
+            setAusencias((data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string }[]);
+          });
+      }
+
+      fetchAusenciasSimulacion();
+
+      // Re-fetch automático cuando el usuario vuelve a esta pestaña / ventana
+      // (cubre el caso: usuario va al sidebar Ausencias, crea una, vuelve al escenario)
+      function handleVisibilityChange() {
+        if (document.visibilityState === "visible") fetchAusenciasSimulacion();
+      }
+      document.addEventListener("visibilitychange", handleVisibilityChange);
+
+      setLoading(false);
+      return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+    }
     // ─────────────────────────────────────────────────────────────────────────────────────
     async function load() {
       setLoading(true);
@@ -1334,6 +1403,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               reqs,
             };
           }));
+          if (prevDate) pushUndo({ type: "resize_eng", engId: resizingEng.eng.id, label: `Cambio fechas "${resizingEng.eng.nombre}"`, field, prevDate });
         } else {
           await (sb as any).from("engagement").update({ [field]: newDate }).eq("id", resizingEng.eng.id);
           if (prevDate) {
@@ -1371,12 +1441,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         // ── SIMULACIÓN: actualiza fechas de persona en estado local ─────
         if (simulationMode) {
           const campo = resizing.edge === "start" ? "fecha_inicio" : "fecha_fin";
+          const prevDate = resizing.p[campo as "fecha_inicio" | "fecha_fin"];
           setEngs((prev) => prev.map((eg) => ({
             ...eg,
             personas: eg.personas.map((p) =>
               p.asignacionId !== resizing.p.asignacionId ? p : { ...p, [campo]: newDate }
             ),
           })));
+          if (prevDate) pushUndo({ type: "resize", engId: "", label: `Cambio fecha persona`, asignacionId: resizing.p.asignacionId, edge: resizing.edge, prevDate });
         } else {
         // ────────────────────────────────────────────────────────────────
         const sb = createAnyClient();
@@ -1431,6 +1503,10 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   }
 
   async function aplicarIntensidad(fecha: string, fecha_fin: string, engId: string, intensidad: string) {
+    // Capturar entrada previa para poder deshacer
+    const prevEntry = (diasCriticosMap.get(engId) ?? []).find(
+      (dc) => dc.fecha === fecha && (dc.fecha_fin ?? fecha) === fecha_fin
+    ) ?? null;
     // Actualización optimista: el color cambia de inmediato en esta instancia
     setDiasCriticosMap((prev) => {
       const next = new Map(prev);
@@ -1441,6 +1517,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       return next;
     });
     setQuickEdit(null);
+    pushUndo({ type: "color_semana", engId, label: `Color semana ${fecha}`, fecha, fecha_fin, prevEntry });
     // ── SIMULACIÓN: el update optimista ya se aplicó arriba, no persiste en DB ─
     if (simulationMode) return;
     // ─────────────────────────────────────────────────────────────────────────
@@ -1749,7 +1826,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                           {/* Botones acción: ocultos en readOnly */}
                           {!readOnly && (
                           <div className="absolute right-0 top-0 bottom-0 flex items-center gap-0.5 bg-white pl-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => { setEngToEdit(eng.raw); setReqsToEdit(eng.reqs ?? []); setActividadesToEdit(eng.actividades ?? []); setFormOpen(true); }}
+                            <button onClick={() => { prevReqsForUndoRef.current = eng.reqs ?? []; setEngToEdit(eng.raw); setReqsToEdit(eng.reqs ?? []); setActividadesToEdit(eng.actividades ?? []); setFormOpen(true); }}
                               title="Editar"
                               className="p-0.5 rounded hover:bg-gray-100 text-gray-400">
                               <Pencil className="w-3 h-3" />
@@ -2500,12 +2577,22 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       <EngagementForm
         open={formOpen}
         onClose={() => setFormOpen(false)}
-        onSuccess={() => { setFormOpen(false); refresh(); }}
+        onSuccess={() => {
+          if (!simulationMode && engToEdit) {
+            pushUndo({ type: "edit_reqs", engId: (engToEdit as any).id, label: `Editar cargos "${(engToEdit as any).nombre ?? ""}"`, engNombre: (engToEdit as any).nombre ?? "", prevReqs: prevReqsForUndoRef.current, prevPersonas: [] });
+          }
+          setFormOpen(false);
+          refresh();
+        }}
         engagement={engToEdit}
         simulationMode={simulationMode}
         simulationReqs={simulationMode ? reqsToEdit : undefined}
         simulationActividades={simulationMode ? actividadesToEdit : undefined}
         onSimSuccess={(eng) => {
+          // Capturar estado previo antes de modificar (para undo en simulación)
+          const engPrev = engs.find((e) => e.id === eng.id);
+          const prevReqsSim  = engPrev?.reqs     ?? [];
+          const prevPersonasSim = engPrev?.personas ?? [];
           // Convierte ReqRow[] del form → ReqData[] para engs local
           const nuevosReqs: ReqData[] = (eng.reqs ?? []).map((r: any, i: number) => ({
             id: r.id ?? `sim_req_${eng.id}_${i}_${Date.now()}`,
@@ -2548,6 +2635,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               raw: { ...eng, id: eng.id } as any,
             }];
           });
+          if (engPrev) pushUndo({ type: "edit_reqs", engId: eng.id, label: `Editar cargos "${eng.nombre}"`, engNombre: eng.nombre, prevReqs: prevReqsSim, prevPersonas: prevPersonasSim });
           setFormOpen(false);
         }}
       />
