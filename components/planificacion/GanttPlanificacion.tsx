@@ -931,12 +931,12 @@ export function GanttPlanificacion() {
           if (ffinSim !== ffinProd) partes.push(`fecha fin: ${ffinProd || "—"} → ${ffinSim || "—"}`);
 
           // Personas: altas, bajas y cambios de pct/fechas
-          const prodPersonaMap = new Map((eProd.personas ?? []).map((p: any) => [p.id, p]));
+          const prodPersonaMap = new Map<string, any>((eProd.personas ?? []).map((p: any) => [p.id, p]));
           const simPersonaIds  = new Set((e.personas ?? []).map((p) => p.id));
           const prodPersonaIds = new Set((eProd.personas ?? []).map((p: any) => p.id));
 
           const agregadas = [...simPersonaIds].filter((pid) => !prodPersonaIds.has(pid)).length;
-          const removidas = [...prodPersonaIds].filter((pid) => !simPersonaIds.has(pid)).length;
+          const removidas = [...prodPersonaIds].filter((pid) => !simPersonaIds.has(pid as string)).length;
           if (agregadas > 0) partes.push(`${agregadas} persona${agregadas > 1 ? "s" : ""} agregada${agregadas > 1 ? "s" : ""}`);
           if (removidas > 0) partes.push(`${removidas} persona${removidas > 1 ? "s" : ""} removida${removidas > 1 ? "s" : ""}`);
 
