@@ -49,6 +49,7 @@ interface EngSnap {
   tipo: string;
   fecha_inicio: string;
   fecha_fin: string;
+  sort_order: number | null; // orden visual del tablero real
   personas: PersonaAsig[];
   reqs?: ReqSnap[];
   actividades?: ActividadSnap[]; // viajes y talleres del engagement
@@ -156,7 +157,7 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
 
   const [engsRes, asigRes] = await Promise.all([
     sb.from("engagement")
-      .select("id, codigo, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
+      .select("id, codigo, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real, sort_order")
       .in("estado", ["activo", "propuesta", "pausado"])
       .eq("is_deleted", false)
       // Incluye engagements sin fecha_inicio (recién creados) y los que empiezan dentro del horizonte
@@ -175,7 +176,15 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
   const engs = (engsRes.data ?? []) as any[];
   const asigs = (asigRes.data ?? []) as any[];
 
-  return engs.map((e) => {
+  // Respetar sort_order del tablero real; sin orden → al final alfabéticamente
+  const sorted = [...engs].sort((a, b) => {
+    if (a.sort_order !== null && b.sort_order !== null) return a.sort_order - b.sort_order;
+    if (a.sort_order !== null) return -1;
+    if (b.sort_order !== null) return 1;
+    return (a.nombre ?? "").localeCompare(b.nombre ?? "");
+  });
+
+  return sorted.map((e) => {
     const personas: PersonaAsig[] = asigs
       .filter((a) => a.engagement_id === e.id)
       .map((a) => {
@@ -199,6 +208,7 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
       tipo: e.tipo ?? "proyecto",
       fecha_inicio: e.fecha_inicio,
       fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? null,
+      sort_order: e.sort_order ?? null,
       personas,
     };
   });
@@ -351,7 +361,13 @@ export function GanttPlanificacion() {
 
       if (!huboMergeEstructural && !huboMergeMetadata) return; // nada cambió, no mutar estado
 
-      const nuevoSnapshot: EngSnap[] = [...snapshotMergeado, ...engNuevos];
+      // Ordenar snapshot mergeado por sort_order del tablero real (nulls al final, luego nombre)
+      const nuevoSnapshot: EngSnap[] = [...snapshotMergeado, ...engNuevos].sort((a, b) => {
+        const sa = a.sort_order ?? Infinity;
+        const sb = b.sort_order ?? Infinity;
+        if (sa !== sb) return sa - sb;
+        return (a.nombre ?? "").localeCompare(b.nombre ?? "", "es");
+      });
 
       // C) "Aceptado" + cambio ESTRUCTURAL → Borrador
       //    Cambios de metadata (nombre/cargo) no degradan el estado aprobado
@@ -432,7 +448,12 @@ export function GanttPlanificacion() {
         return !huellasEnSnapshot.has(huella);
       });
 
-      const nuevoSnapshot: EngSnap[] = [...snapshotMergeado, ...engNuevos];
+      const nuevoSnapshot: EngSnap[] = [...snapshotMergeado, ...engNuevos].sort((a, b) => {
+        const sa = a.sort_order ?? Infinity;
+        const sb = b.sort_order ?? Infinity;
+        if (sa !== sb) return sa - sb;
+        return (a.nombre ?? "").localeCompare(b.nombre ?? "", "es");
+      });
 
       const planActualizado: PlanSimulacion = {
         ...planSeleccionado,
@@ -504,11 +525,29 @@ export function GanttPlanificacion() {
   // Huella estructural: engagement IDs + persona IDs por engagement (ordenados).
   // Si la huella no cambia, es una re-hidratación/re-render, NO una edición del usuario.
   function snapshotHuella(snap: EngSnap[]): string {
+    // NO ordenar: el orden del array refleja el sort_order visual → reordenar cambia la huella
     return JSON.stringify(
-      [...snap]
-        .sort((a, b) => a.id.localeCompare(b.id))
-        .map((e) => [e.id, [...(e.personas ?? [])].map((p) => p.id).sort()])
+      snap.map((e) => [
+        e.id,
+        e.tipo,
+        e.nombre,
+        e.fecha_inicio,
+        e.fecha_fin,
+        [...(e.personas ?? [])].map((p) => p.id).sort(),
+      ])
     );
+  }
+
+  // Degradación directa por cambios que no pasan por el snapshot (ej: color)
+  function handleSimDirty() {
+    if (!planActivo) return;
+    setPlanes((prev) => {
+      const p = prev.find((p) => p.id === planActivo);
+      if (!p || p.estado !== "Aceptado") return prev;
+      const downgraded = { ...p, estado: "Borrador" as const, tieneRealPrevia: false };
+      try { localStorage.setItem(LS_KEY, JSON.stringify(prev.map((x) => x.id === planActivo ? downgraded : x))); } catch {}
+      return prev.map((x) => x.id === planActivo ? downgraded : x);
+    });
   }
 
   function handleSnapshotChange(nextSnapshot: EngSnap[]) {
@@ -681,8 +720,10 @@ export function GanttPlanificacion() {
         .or(`fecha_inicio.is.null,fecha_inicio.lte.${finAprobacion}`)
         .or(`fecha_fin_real.gte.${hoyAprobacion},fecha_fin_estimada.gte.${hoyAprobacion},fecha_fin_real.is.null,fecha_fin_estimada.is.null`);
       const idsRealesActivos = (engsActivos ?? []).map((e: any) => e.id);
+      // newRealIds = UUIDs recién creados en B.1 (valores de idMap) → NO son eliminados
+      const newRealIds = new Set(idMap.values());
       const idsEliminados = idsRealesActivos.filter(
-        (id: string) => !engExistentesCheck.includes(id) && !idMap.has(id)
+        (id: string) => !engExistentesCheck.includes(id) && !idMap.has(id) && !newRealIds.has(id)
       );
       if (idsEliminados.length > 0) {
         const { error: inactErr } = await (sb as any)
@@ -743,8 +784,12 @@ export function GanttPlanificacion() {
             nombre:             eng.nombre,
             codigo:             eng.codigo,
             cliente:            eng.cliente ?? null,
+            tipo:               eng.tipo,
             fecha_inicio:       eng.fecha_inicio,
             fecha_fin_estimada: eng.fecha_fin ?? null,
+            ...(eng.sort_order !== null && eng.sort_order !== undefined
+              ? { sort_order: eng.sort_order }   // persiste orden visual del escenario
+              : {}),
           })
           .eq("id", eng.id);
         // No lanzamos error si falla (el eng puede no existir o tener restricciones)
@@ -1110,6 +1155,7 @@ export function GanttPlanificacion() {
             planId={plan.id}
             planNombre={plan.nombre}
             snapshot={plan.snapshot}
+            onSimDirty={handleSimDirty}
             onSnapshotChange={(engRows: any[]) => {
               // Convierte EngRow[] → EngSnap[] preservando reqs del estado local
               const nextSnapshot: EngSnap[] = engRows.map((eg) => ({
@@ -1120,6 +1166,7 @@ export function GanttPlanificacion() {
                 tipo: eg.tipo ?? "proyecto",
                 fecha_inicio: eg.fecha_inicio,
                 fecha_fin: eg.fecha_fin ?? eg.fecha_inicio,
+                sort_order: eg.sort_order ?? null,
                 personas: (eg.personas ?? []).map((p: any) => ({
                   id: p.id,
                   nombre: p.nombre,

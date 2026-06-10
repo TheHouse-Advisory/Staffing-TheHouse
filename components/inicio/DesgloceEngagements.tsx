@@ -165,6 +165,8 @@ interface Props {
   onSimDropRequest?: (payload: SimAsigPayload) => void;
   /** Expone pushUndo al padre → permite que planificación registre acciones en el undoStack interno */
   onRegisterUndoPush?: (pushFn: (action: UndoEntry) => void) => void;
+  /** Llamado cuando un cambio visual (color) no pasa por onSimEngsChange pero debe marcar el plan como modificado */
+  onSimDirty?: () => void;
 }
 
 export interface SimAsigPayload {
@@ -184,7 +186,7 @@ type UndoEntry =
   | { type: "color_semana"; engId: string; label: string; fecha: string; fecha_fin: string; prevEntry: { fecha: string; fecha_fin: string | null; intensidad: string } | null }
   | { type: "edit_reqs";   engId: string; label: string; engNombre: string; prevReqs: ReqData[]; prevPersonas: PersonaAsig[] };
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDropRequest, onRegisterUndoPush }: Props) {
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
   const [baseInterna, setBaseInterna] = useState<Date>(new Date());
 
@@ -1519,7 +1521,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     setQuickEdit(null);
     pushUndo({ type: "color_semana", engId, label: `Color semana ${fecha}`, fecha, fecha_fin, prevEntry });
     // ── SIMULACIÓN: el update optimista ya se aplicó arriba, no persiste en DB ─
-    if (simulationMode) return;
+    if (simulationMode) { onSimDirty?.(); return; }
     // ─────────────────────────────────────────────────────────────────────────
     // Persiste en DB: reemplaza cualquier registro previo para ese engagement+fecha
     const sb2 = createAnyClient();

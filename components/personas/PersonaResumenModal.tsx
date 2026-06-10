@@ -53,15 +53,23 @@ interface ResumenData {
   historialProyectos: HistorialProyecto[];
 }
 
+interface SimEngSnap {
+  id: string; nombre: string; cliente: string | null; tipo: string;
+  fecha_inicio: string; fecha_fin: string;
+  personas: { id: string; pct: number; fecha_inicio: string; fecha_fin: string }[];
+}
+
 interface Props {
   personaId: string;
   onClose: () => void;
+  /** Snapshot del escenario activo — cuando se pasa, sobreescribe ocupación y proyectos actuales */
+  simulationSnapshot?: SimEngSnap[];
   /** Ignorado — mantenido para compatibilidad con llamadores existentes */
   anchorX?: number;
   anchorY?: number;
 }
 
-export function PersonaResumenModal({ personaId, onClose }: Props) {
+export function PersonaResumenModal({ personaId, onClose, simulationSnapshot }: Props) {
   const [persona, setPersona] = useState<Persona | null>(null);
   const [resumen, setResumen] = useState<ResumenData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -155,6 +163,21 @@ export function PersonaResumenModal({ personaId, onClose }: Props) {
 
   const color = persona ? (COLORES[persona.cargo_actual ?? ""] ?? COLOR_DEFAULT) : COLOR_DEFAULT;
 
+  // Override simulado: cuando hay snapshot, sobreescribir ocupación y proyectos actuales
+  const simData = simulationSnapshot ? (() => {
+    const hoy = format(new Date(), "yyyy-MM-dd");
+    const proyectos = simulationSnapshot.filter((eng) => {
+      const inicio = (eng.fecha_inicio ?? "").slice(0, 10);
+      const fin    = (eng.fecha_fin    ?? "").slice(0, 10);
+      return inicio <= hoy && hoy <= fin && eng.personas.some((p) => p.id === personaId);
+    });
+    const ocupacion = proyectos.reduce((sum, eng) => {
+      const p = eng.personas.find((p) => p.id === personaId);
+      return sum + (p?.pct ?? 0);
+    }, 0);
+    return { ocupacion, proyectos };
+  })() : null;
+
   return (
     /* Backdrop fixed cubre toda la pantalla */
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/50">
@@ -208,26 +231,50 @@ export function PersonaResumenModal({ personaId, onClose }: Props) {
               )}
               <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-xs">Disponibilidad</span>
-                <span
-                  className="font-semibold px-2 py-0.5 rounded-full text-xs"
-                  style={
-                    resumen.ocupacion >= 100
-                      ? { background: "#fef2f2", color: "#dc2626" }
-                      : resumen.ocupacion >= 80
-                      ? { background: "#fefce8", color: "#ca8a04" }
-                      : { background: "#f0fdf4", color: "#16a34a" }
-                  }
-                >
-                  {Math.max(0, 100 - resumen.ocupacion)}% libre
-                </span>
+                {(() => {
+                  const oc = simData ? simData.ocupacion : resumen.ocupacion;
+                  return (
+                    <span className="font-semibold px-2 py-0.5 rounded-full text-xs"
+                      style={
+                        oc >= 100 ? { background: "#fef2f2", color: "#dc2626" }
+                        : oc >= 80 ? { background: "#fefce8", color: "#ca8a04" }
+                        : { background: "#f0fdf4", color: "#16a34a" }
+                      }>
+                      {Math.max(0, 100 - oc)}% libre
+                    </span>
+                  );
+                })()}
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-xs">Nº proyectos</span>
-                <span className="font-medium text-[#1a1a2e] text-xs">{resumen.totalProyectos}</span>
+                <span className="font-medium text-[#1a1a2e] text-xs">
+                  {simData ? simData.proyectos.length : resumen.totalProyectos}
+                </span>
               </div>
               <div>
                 <p className="text-gray-400 text-xs mb-1.5">Proyectos actuales</p>
-                <ProyectosPersonaDetalle personaId={persona.id} compact />
+                {simData ? (
+                  simData.proyectos.length === 0 ? (
+                    <p className="text-[11px] text-gray-300 italic">Sin proyectos activos en este escenario</p>
+                  ) : (
+                    <div className="space-y-1">
+                      {simData.proyectos.map((eng) => {
+                        const pct = eng.personas.find((p) => p.id === personaId)?.pct ?? 0;
+                        return (
+                          <div key={eng.id} className="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-amber-50 border border-amber-100">
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[11px] font-semibold text-slate-800 truncate leading-tight">{eng.nombre}</p>
+                              {eng.cliente && <p className="text-[10px] text-gray-400 truncate">{eng.cliente}</p>}
+                            </div>
+                            <span className="flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">{pct}%</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )
+                ) : (
+                  <ProyectosPersonaDetalle personaId={persona.id} compact />
+                )}
               </div>
               {/* ── Historial de proyectos ── */}
               {resumen.historialProyectos.length > 0 && (

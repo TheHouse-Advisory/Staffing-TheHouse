@@ -117,7 +117,15 @@ function snapToEngRows(snapshot: EngSnap[]): any[] {
     seenLogic.add(huella);
     return true;
   });
-  return unique.map((e, i) => ({
+  // Ordenar por sort_order antes de convertir → DesgloceEngagements recibe el array ya ordenado
+  const sorted = [...unique].sort((a, b) => {
+    const sa = (a as any).sort_order ?? Infinity;
+    const sb = (b as any).sort_order ?? Infinity;
+    if (sa !== sb) return sa - sb;
+    return (a.nombre ?? "").localeCompare(b.nombre ?? "", "es");
+  });
+
+  return sorted.map((e, i) => ({
     id: e.id,
     codigo: e.codigo,
     nombre: e.nombre,
@@ -125,7 +133,7 @@ function snapToEngRows(snapshot: EngSnap[]): any[] {
     tipo: e.tipo,
     fecha_inicio: e.fecha_inicio,
     fecha_fin: e.fecha_fin,
-    sort_order: i,
+    sort_order: (e as any).sort_order ?? i,
     // Restaura reqs del snapshot (preserva eliminaciones hechas en simulación)
     reqs: (e.reqs ?? []).map((r: any) => ({
       id: r.id,
@@ -172,13 +180,14 @@ interface Props {
   snapshot: EngSnap[];
   /** Llamado cada vez que el tablero de simulación cambia → para persistir el snapshot actualizado */
   onSnapshotChange?: (engs: any[]) => void;
+  /** Llamado cuando un cambio visual (color, etc.) no pasa por el snapshot pero debe degradar el estado */
+  onSimDirty?: () => void;
 }
 
 // ── Componente ─────────────────────────────────────────────────
 
-export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChange }: Props) {
+export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChange, onSimDirty }: Props) {
   const [personas, setPersonas]       = useState<Persona[]>([]);
-  const [ocupacionMap, setOcupacionMap] = useState<Record<string, number>>({});
   const [asignacionesDetalle, setAsignacionesDetalle] = useState<AsigDetalle[]>([]);
   const [ausenciasActivas, setAusenciasActivas] = useState<{ persona_id: string; fecha_inicio: string; fecha_fin: string }[]>([]);
   const [loading, setLoading]         = useState(true);
@@ -276,13 +285,10 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
       const hoy = format(new Date(), "yyyy-MM-dd");
       const en7dias = format(addDays(new Date(), 7), "yyyy-MM-dd");
 
-      const [persRes, asigRes, asigDetalleRes, ausRes] = await Promise.all([
+      const [persRes, asigDetalleRes, ausRes] = await Promise.all([
         sb.from("persona")
           .select("id, nombre, apellido, iniciales, cargo_actual, is_leverager, fecha_ingreso")
           .eq("activo", true).order("cargo_actual").order("apellido"),
-        sb.from("asignacion")
-          .select("persona_id, pct_dedicacion")
-          .eq("estado", "activa").lte("fecha_inicio", hoy).gte("fecha_fin", hoy),
         (sb as any).from("asignacion")
           .select("persona_id, fecha_fin, engagement:engagement_id(tipo)")
           .eq("estado", "activa").lte("fecha_inicio", hoy).gte("fecha_fin", hoy),
@@ -292,11 +298,6 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
       ]);
 
       setPersonas((persRes.data ?? []) as Persona[]);
-
-      const map: Record<string, number> = {};
-      for (const a of (asigRes.data ?? []) as { persona_id: string; pct_dedicacion: number }[])
-        map[a.persona_id] = (map[a.persona_id] ?? 0) + Number(a.pct_dedicacion);
-      setOcupacionMap(map);
 
       setAsignacionesDetalle(
         ((asigDetalleRes.data ?? []) as any[]).map((a) => ({
@@ -309,6 +310,22 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
     }
     load();
   }, [planId]); // recarga si cambia el plan
+
+  // Ocupación simulada: recalcula en tiempo real cuando cambia el snapshot
+  const ocupacionMap = useMemo(() => {
+    const hoy = format(new Date(), "yyyy-MM-dd");
+    const map: Record<string, number> = {};
+    for (const eng of snapshot) {
+      for (const p of eng.personas) {
+        const inicio = (p.fecha_inicio ?? "").slice(0, 10);
+        const fin    = (p.fecha_fin    ?? "").slice(0, 10);
+        if (inicio <= hoy && hoy <= fin) {
+          map[p.id] = (map[p.id] ?? 0) + Number(p.pct);
+        }
+      }
+    }
+    return map;
+  }, [snapshot]);
 
   const { grupos, cargos } = useMemo(() => {
     const grupos: Record<string, Persona[]> = {};
@@ -425,7 +442,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
                 )}
 
                 {seleccionada && (
-                  <PersonaResumenModal personaId={seleccionada.id} onClose={() => setSeleccionada(null)} />
+                  <PersonaResumenModal personaId={seleccionada.id} onClose={() => setSeleccionada(null)} simulationSnapshot={snapshot as any} />
                 )}
               </div>
             )}
@@ -467,6 +484,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
                 externalReloadKey={tableroReloadKey}
                 onSimPersonaAsignada={registerSimHandler}
                 onSimEngsChange={onSnapshotChange}
+                onSimDirty={onSimDirty}
                 onSimDropRequest={handleSimAsignarConValidacion}
                 onRegisterUndoPush={registerUndoPush}
               />
@@ -525,7 +543,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
             <div className="flex-1 overflow-auto min-h-0">
               {vistaResumen === "gantt"
                 ? <GanttAusencias vistaExterna={periodoResumen} baseExterna={semanaResumen} onVerPersona={() => {}} />
-                : <PerfilIndividualTablero semanaInicio={semanaResumen} periodoVista={periodoResumen} />
+                : <PerfilIndividualTablero semanaInicio={semanaResumen} periodoVista={periodoResumen} simulationSnapshot={snapshot as any} />
               }
             </div>
           </div>
