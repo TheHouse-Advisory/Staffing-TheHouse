@@ -19,10 +19,11 @@ import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import type { Persona, RolSistema, EstadoAcceso } from "@/lib/types/database";
 
 const ROL_OPTIONS = [
-  { value: "admin",      label: "Admin" },
-  { value: "GyD",        label: "G&D" },
-  { value: "AySr",       label: "A&Sr" },
-  { value: "Desarrollo", label: "Desarrollo" },
+  { value: "admin",          label: "Admin" },
+  { value: "GyD",            label: "G&D" },
+  { value: "AySr",           label: "A&Sr" },
+  { value: "Desarrollo",     label: "Desarrollo" },
+  { value: "planificador",   label: "Planificador" },
 ];
 
 const ESTADO_BADGE: Record<EstadoAcceso, { label: string; bg: string; text: string }> = {

@@ -13,7 +13,8 @@ import { PersonaForm } from "./PersonaForm";
 import { TalentMatrix, getTalentBoxName } from "./TalentMatrix";
 import { EngagementDetalleModal } from "./EngagementDetalleModal";
 import { NotebookPanel } from "./notebook/NotebookPanel";
-import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
+import { CARGO_COLORS, CARGO_COLOR_DEFAULT, CARGOS_OCULTOS_GYD } from "@/lib/constants";
+import { Lock } from "lucide-react";
 import type { Persona } from "@/lib/types/database";
 
 interface Props {
@@ -73,6 +74,7 @@ function colorOcupacion(pct: number) {
 
 export function PersonaProfile({ id }: Props) {
   const [persona, setPersona] = useState<Persona | null>(null);
+  const [rolActual, setRolActual] = useState<string | null>(null);
   const [industrias, setIndustrias] = useState<TagItem[]>([]);
   const [capacidades, setCapacidades] = useState<TagItem[]>([]);
   const [tematicas, setTematicas] = useState<TagItem[]>([]);
@@ -226,6 +228,14 @@ export function PersonaProfile({ id }: Props) {
 
   useEffect(() => {
     load();
+    // Cargar rol del usuario actual para protección de acceso
+    (async () => {
+      const sb = createAnyClient();
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) return;
+      const { data } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
+      setRolActual((data as any)?.rol_sistema ?? null);
+    })();
   }, [id]);
 
   async function handleDeleteHistorial(engId: string) {
@@ -238,6 +248,21 @@ export function PersonaProfile({ id }: Props) {
 
   if (loading) return <p className="text-sm text-[#888] p-6">Cargando...</p>;
   if (!persona) return <p className="text-sm text-red-500 p-6">Persona no encontrada.</p>;
+
+  // Blindaje por URL: planificador no puede ver perfiles de cargos sensibles
+  if ((rolActual === "planificador" || rolActual === "GyD") && CARGOS_OCULTOS_GYD.includes(persona.cargo_actual ?? "")) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full gap-4 text-center py-24">
+        <div className="w-14 h-14 rounded-full bg-[#f5f5f5] flex items-center justify-center">
+          <Lock className="w-6 h-6 text-[#aaa]" />
+        </div>
+        <p className="text-[15px] font-semibold text-[#555]">Acceso Restringido</p>
+        <p className="text-[13px] text-[#aaa] max-w-xs leading-relaxed">
+          No tienes permisos para visualizar perfiles de cargos directivos o pares.
+        </p>
+      </div>
+    );
+  }
 
   const initials = getIniciales(persona.nombre, persona.apellido, persona.iniciales);
   const pctTotal = asignaciones.reduce((sum, a) => sum + a.pct_dedicacion, 0);
@@ -371,7 +396,7 @@ export function PersonaProfile({ id }: Props) {
         </div>
 
         {/* ── Matriz de Talento 9-Box ──────────────────────── */}
-        <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
+        {rolActual !== "planificador" && rolActual !== "GyD" && <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold">Matriz de Talento</h3>
             {!isEditingTalent ? (
@@ -418,7 +443,7 @@ export function PersonaProfile({ id }: Props) {
             isEditable={isEditingTalent}
             onUpdate={(p, d) => setTalentDraft({ p, d })}
           />
-        </div>
+        </div>}
 
         {/* ── Proyectos activos y futuros ───────────────────── */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">

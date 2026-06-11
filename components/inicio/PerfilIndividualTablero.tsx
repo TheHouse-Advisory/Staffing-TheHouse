@@ -32,9 +32,17 @@ interface Columna {
   finStr: string;
 }
 
+interface SimEngSnap {
+  id: string; nombre: string; codigo?: string | null; cliente: string | null;
+  fecha_inicio: string; fecha_fin: string;
+  personas: { id: string; pct: number; fecha_inicio: string; fecha_fin: string }[];
+}
+
 interface Props {
   semanaInicio: Date;
   periodoVista?: "dia" | "semana" | "mes";
+  /** Snapshot del escenario activo — reemplaza la query a asignacion */
+  simulationSnapshot?: SimEngSnap[];
 }
 
 function getColumnas(semanaInicio: Date, pv: string): Columna[] {
@@ -89,7 +97,7 @@ function calcDiasEngagement(inicio: string, fin: string | null) {
   return { dias: expandirRango(inicio, finClamp).length, esFuturo: false };
 }
 
-export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
+export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulationSnapshot }: Props) {
   const [filas, setFilas] = useState<PersonaFila[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -106,6 +114,55 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
       setLoading(true);
       const sb = createAnyClient();
 
+      if (simulationSnapshot) {
+        // Modo simulación: proyectos desde snapshot, ausencias desde Supabase
+        const [persRes, ausenRes] = await Promise.all([
+          sb.from("persona").select("id, nombre, apellido, cargo_actual").eq("activo", true),
+          sb.from("ausencia")
+            .select("persona_id, fecha_inicio, fecha_fin, tipo")
+            .lte("fecha_inicio", fechaFin)
+            .gte("fecha_fin", fechaInicio),
+        ]);
+
+        const personas: PersonaFila[] = ((persRes.data ?? []) as any[])
+          .sort((a, b) => {
+            const ia = JERARQUIA[a.cargo_actual ?? ""] ?? 99;
+            const ib = JERARQUIA[b.cargo_actual ?? ""] ?? 99;
+            return ia !== ib ? ia - ib : a.apellido.localeCompare(b.apellido);
+          })
+          .map((p) => {
+            // Proyectos del snapshot que incluyen a esta persona y solapan el rango visible
+            const proyectos = simulationSnapshot
+              .filter((eng) =>
+                eng.fecha_inicio <= fechaFin &&
+                (eng.fecha_fin ?? fechaFin) >= fechaInicio &&
+                eng.personas.some((ps) => ps.id === p.id)
+              )
+              .map((eng) => {
+                const ps = eng.personas.find((ps) => ps.id === p.id)!;
+                return {
+                  id: eng.id,
+                  nombre: eng.codigo ? `${eng.codigo}: ${eng.nombre}` : eng.nombre,
+                  cliente: eng.cliente ?? "",
+                  inicio: ps.fecha_inicio,
+                  fin: ps.fecha_fin,
+                  pct: ps.pct,
+                };
+              });
+            const ausencias = ((ausenRes.data ?? []) as any[])
+              .filter((a) => a.persona_id === p.id)
+              .map((a) => ({ inicio: a.fecha_inicio, fin: a.fecha_fin, tipo: a.tipo }));
+            return { id: p.id, nombre: p.nombre, apellido: p.apellido,
+                     cargo: p.cargo_actual ?? "Sin cargo", proyectos, ausencias };
+          })
+          .filter((p) => p.proyectos.length > 0 || p.ausencias.length > 0);
+
+        setFilas(personas);
+        setLoading(false);
+        return;
+      }
+
+      // Modo real: query completa a Supabase
       const [persRes, asigRes, ausenRes] = await Promise.all([
         sb.from("persona").select("id, nombre, apellido, cargo_actual").eq("activo", true),
         sb.from("asignacion")
@@ -129,7 +186,6 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
           const asigs = ((asigRes.data ?? []) as any[])
             .filter((a) => a.persona_id === p.id)
             .map((a) => {
-            // Supabase puede devolver el join como objeto o array[0]
             const eng = Array.isArray(a.engagement) ? a.engagement[0] : a.engagement;
             return {
               id: eng?.id ?? "",
@@ -144,12 +200,8 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
             .filter((a) => a.persona_id === p.id)
             .map((a) => ({ inicio: a.fecha_inicio, fin: a.fecha_fin, tipo: a.tipo }));
           return {
-            id: p.id,
-            nombre: p.nombre,
-            apellido: p.apellido,
-            cargo: p.cargo_actual ?? "Sin cargo",
-            proyectos: asigs,
-            ausencias,
+            id: p.id, nombre: p.nombre, apellido: p.apellido,
+            cargo: p.cargo_actual ?? "Sin cargo", proyectos: asigs, ausencias,
           };
         })
         .filter((p) => p.proyectos.length > 0 || p.ausencias.length > 0);
@@ -158,7 +210,10 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista }: Props) {
       setLoading(false);
     }
     load();
-  }, [fechaInicio, fechaFin]);
+  // simulationSnapshot referencia cambia con cada render de SandboxInicioView,
+  // usar JSON como dependencia evita re-fetches infinitos
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fechaInicio, fechaFin, simulationSnapshot]);
 
   if (loading) return <p className="text-sm text-gray-300 p-2">Cargando...</p>;
   if (filas.length === 0) return <p className="text-sm text-gray-300 italic p-2">Sin actividad en este período.</p>;

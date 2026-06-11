@@ -5,7 +5,7 @@ import { ChevronLeft, ChevronRight, Plus, BarChart2 } from "lucide-react";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
 import type { RolSistema } from "@/lib/types/database";
 import { HeatmapAusencias } from "@/components/ausencias/HeatmapAusencias";
-import { HeatmapAusenciasMes } from "@/components/ausencias/HeatmapAusenciasMes";
+import { HeatmapAusenciasQ } from "@/components/ausencias/HeatmapAusenciasQ";
 import { HeatmapAusenciasSemana } from "@/components/ausencias/HeatmapAusenciasSemana";
 import { ResumenVacaciones } from "@/components/ausencias/ResumenVacaciones";
 import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
@@ -21,12 +21,16 @@ const MESES = [
 const MESES_CORTO = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
 
 
-type VistaActiva = "week" | "month" | "year";
+type VistaActiva = "week" | "month" | "quarter";
 const VISTAS: { key: VistaActiva; label: string }[] = [
-  { key: "week",  label: "Semana" },
-  { key: "month", label: "Mes"    },
-  { key: "year",  label: "Año"    },
+  { key: "week",    label: "Semana"    },
+  { key: "month",   label: "Mes"       },
+  { key: "quarter", label: "Trimestre" },
 ];
+
+function getQuarter(d: Date): 1 | 2 | 3 | 4 {
+  return (Math.floor(d.getMonth() / 3) + 1) as 1 | 2 | 3 | 4;
+}
 
 // ── Helpers de semana (lunes–viernes) ──────────────────────────
 function getWeekStart(d: Date): Date {
@@ -49,7 +53,7 @@ function formatWeekLabel(d: Date): string {
 export default function AusenciasPage() {
   const now = new Date();
   const [rol, setRol] = useState<RolSistema | null>(null);
-  const isReadOnly = rol === "Desarrollo";
+  const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD";
   const { tipos: tiposDB } = useTiposAusencia();
   // Leyenda = tipos de BD + feriado fijo al final
   const leyendaDinamica = [...tiposDB, LEYENDA_FERIADO];
@@ -66,8 +70,9 @@ export default function AusenciasPage() {
   }, []);
 
   const [vistaActiva, setVistaActiva] = useState<VistaActiva>("month");
-  // year independiente para vista "Año"
-  const [yearAnio, setYearAnio] = useState(now.getFullYear());
+  // quarter independiente para vista "Trimestre"
+  const [yearAnio, setYearAnio]   = useState(now.getFullYear());
+  const [quarterQ, setQuarterQ]   = useState<1|2|3|4>(getQuarter(now));
   // Una sola fecha pivot — cada vista deriva su rango desde aquí
   const [selectedDate, setSelectedDate] = useState<Date>(
     new Date(now.getFullYear(), now.getMonth(), 1)
@@ -81,27 +86,39 @@ export default function AusenciasPage() {
 
   // ── Navegación unificada ──────────────────────────────────────
   function navPrev() {
-    if (vistaActiva === "year")      { setYearAnio(y => y - 1); return; }
+    if (vistaActiva === "quarter") {
+      if (quarterQ === 1) { setQuarterQ(4); setYearAnio(y => y - 1); }
+      else setQuarterQ(q => (q - 1) as 1|2|3|4);
+      return;
+    }
     const d = new Date(selectedDate);
-    if (vistaActiva === "month")     d.setMonth(d.getMonth() - 1);
-    else                             d.setDate(d.getDate() - 7); // week
+    if (vistaActiva === "month") d.setMonth(d.getMonth() - 1);
+    else                         d.setDate(d.getDate() - 7);
     setSelectedDate(d);
   }
   function navNext() {
-    if (vistaActiva === "year")      { setYearAnio(y => y + 1); return; }
+    if (vistaActiva === "quarter") {
+      if (quarterQ === 4) { setQuarterQ(1); setYearAnio(y => y + 1); }
+      else setQuarterQ(q => (q + 1) as 1|2|3|4);
+      return;
+    }
     const d = new Date(selectedDate);
-    if (vistaActiva === "month")     d.setMonth(d.getMonth() + 1);
-    else                             d.setDate(d.getDate() + 7); // week
+    if (vistaActiva === "month") d.setMonth(d.getMonth() + 1);
+    else                         d.setDate(d.getDate() + 7);
     setSelectedDate(d);
   }
   function navHoy() {
-    if (vistaActiva === "year") { setYearAnio(now.getFullYear()); return; }
+    if (vistaActiva === "quarter") {
+      setQuarterQ(getQuarter(now));
+      setYearAnio(now.getFullYear());
+      return;
+    }
     setSelectedDate(new Date());
   }
 
   function getNavLabel(): string {
-    if (vistaActiva === "year")  return `${yearAnio}`;
-    if (vistaActiva === "month") return `${MESES[month - 1]} ${year}`;
+    if (vistaActiva === "quarter") return `Q${quarterQ} ${yearAnio}`;
+    if (vistaActiva === "month")   return `${MESES[month - 1]} ${year}`;
     return formatWeekLabel(selectedDate);
   }
 
@@ -119,7 +136,13 @@ export default function AusenciasPage() {
             {VISTAS.map(({ key, label }) => (
               <button
                 key={key}
-                onClick={() => setVistaActiva(key)}
+                onClick={() => {
+                  if (key === "quarter" && vistaActiva !== "quarter") {
+                    setQuarterQ(getQuarter(now));
+                    setYearAnio(now.getFullYear());
+                  }
+                  setVistaActiva(key);
+                }}
                 className="px-4 py-1.5 rounded-lg text-[12px] font-semibold transition-all duration-150"
                 style={vistaActiva === key
                   ? { background: "#fff", color: "#1a1a1a", boxShadow: "0 1px 3px rgba(0,0,0,0.10)" }
@@ -159,13 +182,15 @@ export default function AusenciasPage() {
 
           {/* Acciones */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            <button
-              onClick={() => setResumenOpen(true)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e0e0e0] hover:bg-[#f5f5f5] rounded-lg text-[12px] font-semibold text-[#555] transition-colors"
-            >
-              <BarChart2 className="w-3.5 h-3.5" />
-              Resumen vacaciones
-            </button>
+            {rol !== "planificador" && rol !== "GyD" && (
+              <button
+                onClick={() => setResumenOpen(true)}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e0e0e0] hover:bg-[#f5f5f5] rounded-lg text-[12px] font-semibold text-[#555] transition-colors"
+              >
+                <BarChart2 className="w-3.5 h-3.5" />
+                Resumen vacaciones
+              </button>
+            )}
             {!isReadOnly && (
               <button
                 onClick={() => setModalOpen(true)}
@@ -207,9 +232,9 @@ export default function AusenciasPage() {
             />
           )}
 
-          {/* Vista Año — HeatmapAusenciasMes original */}
-          {vistaActiva === "year" && (
-            <HeatmapAusenciasMes year={yearAnio} />
+          {/* Vista Trimestre */}
+          {vistaActiva === "quarter" && (
+            <HeatmapAusenciasQ year={yearAnio} quarter={quarterQ} />
           )}
 
           {/* Vista Semana */}

@@ -165,7 +165,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           estado: engagement.estado,
           descripcion: engagement.descripcion ?? "",
           fecha_inicio: engagement.fecha_inicio ?? "",
-          fecha_fin_estimada: engagement.fecha_fin_estimada ?? "",
+          // fecha_fin_estimada puede estar ausente en raw de sim_eng_* → fallback a fecha_fin
+          fecha_fin_estimada: ((engagement.fecha_fin_estimada ?? (engagement as any).fecha_fin ?? "") as string).slice(0, 10),
           industria_id: engagement.industria_id ?? "",
           capacidades: (ecData ?? []).map((r: any) => r.capacidad_id),
           tematicas: (etData ?? []).map((r: any) => r.tematica_id),

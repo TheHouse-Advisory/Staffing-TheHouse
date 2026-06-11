@@ -4,9 +4,11 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { format, startOfISOWeek, addWeeks, addDays } from "date-fns";
 import { es } from "date-fns/locale";
-import { Plus, X, Loader2, FlaskConical, Save, AlertTriangle, RotateCcw, RefreshCw, Trash2 } from "lucide-react";
+import { Plus, X, Loader2, FlaskConical, Save, AlertTriangle, RotateCcw, RefreshCw, Trash2, MessageSquare, Pencil, FolderX, ChevronDown, ChevronRight } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
+import { getCargoColor } from "@/lib/constants";
 import { SandboxInicioView } from "@/components/planificacion/SandboxInicioView";
+import { AnotacionesDrawer } from "@/components/planificacion/AnotacionesDrawer";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 
@@ -49,6 +51,7 @@ interface EngSnap {
   tipo: string;
   fecha_inicio: string;
   fecha_fin: string;
+  sort_order: number | null; // orden visual del tablero real
   personas: PersonaAsig[];
   reqs?: ReqSnap[];
   actividades?: ActividadSnap[]; // viajes y talleres del engagement
@@ -63,6 +66,14 @@ interface PlanSimulacion {
   mutaciones: Record<string, number | null>;
   /** true si ya tiene un snapshot de data_real_previa en Supabase (plan aprobado) */
   tieneRealPrevia?: boolean;
+  /** UUID del usuario que creó el escenario (auth.users.id) */
+  creadoPor?: string | null;
+  /** Nombre o email del creador (resuelto en memoria, no persistido) */
+  creadoPorNombre?: string | null;
+  /** Cargo del creador para colorear el avatar */
+  creadoPorCargo?: string | null;
+  /** Timestamp ISO cuando se rechazó el escenario (para calcular expiración 30 días) */
+  fechaRechazo?: string | null;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────
@@ -89,14 +100,30 @@ async function cargarPlanesRemoto(): Promise<PlanSimulacion[]> {
     const sb = createAnyClient();
     const { data, error } = await sb
       .from("plan_simulacion")
-      .select("id, nombre, estado, creado_en, data_simulada, data_real_previa")
+      .select("id, nombre, estado, creado_en, creado_por, fecha_rechazo, data_simulada, data_real_previa")
       .order("creado_en", { ascending: false });
     if (error || !data) throw error;
+    // Resolve creator names via persona.auth_user_id
+    const creadorIds = [...new Set((data as any[]).map((r) => r.creado_por).filter(Boolean))];
+    let creadorMap: Record<string, { nombre: string; cargo: string | null }> = {};
+    if (creadorIds.length > 0) {
+      const { data: personas } = await sb
+        .from("persona")
+        .select("auth_user_id, nombre, cargo")
+        .in("auth_user_id", creadorIds);
+      (personas ?? []).forEach((p: any) => {
+        if (p.auth_user_id) creadorMap[p.auth_user_id] = { nombre: p.nombre, cargo: p.cargo };
+      });
+    }
     return (data as any[]).map((row) => ({
       id: row.id,
       nombre: row.nombre,
       estado: row.estado as PlanSimulacion["estado"],
       creadoEn: row.creado_en,
+      creadoPor: row.creado_por ?? null,
+      creadoPorNombre: row.creado_por ? (creadorMap[row.creado_por]?.nombre ?? null) : null,
+      creadoPorCargo: row.creado_por ? (creadorMap[row.creado_por]?.cargo ?? null) : null,
+      fechaRechazo: row.fecha_rechazo ?? null,
       snapshot: (row.data_simulada ?? []) as EngSnap[],
       mutaciones: {},
       tieneRealPrevia: row.data_real_previa != null,
@@ -120,13 +147,16 @@ async function persistirPlan(plan: PlanSimulacion): Promise<void> {
 
   // Persistir en Supabase
   const sb = createAnyClient();
-  await (sb as any).from("plan_simulacion").upsert({
+  const upsertPayload: Record<string, unknown> = {
     id:            plan.id,
     nombre:        plan.nombre,
     estado:        plan.estado,
     creado_en:     plan.creadoEn,
     data_simulada: plan.snapshot,
-  }, { onConflict: "id" });
+  };
+  if (plan.creadoPor !== undefined) upsertPayload.creado_por = plan.creadoPor;
+  if (plan.fechaRechazo !== undefined) upsertPayload.fecha_rechazo = plan.fechaRechazo;
+  await (sb as any).from("plan_simulacion").upsert(upsertPayload, { onConflict: "id" });
 }
 
 /** Elimina el plan de Supabase + localStorage. */
@@ -156,7 +186,7 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
 
   const [engsRes, asigRes] = await Promise.all([
     sb.from("engagement")
-      .select("id, codigo, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
+      .select("id, codigo, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real, sort_order")
       .in("estado", ["activo", "propuesta", "pausado"])
       .eq("is_deleted", false)
       // Incluye engagements sin fecha_inicio (recién creados) y los que empiezan dentro del horizonte
@@ -175,7 +205,15 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
   const engs = (engsRes.data ?? []) as any[];
   const asigs = (asigRes.data ?? []) as any[];
 
-  return engs.map((e) => {
+  // Respetar sort_order del tablero real; sin orden → al final alfabéticamente
+  const sorted = [...engs].sort((a, b) => {
+    if (a.sort_order !== null && b.sort_order !== null) return a.sort_order - b.sort_order;
+    if (a.sort_order !== null) return -1;
+    if (b.sort_order !== null) return 1;
+    return (a.nombre ?? "").localeCompare(b.nombre ?? "");
+  });
+
+  return sorted.map((e) => {
     const personas: PersonaAsig[] = asigs
       .filter((a) => a.engagement_id === e.id)
       .map((a) => {
@@ -199,6 +237,7 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
       tipo: e.tipo ?? "proyecto",
       fecha_inicio: e.fecha_inicio,
       fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? null,
+      sort_order: e.sort_order ?? null,
       personas,
     };
   });
@@ -214,18 +253,38 @@ export function GanttPlanificacion() {
   const [nombreInput, setNombreInput] = useState("");
   const [cargando, setCargando]       = useState(false);
   const [loadingPlanes, setLoadingPlanes] = useState(true);
+  const [currentUserPersona, setCurrentUserPersona] = useState<{ id: string; nombre: string; cargo: string | null; iniciales: string | null } | null>(null);
+  const [drawerAnotacionesId, setDrawerAnotacionesId] = useState<string | null>(null);
+  const [modalConfirmarRechazo, setModalConfirmarRechazo] = useState<{ id: string; nombre: string } | null>(null);
+  const [verArchivados, setVerArchivados] = useState(false);
 
   // Semana de navegación para la grilla
   const [semana, setSemana] = useState(() => startOfISOWeek(new Date()));
   const COLS = 6; // semanas visibles
   const columnas = Array.from({ length: COLS }, (_, i) => addWeeks(semana, i));
 
-  // Carga inicial: Supabase con fallback localStorage
+  // Carga inicial: usuario actual + planes
   useEffect(() => {
-    cargarPlanesRemoto().then((data) => {
+    async function init() {
+      const sb = createAnyClient();
+      try {
+        const { data: sessionData } = await sb.auth.getSession();
+        const userId = sessionData?.session?.user?.id ?? null;
+        if (userId) {
+          const { data: pData } = await sb.from("persona").select("auth_user_id, nombre, cargo, iniciales").eq("auth_user_id", userId).maybeSingle();
+          if (pData) {
+            setCurrentUserPersona({ id: userId, nombre: (pData as any).nombre ?? "", cargo: (pData as any).cargo ?? null, iniciales: (pData as any).iniciales ?? null });
+          } else {
+            const email = sessionData?.session?.user?.email ?? "";
+            setCurrentUserPersona({ id: userId, nombre: email.split("@")[0], cargo: null, iniciales: null });
+          }
+        }
+      } catch { /* sin sesión, no mostrar creador */ }
+      const data = await cargarPlanesRemoto();
       setPlanes(data);
       setLoadingPlanes(false);
-    });
+    }
+    init();
   }, []);
 
   const plan = planes.find((p) => p.id === planActivo) ?? null;
@@ -351,7 +410,13 @@ export function GanttPlanificacion() {
 
       if (!huboMergeEstructural && !huboMergeMetadata) return; // nada cambió, no mutar estado
 
-      const nuevoSnapshot: EngSnap[] = [...snapshotMergeado, ...engNuevos];
+      // Ordenar snapshot mergeado por sort_order del tablero real (nulls al final, luego nombre)
+      const nuevoSnapshot: EngSnap[] = [...snapshotMergeado, ...engNuevos].sort((a, b) => {
+        const sa = a.sort_order ?? Infinity;
+        const sb = b.sort_order ?? Infinity;
+        if (sa !== sb) return sa - sb;
+        return (a.nombre ?? "").localeCompare(b.nombre ?? "", "es");
+      });
 
       // C) "Aceptado" + cambio ESTRUCTURAL → Borrador
       //    Cambios de metadata (nombre/cargo) no degradan el estado aprobado
@@ -432,7 +497,12 @@ export function GanttPlanificacion() {
         return !huellasEnSnapshot.has(huella);
       });
 
-      const nuevoSnapshot: EngSnap[] = [...snapshotMergeado, ...engNuevos];
+      const nuevoSnapshot: EngSnap[] = [...snapshotMergeado, ...engNuevos].sort((a, b) => {
+        const sa = a.sort_order ?? Infinity;
+        const sb = b.sort_order ?? Infinity;
+        if (sa !== sb) return sa - sb;
+        return (a.nombre ?? "").localeCompare(b.nombre ?? "", "es");
+      });
 
       const planActualizado: PlanSimulacion = {
         ...planSeleccionado,
@@ -467,7 +537,11 @@ export function GanttPlanificacion() {
     if (!nombreInput.trim()) return;
     setCargando(true);
     try {
-      const snapshot = await fetchSnapshot();
+      const sb = createAnyClient();
+      const [snapshot, asigRes] = await Promise.all([
+        fetchSnapshot(),
+        sb.from("asignacion").select("*").eq("estado", "activa"),
+      ]);
       const nuevo: PlanSimulacion = {
         id: `plan_${Date.now()}`,
         nombre: nombreInput.trim(),
@@ -475,9 +549,16 @@ export function GanttPlanificacion() {
         estado: "Borrador",
         snapshot,
         mutaciones: {},
+        creadoPor: currentUserPersona?.id ?? null,
+        creadoPorNombre: currentUserPersona?.nombre ?? null,
+        creadoPorCargo: currentUserPersona?.cargo ?? null,
       };
       setPlanes([nuevo, ...planes]);
-      await persistirPlan(nuevo); // guarda en Supabase + localStorage
+      await persistirPlan(nuevo);
+      // Guarda snapshot original inmutable (nunca se sobreescribe en aprobaciones futuras)
+      await (sb as any).from("plan_simulacion")
+        .update({ data_real_original: asigRes.data ?? [] })
+        .eq("id", nuevo.id);
       setPlanActivo(nuevo.id);
       setModalOpen(false);
       setNombreInput("");
@@ -493,6 +574,12 @@ export function GanttPlanificacion() {
       console.warn("[Planificación] cambiarEstado('Aceptado') bloqueado. Usar aprobarPlan() con modal.");
       return;
     }
+    // "Rechazado" requiere confirmación explícita
+    if (estado === "Rechazado") {
+      const p = planes.find((p) => p.id === id);
+      if (p) setModalConfirmarRechazo({ id, nombre: p.nombre });
+      return;
+    }
     const actualizado = planes.find((p) => p.id === id);
     if (!actualizado) return;
     const nuevo = { ...actualizado, estado };
@@ -500,15 +587,46 @@ export function GanttPlanificacion() {
     await persistirPlan(nuevo);
   }
 
+  async function confirmarRechazo() {
+    if (!modalConfirmarRechazo) return;
+    const { id } = modalConfirmarRechazo;
+    const ahora = new Date().toISOString();
+    const actualizado = planes.find((p) => p.id === id);
+    if (!actualizado) return;
+    const nuevo: PlanSimulacion = { ...actualizado, estado: "Rechazado", fechaRechazo: ahora };
+    setPlanes(planes.map((p) => p.id === id ? nuevo : p));
+    if (planActivo === id) setPlanActivo(null);
+    await persistirPlan(nuevo);
+    setModalConfirmarRechazo(null);
+  }
+
   // ── Mutaciones del snapshot (drag&drop, pct, eliminación) ──────────────
   // Huella estructural: engagement IDs + persona IDs por engagement (ordenados).
   // Si la huella no cambia, es una re-hidratación/re-render, NO una edición del usuario.
   function snapshotHuella(snap: EngSnap[]): string {
+    // NO ordenar: el orden del array refleja el sort_order visual → reordenar cambia la huella
     return JSON.stringify(
-      [...snap]
-        .sort((a, b) => a.id.localeCompare(b.id))
-        .map((e) => [e.id, [...(e.personas ?? [])].map((p) => p.id).sort()])
+      snap.map((e) => [
+        e.id,
+        e.tipo,
+        e.nombre,
+        e.fecha_inicio,
+        e.fecha_fin,
+        [...(e.personas ?? [])].map((p) => p.id).sort(),
+      ])
     );
+  }
+
+  // Degradación directa por cambios que no pasan por el snapshot (ej: color)
+  function handleSimDirty() {
+    if (!planActivo) return;
+    setPlanes((prev) => {
+      const p = prev.find((p) => p.id === planActivo);
+      if (!p || p.estado !== "Aceptado") return prev;
+      const downgraded = { ...p, estado: "Borrador" as const, tieneRealPrevia: false };
+      try { localStorage.setItem(LS_KEY, JSON.stringify(prev.map((x) => x.id === planActivo ? downgraded : x))); } catch {}
+      return prev.map((x) => x.id === planActivo ? downgraded : x);
+    });
   }
 
   function handleSnapshotChange(nextSnapshot: EngSnap[]) {
@@ -580,6 +698,8 @@ export function GanttPlanificacion() {
   // ── Modales de confirmación ────────────────────────────────────────────────
   const [modalAprobar,   setModalAprobar]   = useState(false);
   const [modalDeshacer,  setModalDeshacer]  = useState(false);
+  const [restoreChoice,  setRestoreChoice]  = useState<"prev" | "original">("prev");
+  const [sandboxKey,     setSandboxKey]     = useState(0);
   const [aprobando,      setAprobando]      = useState(false);
   const [deshaciendo,    setDeshaciendo]    = useState(false);
   const [errorModal,     setErrorModal]     = useState<string | null>(null);
@@ -681,8 +801,10 @@ export function GanttPlanificacion() {
         .or(`fecha_inicio.is.null,fecha_inicio.lte.${finAprobacion}`)
         .or(`fecha_fin_real.gte.${hoyAprobacion},fecha_fin_estimada.gte.${hoyAprobacion},fecha_fin_real.is.null,fecha_fin_estimada.is.null`);
       const idsRealesActivos = (engsActivos ?? []).map((e: any) => e.id);
+      // newRealIds = UUIDs recién creados en B.1 (valores de idMap) → NO son eliminados
+      const newRealIds = new Set(idMap.values());
       const idsEliminados = idsRealesActivos.filter(
-        (id: string) => !engExistentesCheck.includes(id) && !idMap.has(id)
+        (id: string) => !engExistentesCheck.includes(id) && !idMap.has(id) && !newRealIds.has(id)
       );
       if (idsEliminados.length > 0) {
         const { error: inactErr } = await (sb as any)
@@ -743,8 +865,12 @@ export function GanttPlanificacion() {
             nombre:             eng.nombre,
             codigo:             eng.codigo,
             cliente:            eng.cliente ?? null,
+            tipo:               eng.tipo,
             fecha_inicio:       eng.fecha_inicio,
             fecha_fin_estimada: eng.fecha_fin ?? null,
+            ...(eng.sort_order !== null && eng.sort_order !== undefined
+              ? { sort_order: eng.sort_order }   // persiste orden visual del escenario
+              : {}),
           })
           .eq("id", eng.id);
         // No lanzamos error si falla (el eng puede no existir o tener restricciones)
@@ -819,15 +945,20 @@ export function GanttPlanificacion() {
     try {
       const sb = createAnyClient();
 
-      // A. Leer data_real_previa del plan
+      // A. Leer columna según elección del usuario
+      const colRestaurar = restoreChoice === "original" ? "data_real_original" : "data_real_previa";
       const { data: planRow, error: fetchErr } = await (sb as any)
         .from("plan_simulacion")
-        .select("data_real_previa")
+        .select(colRestaurar)
         .eq("id", plan.id)
         .single();
       if (fetchErr) throw fetchErr;
-      const realPrevia = planRow?.data_real_previa as any[] | null;
-      if (!realPrevia) throw new Error("No hay respaldo previo para restaurar.");
+      const realPrevia = planRow?.[colRestaurar] as any[] | null;
+      if (!realPrevia) throw new Error(
+        restoreChoice === "original"
+          ? "No se encontró el estado original de este escenario."
+          : "No hay un estado previo guardado para restaurar."
+      );
 
       // B. Borrar asignaciones actuales (las del plan aprobado)
       const { error: deleteErr } = await sb
@@ -858,8 +989,11 @@ export function GanttPlanificacion() {
 
       console.log(`[Planificación] Reversión completada: ${realPrevia.length} asignaciones restauradas.`);
 
-      const actualizado = { ...plan, estado: "Borrador" as const, tieneRealPrevia: false };
+      const snapshotRestaurado = await fetchSnapshot();
+      const actualizado = { ...plan, snapshot: snapshotRestaurado, estado: "Borrador" as const, tieneRealPrevia: false };
+      await persistirPlan(actualizado);
       setPlanes((prev) => prev.map((p) => p.id === plan.id ? actualizado : p));
+      setSandboxKey((k) => k + 1);
       window.dispatchEvent(new CustomEvent("planAprobado"));
       window.dispatchEvent(new CustomEvent("asignacionChanged"));
       router.refresh(); // invalida caché → re-fetch al navegar a Inicio
@@ -984,75 +1118,189 @@ export function GanttPlanificacion() {
   return (
     <div className="flex flex-col h-full overflow-hidden bg-[#fafafa]">
 
-      {/* ── Galería de planes — barra compacta ────────────────── */}
-      <div className="flex-shrink-0 bg-white border-b border-[#e8e8e8] px-4 py-1.5 flex items-center gap-3">
-        {/* Título + contador */}
-        <FlaskConical className="w-3.5 h-3.5 text-[#4a90e2] flex-shrink-0" />
-        <span className="text-[11px] font-semibold text-[#1a1a2e] flex-shrink-0">Escenarios</span>
-        <span className="text-[10px] text-[#aaa] flex-shrink-0">({planes.length})</span>
+      {/* ── Modal confirmación rechazo ── */}
+      {modalConfirmarRechazo && (
+        <Modal
+          open={!!modalConfirmarRechazo}
+          onClose={() => setModalConfirmarRechazo(null)}
+          title="¿Confirmar rechazo del escenario?"
+        >
+          <p className="text-[13px] text-[#555] leading-relaxed">
+            El escenario <strong>"{modalConfirmarRechazo.nombre}"</strong> se ocultará de la barra principal
+            y se moverá al <strong>Historial de Descartes</strong>. Se eliminará automáticamente de la base
+            de datos después de <strong>30 días</strong>.
+          </p>
+          <div className="flex justify-end gap-2 mt-5">
+            <Button variant="ghost" onClick={() => setModalConfirmarRechazo(null)}>Cancelar</Button>
+            <Button variant="danger" onClick={confirmarRechazo}>Confirmar Rechazo</Button>
+          </div>
+        </Modal>
+      )}
 
-        {/* Tarjetas inline */}
-        <div className="flex gap-2 overflow-x-auto flex-1 min-w-0">
-          {loadingPlanes && (
-            <span className="text-[11px] text-[#ccc] italic flex items-center gap-1">
-              <Loader2 className="w-3 h-3 animate-spin" />Cargando...
-            </span>
-          )}
-          {!loadingPlanes && planes.length === 0 && (
-            <span className="text-[11px] text-[#ccc] italic">Sin escenarios.</span>
-          )}
-          {planes.map((p) => (
-            <div
-              key={p.id}
-              onClick={() => abrirEscenarioConPull(p.id)}
-              className={`flex-shrink-0 flex items-center gap-2 border rounded-lg px-2.5 py-1 cursor-pointer transition-all ${
-                planActivo === p.id
-                  ? "border-[#4a90e2] bg-blue-50"
-                  : "border-[#e8e8e8] bg-white hover:border-[#4a90e2]/40"
-              }`}>
-              <span className="text-[11px] font-semibold text-[#1a1a2e] max-w-[120px] truncate">{p.nombre}</span>
-              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${ESTADO_STYLE[p.estado]}`}>{p.estado}</span>
-              {/* Cambio rápido de estado — "Aceptado" siempre abre el modal */}
-              <div className="flex gap-1" onClick={(e) => e.stopPropagation()}>
-                {(["Borrador", "Aceptado", "Rechazado"] as const).map((est) => (
-                  <button key={est}
-                    onClick={() => {
-                      if (est === "Aceptado") {
-                        // Selecciona este plan y abre el modal de confirmación
-                        setPlanActivo(p.id);
-                        setErrorModal(null);
-                        setModalAprobar(true);
-                      } else {
-                        cambiarEstado(p.id, est);
-                      }
-                    }}
-                    className={`text-[8px] px-1 py-0.5 rounded border transition-colors ${
-                      p.estado === est ? "border-current font-bold " + ESTADO_STYLE[est] : "border-[#e8e8e8] text-[#bbb] hover:text-[#4a90e2] hover:border-[#4a90e2]"
-                    }`}>{est}</button>
-                ))}
+      {/* ── Drawer de anotaciones ── */}
+      {(() => {
+        const drawerPlan = drawerAnotacionesId ? planes.find((p) => p.id === drawerAnotacionesId) : null;
+        return drawerPlan ? (
+          <AnotacionesDrawer
+            open={!!drawerAnotacionesId}
+            onClose={() => setDrawerAnotacionesId(null)}
+            escenarioId={drawerPlan.id}
+            escenarioNombre={drawerPlan.nombre}
+            currentUserId={currentUserPersona?.id ?? null}
+            currentUserNombre={currentUserPersona?.nombre ?? null}
+            currentUserCargo={currentUserPersona?.cargo ?? null}
+            currentUserIniciales={currentUserPersona?.iniciales ?? null}
+          />
+        ) : null;
+      })()}
+
+      {/* ── Galería + Historial: se ocultan en Modo Enfoque ──── */}
+      {!planActivo && (
+        <div className="flex-shrink-0 bg-white border-b border-[#e8e8e8]">
+
+          {/* Encabezado fijo: título a la izquierda, botón Crear a la derecha */}
+          <div className="flex items-center gap-2 px-4 pt-1.5 pb-1">
+            <FlaskConical className="w-3.5 h-3.5 text-[#4a90e2] flex-shrink-0" />
+            <span className="text-[11px] font-semibold text-[#1a1a2e] flex-shrink-0">Escenarios</span>
+            <span className="text-[10px] text-[#aaa] flex-shrink-0">({planes.filter((p) => p.estado !== "Rechazado").length})</span>
+            <div className="flex-1" />
+            <button onClick={() => setModalOpen(true)}
+              className="flex-shrink-0 flex items-center gap-1 bg-[#1a1a2e] text-white text-[11px] font-semibold px-2.5 py-1 rounded-lg hover:bg-[#2d2d4a] transition-colors">
+              <Plus className="w-3 h-3" />Crear
+            </button>
+          </div>
+
+          {/* Fila de badges — wrappea si hay muchos */}
+          <div className="flex items-center gap-2 px-4 pb-1.5 flex-wrap">
+            {loadingPlanes && <span className="text-[11px] text-[#ccc] italic flex items-center gap-1"><Loader2 className="w-3 h-3 animate-spin" />Cargando...</span>}
+            {!loadingPlanes && planes.filter((p) => p.estado !== "Rechazado").length === 0 && (
+              <span className="text-[11px] text-[#ccc] italic">Sin escenarios. Crea uno.</span>
+            )}
+            {planes.filter((p) => p.estado !== "Rechazado").map((p) => (
+              <div key={p.id} onClick={() => abrirEscenarioConPull(p.id)}
+                className={`flex items-center gap-1.5 border rounded-lg px-2.5 py-1 cursor-pointer transition-all text-[11px] ${
+                  planActivo === p.id ? "border-[#4a90e2] bg-blue-50" : "border-[#e8e8e8] bg-white hover:border-[#4a90e2]/40"
+                }`}>
+                <span className="font-semibold text-[#1a1a2e] max-w-[120px] truncate">{p.nombre}</span>
+                <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${ESTADO_STYLE[p.estado]}`}>{p.estado}</span>
+                {p.creadoPorNombre && (
+                  <span title={`Creado por ${p.creadoPorNombre}`} style={{ display:"inline-flex", alignItems:"center", gap:"3px", flexShrink:0, color:"#64748b", fontSize:"9px" }}>
+                    <span style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", width:"14px", height:"14px", borderRadius:"50%", background: getCargoColor(p.creadoPorCargo), color:"#fff", fontWeight:700, fontSize:"8px", flexShrink:0 }}>
+                      {p.creadoPorNombre.charAt(0).toUpperCase()}
+                    </span>
+                    <span style={{ maxWidth:"55px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.creadoPorNombre.split(" ")[0]}</span>
+                  </span>
+                )}
+                <div className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+                  {(["Borrador","Aceptado","Rechazado"] as const).map((est) => (
+                    <button key={est} onClick={() => { if (est==="Aceptado"){setPlanActivo(p.id);setErrorModal(null);setModalAprobar(true);}else{cambiarEstado(p.id,est);}}}
+                      className={`text-[8px] px-1 py-0.5 rounded border transition-colors ${p.estado===est?"border-current font-bold "+ESTADO_STYLE[est]:"border-[#e8e8e8] text-[#bbb] hover:text-[#4a90e2] hover:border-[#4a90e2]"}`}>{est}</button>
+                  ))}
+                </div>
+                <button onClick={(e)=>{e.stopPropagation();setDrawerAnotacionesId(p.id);}} title="Anotaciones" className="text-[#ccc] hover:text-[#4a90e2] transition-colors flex-shrink-0"><Pencil className="w-3 h-3"/></button>
+                <button onClick={(e)=>{e.stopPropagation();eliminarPlan(p.id);}} title="Eliminar" className="text-[#ccc] hover:text-red-400 transition-colors flex-shrink-0"><Trash2 className="w-3 h-3"/></button>
               </div>
-              <button onClick={(e) => { e.stopPropagation(); eliminarPlan(p.id); }}
-                title="Eliminar escenario"
-                className="text-[#ccc] hover:text-red-400 transition-colors flex-shrink-0">
-                <Trash2 className="w-3 h-3" />
-              </button>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
 
-        {/* Botón crear */}
-        <button onClick={() => setModalOpen(true)}
-          className="flex-shrink-0 flex items-center gap-1 bg-[#1a1a2e] text-white text-[11px] font-semibold px-2.5 py-1 rounded-lg hover:bg-[#2d2d4a] transition-colors">
-          <Plus className="w-3 h-3" />Crear
-        </button>
-      </div>
+          {/* Historial de Descartes */}
+          {(() => {
+            const rechazados = planes.filter((p) => p.estado === "Rechazado").sort((a,b) => (b.fechaRechazo??"").localeCompare(a.fechaRechazo??""));
+            if (rechazados.length === 0) return null;
+            return (
+              <div className="border-t border-[#f0f0f0]">
+                <button onClick={() => setVerArchivados((v) => !v)}
+                  className="w-full flex items-center gap-2 px-4 py-1.5 text-[11px] text-[#888] hover:text-[#555] hover:bg-[#f5f5f5] transition-colors">
+                  <FolderX className="w-3.5 h-3.5 text-red-300 flex-shrink-0" />
+                  <span className="font-medium">Historial de Descartes</span>
+                  <span className="bg-red-100 text-red-500 text-[9px] font-bold px-1.5 py-0.5 rounded-full">{rechazados.length}</span>
+                  {verArchivados ? <ChevronDown className="w-3 h-3 ml-auto" /> : <ChevronRight className="w-3 h-3 ml-auto" />}
+                </button>
+                {verArchivados && (
+                  <div className="flex flex-wrap gap-2 px-4 py-2 bg-red-50/40">
+                    {rechazados.map((p) => {
+                      const dias = p.fechaRechazo ? Math.max(0, 30 - Math.floor((Date.now() - new Date(p.fechaRechazo).getTime()) / 86400000)) : null;
+                      return (
+                        <div key={p.id} onClick={() => setPlanActivo(p.id)}
+                          className="flex items-center gap-1.5 bg-white border border-red-200 rounded-lg px-2.5 py-1 cursor-pointer text-[11px] opacity-80 hover:opacity-100 hover:border-red-400 transition-all">
+                          <span className="font-semibold text-[#555] max-w-[120px] truncate">{p.nombre}</span>
+                          <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 bg-red-100 text-red-600">Rechazado</span>
+                          {dias !== null && <span className={`text-[9px] font-medium flex-shrink-0 ${dias<=5?"text-red-500":"text-[#aaa]"}`}>{dias}d</span>}
+                          {p.creadoPorNombre && (
+                            <span title={`Creado por ${p.creadoPorNombre}`} style={{ display:"inline-flex", alignItems:"center", gap:"3px", flexShrink:0, color:"#64748b", fontSize:"9px" }}>
+                              <span style={{ display:"inline-flex", alignItems:"center", justifyContent:"center", width:"14px", height:"14px", borderRadius:"50%", background: getCargoColor(p.creadoPorCargo), color:"#fff", fontWeight:700, fontSize:"8px", flexShrink:0 }}>
+                                {p.creadoPorNombre.charAt(0).toUpperCase()}
+                              </span>
+                              <span style={{ maxWidth:"55px", overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{p.creadoPorNombre.split(" ")[0]}</span>
+                            </span>
+                          )}
+                          <div className="flex gap-0.5" onClick={(e) => e.stopPropagation()}>
+                            <button
+                              onClick={async () => {
+                                const restaurado: PlanSimulacion = { ...p, estado: "Borrador", fechaRechazo: null };
+                                setPlanes((prev) => prev.map((x) => x.id === p.id ? restaurado : x));
+                                await persistirPlan(restaurado);
+                              }}
+                              className="text-[8px] px-1 py-0.5 rounded border transition-colors border-[#e8e8e8] text-[#bbb] hover:text-[#4a90e2] hover:border-[#4a90e2]"
+                            >Borrador</button>
+                          </div>
+                          <button onClick={(e)=>{e.stopPropagation();setDrawerAnotacionesId(p.id);}} title="Anotaciones" className="text-[#ccc] hover:text-[#4a90e2] transition-colors flex-shrink-0"><Pencil className="w-3 h-3"/></button>
+                          <button onClick={(e)=>{e.stopPropagation();eliminarPlan(p.id);}} title="Eliminar" className="text-[#ccc] hover:text-red-400 transition-colors flex-shrink-0"><Trash2 className="w-3 h-3"/></button>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      )}
 
       {/* ── Barra de acciones del plan activo — compacta ── */}
-      {plan && (
+      {plan && plan.estado === "Rechazado" && (
+        <div className="flex-shrink-0 flex items-center gap-2 px-4 py-1.5 bg-red-50 border-b border-red-200">
+          <button onClick={() => setPlanActivo(null)}
+            className="flex items-center gap-1 text-[10px] text-[#888] hover:text-[#555] transition-colors flex-shrink-0">
+            <ChevronRight className="w-3 h-3 rotate-180" />Ver todos
+          </button>
+          <span className="text-[#ddd] flex-shrink-0">|</span>
+          <FolderX className="w-3.5 h-3.5 text-red-400 flex-shrink-0" />
+          <span className="text-[11px] font-semibold text-[#555] truncate max-w-[200px]">{plan.nombre}</span>
+          <span className="text-[9px] bg-red-100 text-red-500 font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0">Rechazado</span>
+          <span className="text-[10px] text-red-400 flex-shrink-0">Solo lectura</span>
+          <div className="flex-1" />
+          <button
+            onClick={async () => {
+              const restaurado: PlanSimulacion = { ...plan, estado: "Borrador", fechaRechazo: null };
+              setPlanes((prev) => prev.map((p) => p.id === plan.id ? restaurado : p));
+              await persistirPlan(restaurado);
+            }}
+            className="flex items-center gap-1.5 px-3 py-1 text-[11px] font-semibold bg-white border border-red-300 text-red-600 rounded-lg hover:bg-red-600 hover:text-white transition-colors flex-shrink-0">
+            <RotateCcw className="w-3 h-3" />
+            Restaurar a Borrador
+          </button>
+        </div>
+      )}
+
+      {plan && plan.estado !== "Rechazado" && (
         <div className="flex-shrink-0 flex items-center gap-2 px-4 py-1 bg-amber-50 border-b border-amber-200">
+          <button onClick={() => setPlanActivo(null)}
+            className="flex items-center gap-1 text-[10px] text-amber-700/60 hover:text-amber-800 transition-colors flex-shrink-0">
+            <ChevronRight className="w-3 h-3 rotate-180" />Ver todos
+          </button>
+          <span className="text-amber-200 flex-shrink-0">|</span>
           <FlaskConical className="w-3 h-3 text-amber-500 flex-shrink-0" />
           <span className="text-[11px] font-semibold text-[#1a1a2e] truncate max-w-[200px]">{plan.nombre}</span>
           <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${ESTADO_STYLE[plan.estado]}`}>{plan.estado}</span>
+          {plan.creadoPorNombre && (
+            <span title={`Creado por ${plan.creadoPorNombre}${plan.creadoPorCargo ? ` (${plan.creadoPorCargo})` : ""}`} style={{ display: "inline-flex", alignItems: "center", gap: "4px", flexShrink: 0, color: "#78716c", fontSize: "10px" }}>
+              <span style={{ display: "inline-flex", alignItems: "center", justifyContent: "center", width: "18px", height: "18px", borderRadius: "50%", background: getCargoColor(plan.creadoPorCargo), color: "#fff", fontWeight: 700, fontSize: "9px", flexShrink: 0 }}>
+                {plan.creadoPorNombre.charAt(0).toUpperCase()}
+              </span>
+              {plan.creadoPorNombre}
+            </span>
+          )}
           <span className="text-[10px] text-amber-600 flex-shrink-0">🔒 Solo simulación</span>
           {sincronizando && (
             <span className="flex items-center gap-1 text-[10px] text-blue-600 flex-shrink-0">
@@ -1065,6 +1313,15 @@ export function GanttPlanificacion() {
             </span>
           )}
           <div className="flex-1" />
+
+          {/* Anotaciones */}
+          <button
+            onClick={() => plan && setDrawerAnotacionesId(plan.id)}
+            title="Anotaciones y comentarios del escenario"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold border border-[#e8e8e8] text-[#555] bg-white rounded-lg hover:border-[#4a90e2] hover:text-[#4a90e2] transition-colors flex-shrink-0">
+            <MessageSquare className="w-3.5 h-3.5" />
+            <span className="hidden sm:inline">Anotaciones</span>
+          </button>
 
           {/* Sincronizar con datos reales */}
           <button
@@ -1091,25 +1348,36 @@ export function GanttPlanificacion() {
             </button>
           )}
 
-          {/* Deshacer aprobación — solo si está Aceptado y tiene snapshot previo */}
+          {/* Restaurar — solo si está Aceptado y tiene snapshot previo */}
           {plan.estado === "Aceptado" && plan.tieneRealPrevia && (
-            <button onClick={() => { setErrorModal(null); setModalDeshacer(true); }}
+            <button onClick={() => { setErrorModal(null); setRestoreChoice("prev"); setModalDeshacer(true); }}
               className="flex items-center gap-1 px-2.5 py-1 text-[11px] font-semibold bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors"
-              title="Revierte las asignaciones reales al estado anterior a la aprobación">
-              <RotateCcw className="w-3 h-3" />Deshacer Aprobación
+              title="Restaura las asignaciones reales a un estado anterior">
+              <RotateCcw className="w-3 h-3" />Restaurar
             </button>
           )}
         </div>
       )}
 
       {/* ── Vista del plan activo: layout Inicio, datos aislados del snapshot ── */}
-      {plan ? (
+      {plan && plan.estado === "Rechazado" ? (
         <div className="flex-1 overflow-hidden">
           <SandboxInicioView
             key={plan.id}
             planId={plan.id}
             planNombre={plan.nombre}
             snapshot={plan.snapshot}
+            readOnly={true}
+          />
+        </div>
+      ) : plan ? (
+        <div className="flex-1 overflow-hidden">
+          <SandboxInicioView
+            key={`${plan.id}-${sandboxKey}`}
+            planId={plan.id}
+            planNombre={plan.nombre}
+            snapshot={plan.snapshot}
+            onSimDirty={handleSimDirty}
             onSnapshotChange={(engRows: any[]) => {
               // Convierte EngRow[] → EngSnap[] preservando reqs del estado local
               const nextSnapshot: EngSnap[] = engRows.map((eg) => ({
@@ -1120,6 +1388,7 @@ export function GanttPlanificacion() {
                 tipo: eg.tipo ?? "proyecto",
                 fecha_inicio: eg.fecha_inicio,
                 fecha_fin: eg.fecha_fin ?? eg.fecha_inicio,
+                sort_order: eg.sort_order ?? null,
                 personas: (eg.personas ?? []).map((p: any) => ({
                   id: p.id,
                   nombre: p.nombre,
@@ -1240,37 +1509,72 @@ export function GanttPlanificacion() {
         </div>
       </Modal>
 
-      {/* ── Modal: Confirmar Deshacer Aprobación ─────────────── */}
+      {/* ── Modal: Restaurar ─────────────── */}
       <Modal
         open={modalDeshacer}
         onClose={() => !deshaciendo && setModalDeshacer(false)}
-        title="Deshacer Aprobación — Volver Atrás"
+        title="Restaurar escenario"
         footer={
           <>
             <Button variant="secondary" onClick={() => setModalDeshacer(false)} disabled={deshaciendo}>
               Cancelar
             </Button>
             <Button variant="danger" onClick={ejecutarDeshacer} loading={deshaciendo}>
-              {deshaciendo ? "Revirtiendo..." : "Confirmar Reversión"}
+              {deshaciendo ? "Restaurando..." : "Confirmar Restauración"}
             </Button>
           </>
         }
       >
         <div className="space-y-3">
-          <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-            <RotateCcw className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-            <p className="text-[13px] text-red-800 leading-snug">
-              Esto <strong>restaurará las asignaciones reales</strong> al estado exacto anterior
-              a la aprobación de este escenario.
-            </p>
-          </div>
-          <p className="text-[13px] text-[#555] leading-relaxed">
-            Las asignaciones actuales (aplicadas por este plan) serán eliminadas y reemplazadas
-            por el respaldo guardado automáticamente.
-          </p>
-          <p className="text-[13px] text-[#555]">
-            El estado del escenario volverá a <strong>Borrador</strong> y podrás editarlo nuevamente.
-          </p>
+          <p className="text-[13px] text-[#555]">¿A qué estado querés restaurar las asignaciones?</p>
+
+          {/* Card: Volver un paso atrás */}
+          <button
+            type="button"
+            onClick={() => setRestoreChoice("prev")}
+            className={`w-full text-left flex items-start gap-3 p-3 rounded-xl border-2 transition-all ${
+              restoreChoice === "prev"
+                ? "border-[#4a90e2] bg-blue-50"
+                : "border-[#e8e8e8] bg-white hover:border-[#4a90e2]/40"
+            }`}
+          >
+            <span className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+              restoreChoice === "prev" ? "border-[#4a90e2]" : "border-[#ccc]"
+            }`}>
+              {restoreChoice === "prev" && <span className="w-2 h-2 rounded-full bg-[#4a90e2] block" />}
+            </span>
+            <div>
+              <p className="text-[13px] font-semibold text-[#1a1a2e]">Volver un paso atrás</p>
+              <p className="text-[12px] text-[#888] mt-0.5 leading-snug">
+                Restaura al estado justo antes de la <strong>última aprobación</strong> de este escenario.
+              </p>
+            </div>
+          </button>
+
+          {/* Card: Restaurar al original */}
+          <button
+            type="button"
+            onClick={() => setRestoreChoice("original")}
+            className={`w-full text-left flex items-start gap-3 p-3 rounded-xl border-2 transition-all ${
+              restoreChoice === "original"
+                ? "border-red-400 bg-red-50"
+                : "border-[#e8e8e8] bg-white hover:border-red-300"
+            }`}
+          >
+            <span className={`mt-0.5 flex-shrink-0 w-4 h-4 rounded-full border-2 flex items-center justify-center ${
+              restoreChoice === "original" ? "border-red-400" : "border-[#ccc]"
+            }`}>
+              {restoreChoice === "original" && <span className="w-2 h-2 rounded-full bg-red-400 block" />}
+            </span>
+            <div>
+              <p className="text-[13px] font-semibold text-[#1a1a2e]">Restaurar al original</p>
+              <p className="text-[12px] text-[#888] mt-0.5 leading-snug">
+                Elimina <strong>todos</strong> los cambios aprobados y vuelve al estado previo
+                a la creación de <strong>"{plan?.nombre}"</strong>. Esta acción no se puede deshacer.
+              </p>
+            </div>
+          </button>
+
           {errorModal && (
             <p className="text-[12px] text-red-600 bg-red-50 border border-red-200 rounded p-2">{errorModal}</p>
           )}

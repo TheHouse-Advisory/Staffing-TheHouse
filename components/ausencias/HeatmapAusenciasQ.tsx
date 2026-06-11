@@ -7,6 +7,7 @@ import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import type { TipoAusencia } from "@/lib/types/database";
 
 const MESES_CORTO = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
+const MESES_FULL  = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"];
 
 const JERARQUIA = [
   "Socio","Director de Proyectos","Director",
@@ -16,44 +17,53 @@ const JERARQUIA = [
   "Consultor Trainee","Analista","Practicante",
 ];
 
+const Q_MESES: Record<1|2|3|4, [number, number, number]> = {
+  1: [0, 1, 2],
+  2: [3, 4, 5],
+  3: [6, 7, 8],
+  4: [9, 10, 11],
+};
+
 interface PersonaFila {
   id: string;
   nombre: string;
   apellido: string;
   cargo: string | null;
-  meses: Record<number, { tipo: TipoAusencia; dias: number }[]>; // mes 0-11 → tipos con días
+  meses: Record<number, { tipo: TipoAusencia; dias: number }[]>;
 }
 
-interface Props { year: number; }
-
-function diasSolapan(
-  inicio: string, fin: string,
-  mesInicio: Date, mesFin: Date
-): number {
+function diasSolapan(inicio: string, fin: string, mesInicio: Date, mesFin: Date): number {
   const a = new Date(inicio + "T00:00:00") < mesInicio ? mesInicio : new Date(inicio + "T00:00:00");
   const b = new Date(fin   + "T00:00:00") > mesFin    ? mesFin    : new Date(fin   + "T00:00:00");
   if (a > b) return 0;
-  // Días hábiles sin fines de semana ni feriados Chile
   return calculateBusinessDays(a.toISOString().split("T")[0], b.toISOString().split("T")[0]);
 }
 
-export function HeatmapAusenciasMes({ year }: Props) {
+interface Props {
+  year: number;
+  quarter: 1 | 2 | 3 | 4;
+}
+
+export function HeatmapAusenciasQ({ year, quarter }: Props) {
   const [filas, setFilas] = useState<PersonaFila[]>([]);
   const [loading, setLoading] = useState(true);
+  const meses = Q_MESES[quarter];
 
   const load = useCallback(async () => {
     setLoading(true);
     const sb = createClient();
 
-    const inicioAño = `${year}-01-01`;
-    const finAño    = `${year}-12-31`;
+    const primerMes = meses[0];
+    const ultimoMes = meses[2];
+    const inicioQ   = `${year}-${String(primerMes + 1).padStart(2, "0")}-01`;
+    const finQ      = new Date(year, ultimoMes + 1, 0).toISOString().split("T")[0];
 
     const [persRes, ausRes] = await Promise.all([
       sb.from("persona").select("id, nombre, apellido, cargo_actual").eq("activo", true),
       sb.from("ausencia")
         .select("persona_id, tipo, fecha_inicio, fecha_fin")
-        .lte("fecha_inicio", finAño)
-        .gte("fecha_fin",    inicioAño),
+        .lte("fecha_inicio", finQ)
+        .gte("fecha_fin",    inicioQ),
     ]);
 
     const personas = (persRes.data ?? []) as {
@@ -63,18 +73,15 @@ export function HeatmapAusenciasMes({ year }: Props) {
       persona_id: string; tipo: TipoAusencia; fecha_inicio: string; fecha_fin: string;
     }[];
 
-    // Construir mapa persona → mes → {tipo, dias}[]
     const mapaPersona: Record<string, Record<number, Record<TipoAusencia, number>>> = {};
 
     for (const aus of ausencias) {
       if (!mapaPersona[aus.persona_id]) mapaPersona[aus.persona_id] = {};
-
-      for (let m = 0; m < 12; m++) {
+      for (const m of meses) {
         const mesInicio = new Date(year, m, 1);
         const mesFin    = new Date(year, m + 1, 0);
         const dias = diasSolapan(aus.fecha_inicio, aus.fecha_fin, mesInicio, mesFin);
         if (dias <= 0) continue;
-
         if (!mapaPersona[aus.persona_id][m]) mapaPersona[aus.persona_id][m] = {} as Record<TipoAusencia, number>;
         mapaPersona[aus.persona_id][m][aus.tipo] = (mapaPersona[aus.persona_id][m][aus.tipo] ?? 0) + dias;
       }
@@ -82,23 +89,17 @@ export function HeatmapAusenciasMes({ year }: Props) {
 
     const result: PersonaFila[] = personas
       .map((p) => {
-        const meses: PersonaFila["meses"] = {};
+        const mesData: PersonaFila["meses"] = {};
         const mesMap = mapaPersona[p.id] ?? {};
         for (const [m, tiposMap] of Object.entries(mesMap)) {
-          meses[Number(m)] = Object.entries(tiposMap).map(([tipo, dias]) => ({
+          mesData[Number(m)] = Object.entries(tiposMap).map(([tipo, dias]) => ({
             tipo: tipo as TipoAusencia,
             dias: dias as number,
           }));
         }
-        return {
-          id: p.id,
-          nombre: p.nombre,
-          apellido: p.apellido,
-          cargo: p.cargo_actual,
-          meses,
-        };
+        return { id: p.id, nombre: p.nombre, apellido: p.apellido, cargo: p.cargo_actual, meses: mesData };
       })
-      .filter((p) => Object.keys(p.meses).length > 0) // solo con ausencias en el año
+      .filter((p) => Object.keys(p.meses).length > 0)
       .sort((a, b) => {
         const ia = JERARQUIA.indexOf(a.cargo ?? "");
         const ib = JERARQUIA.indexOf(b.cargo ?? "");
@@ -110,7 +111,7 @@ export function HeatmapAusenciasMes({ year }: Props) {
 
     setFilas(result);
     setLoading(false);
-  }, [year]);
+  }, [year, quarter]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 
@@ -119,31 +120,34 @@ export function HeatmapAusenciasMes({ year }: Props) {
 
   if (loading) return <p className="text-sm text-gray-400 p-6">Cargando...</p>;
   if (filas.length === 0)
-    return <p className="text-sm text-gray-400 italic p-6">Sin ausencias registradas para {year}.</p>;
+    return (
+      <p className="text-sm text-gray-400 italic p-6">
+        Sin ausencias registradas para Q{quarter} {year}.
+      </p>
+    );
 
   return (
     <div className="overflow-auto h-full">
-      <table className="text-xs border-collapse" style={{ minWidth: 680 }}>
+      <table className="text-xs border-collapse w-full" style={{ minWidth: 480 }}>
         <thead>
           <tr className="sticky top-0 bg-white z-10">
-            {/* Columna persona */}
             <th
               className="sticky left-0 bg-white z-20 text-left px-3 py-1.5 text-[10px] font-bold text-gray-400 uppercase tracking-widest border-b border-r border-[#f0f0f0]"
               style={{ minWidth: 150 }}
             >
               Persona
             </th>
-            {MESES_CORTO.map((mes, i) => (
+            {meses.map((m) => (
               <th
-                key={i}
-                className="text-center px-1 py-1.5 font-bold border-b border-[#f0f0f0]"
+                key={m}
+                className="text-center px-2 py-1.5 font-bold border-b border-[#f0f0f0]"
                 style={{
-                  minWidth: 56,
-                  color: i === mesActual ? "#4a90e2" : "#aaa",
-                  background: i === mesActual ? "#f0f7ff" : "white",
+                  minWidth: 140,
+                  color: m === mesActual ? "#4a90e2" : "#aaa",
+                  background: m === mesActual ? "#f0f7ff" : "white",
                 }}
               >
-                {mes}
+                {MESES_FULL[m]}
               </th>
             ))}
           </tr>
@@ -151,12 +155,9 @@ export function HeatmapAusenciasMes({ year }: Props) {
 
         <tbody>
           {filas.map((persona, pi) => (
-            <tr
-              key={persona.id}
-              className={pi % 2 === 0 ? "bg-white" : "bg-[#fafafa]"}
-            >
-              {/* Nombre */}
-              <td className="sticky left-0 z-10 px-3 py-1 border-r border-[#f0f0f0]"
+            <tr key={persona.id} className={pi % 2 === 0 ? "bg-white" : "bg-[#fafafa]"}>
+              <td
+                className="sticky left-0 z-10 px-3 py-1.5 border-r border-[#f0f0f0]"
                 style={{ background: pi % 2 === 0 ? "white" : "#fafafa" }}
               >
                 <p className="font-semibold text-[#1a1a2e] truncate max-w-[140px] text-[11px]">
@@ -167,27 +168,27 @@ export function HeatmapAusenciasMes({ year }: Props) {
                 )}
               </td>
 
-              {/* Meses */}
-              {Array.from({ length: 12 }, (_, m) => {
+              {meses.map((m) => {
                 const tipos = persona.meses[m] ?? [];
                 const esActual = m === mesActual;
                 return (
                   <td
                     key={m}
-                    className="px-1 py-0.5 text-center align-middle"
+                    className="px-2 py-1 align-middle"
                     style={{ background: esActual ? "#f0f7ff" : undefined }}
                   >
                     {tipos.length === 0 ? (
                       <div className="h-5" />
                     ) : (
-                      <div className="flex flex-col gap-0.5 items-stretch">
+                      <div className="flex flex-col gap-0.5">
                         {tipos.map(({ tipo, dias }) => {
+                          // Defensive guard: fallback si el tipo no está en el diccionario
                           const cfg = COLOR_AUSENCIA[tipo] ?? { label: tipo, bg: "#9ca3af" };
                           return (
                             <div
                               key={tipo}
                               title={`${cfg.label}: ${dias} ${dias === 1 ? "día" : "días"}`}
-                              className="flex items-center justify-between px-1.5 py-0.5 rounded text-white text-[9px] font-bold leading-none"
+                              className="flex items-center justify-between px-2 py-0.5 rounded text-white text-[9px] font-bold leading-none"
                               style={{ backgroundColor: cfg.bg }}
                             >
                               <span className="truncate">{cfg.label.split(" ")[0]}</span>
