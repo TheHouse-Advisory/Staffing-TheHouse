@@ -6,7 +6,7 @@ import {
   format, isSameDay, parseISO, addDays,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell, BarChart2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell, BarChart2, Lock } from "lucide-react";
 import Link from "next/link";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
 import { CARGOS_OCULTOS_GYD } from "@/lib/constants";
@@ -58,6 +58,8 @@ function ocupColor(pct: number) {
 
 export default function InicioPage() {
   const [rol, setRol] = useState<RolSistema | null>(null);
+  const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD";
+  const isPlanificador = rol === "planificador" || rol === "GyD";
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [ocupacionMap, setOcupacionMap] = useState<Record<string, number>>({});
   const [asignacionesDetalle, setAsignacionesDetalle] = useState<AsigDetalle[]>([]);
@@ -227,29 +229,31 @@ export default function InicioPage() {
           <h1 className="text-[22px] font-bold text-[#1a1a2e]">Menú Principal</h1>
           <p className="text-sm text-gray-400 mt-0.5">Resumen general del equipo</p>
         </div>
-        <div className="flex items-center gap-2">
-          <Link
-            href="/alertas"
-            className="relative flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#4a90e2] transition-colors text-sm font-semibold text-[#1a1a2e] shadow-sm"
-          >
-            <Bell className="w-4 h-4 text-[#4a90e2]" />
-            Alertas
-            {alertasHoy > 0 && (
-              <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
-                {alertasHoy}
-              </span>
-            )}
-          </Link>
-          <Link
-            href="/reportes"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#4a90e2] transition-colors text-sm font-semibold text-[#1a1a2e] shadow-sm"
-          >
-            <BarChart2 className="w-4 h-4 text-[#4a90e2]" />
-            Reportes
-          </Link>
-        </div>
+        {rol !== "planificador" && rol !== "GyD" && (
+          <div className="flex items-center gap-2">
+            <Link
+              href="/alertas"
+              className="relative flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#4a90e2] transition-colors text-sm font-semibold text-[#1a1a2e] shadow-sm"
+            >
+              <Bell className="w-4 h-4 text-[#4a90e2]" />
+              Alertas
+              {alertasHoy > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 w-5 h-5 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                  {alertasHoy}
+                </span>
+              )}
+            </Link>
+            <Link
+              href="/reportes"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 hover:border-[#4a90e2] transition-colors text-sm font-semibold text-[#1a1a2e] shadow-sm"
+            >
+              <BarChart2 className="w-4 h-4 text-[#4a90e2]" />
+              Reportes
+            </Link>
+          </div>
+        )}
       </div>
 
       {/* Layout 3 columnas: EQUIPO | TABLERO+RESUMEN | RECOMENDACIONES */}
@@ -334,6 +338,26 @@ export default function InicioPage() {
                       {grupos[cargo].map((p) => {
                         const pct = Math.round(ocupacionMap[p.id] ?? 0);
                         const oc = ocupColor(pct);
+                        const esRestringido = isPlanificador && CARGOS_OCULTOS_GYD.includes(p.cargo_actual ?? "");
+
+                        if (esRestringido) {
+                          return (
+                            <div
+                              key={p.id}
+                              title="Información restringida"
+                              className="flex flex-col items-center gap-0.5 opacity-40 cursor-not-allowed"
+                            >
+                              <div
+                                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[12px] font-bold shadow-sm grayscale"
+                                style={{ backgroundColor: color }}
+                              >
+                                {iniciales(p.nombre, p.apellido, p.iniciales)}
+                              </div>
+                              <Lock className="w-2.5 h-2.5 text-gray-400" />
+                            </div>
+                          );
+                        }
+
                         return (
                           <button
                             key={p.id}
@@ -355,7 +379,6 @@ export default function InicioPage() {
                               >
                                 {iniciales(p.nombre, p.apellido, p.iniciales)}
                               </div>
-                              {/* Indicador Apalancador */}
                               {p.is_leverager && (
                                 <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#3b5bdb] border-2 border-white flex items-center justify-center text-white font-bold leading-none" style={{ fontSize: 7 }}>
                                   A
@@ -383,6 +406,7 @@ export default function InicioPage() {
             <PersonaResumenModal
               personaId={seleccionada.id}
               onClose={() => setSeleccionada(null)}
+              ocultarMatriz={rol === "planificador" || rol === "GyD"}
             />
           )}
         </div>
@@ -423,8 +447,9 @@ export default function InicioPage() {
           </div>
           <div className="flex-1 overflow-auto min-h-0">
             <DesgloceEngagements
-              onAsignacionChange={refreshOcupacion}
-              onOpenPanel={abrirPanel}
+              readOnly={isReadOnly}
+              onAsignacionChange={isReadOnly ? undefined : refreshOcupacion}
+              onOpenPanel={isReadOnly ? undefined : abrirPanel}
               externalReloadKey={tableroReloadKey}
             />
           </div>

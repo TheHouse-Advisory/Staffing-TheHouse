@@ -2067,20 +2067,22 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                   style={{ maxWidth: 46 }}>
                                   {cargo}
                                 </button>
-                                <div className="absolute right-0 top-0 bottom-0 flex items-center bg-white opacity-0 group-hover/cargo:opacity-100 transition-opacity">
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); openEditReq(eng, cargo); }}
-                                    title="Editar fechas del requerimiento"
-                                    className="p-0.5 rounded hover:bg-blue-50 text-gray-200 hover:text-blue-400 transition-colors">
-                                    <Pencil className="w-2.5 h-2.5" />
-                                  </button>
-                                  <button
-                                    onClick={(e) => { e.stopPropagation(); openDeleteReq(eng, cargo); }}
-                                    title="Eliminar requerimiento"
-                                    className="p-0.5 rounded hover:bg-red-50 text-gray-200 hover:text-red-400 transition-colors">
-                                    <Trash2 className="w-2.5 h-2.5" />
-                                  </button>
-                                </div>
+                                {!readOnly && (
+                                  <div className="absolute right-0 top-0 bottom-0 flex items-center bg-white opacity-0 group-hover/cargo:opacity-100 transition-opacity">
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); openEditReq(eng, cargo); }}
+                                      title="Editar fechas del requerimiento"
+                                      className="p-0.5 rounded hover:bg-blue-50 text-gray-200 hover:text-blue-400 transition-colors">
+                                      <Pencil className="w-2.5 h-2.5" />
+                                    </button>
+                                    <button
+                                      onClick={(e) => { e.stopPropagation(); openDeleteReq(eng, cargo); }}
+                                      title="Eliminar requerimiento"
+                                      className="p-0.5 rounded hover:bg-red-50 text-gray-200 hover:text-red-400 transition-colors">
+                                      <Trash2 className="w-2.5 h-2.5" />
+                                    </button>
+                                  </div>
+                                )}
                               </div>
                             ) : (
                               /* Filas invisibles: preservan el ancho para simetría exacta */

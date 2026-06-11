@@ -30,17 +30,45 @@ export const CARGOS_OPTIONS = [
 
 /** Color por cargo — fuente única para toda la app */
 export const CARGO_COLORS: Record<string, string> = {
-  "Socio":                   "#1a1a2e",
+  // Socio
+  "Socio": "#1a1a2e",
+  // Director / Gerente
   "Director / Gerente de Proyectos": "#4a90e2",
-  "Asociado":                       "#e2884a",
-  "Consultor Senior":               "#4ab89a",
-  "Asociado / Consultor Senior":    "#e2884a",
-  "Consultor de Proyectos":  "#e24a6a",
-  "Consultor Analista":      "#a0b84a",
-  "Consultor Trainee":       "#c07c4a",
-  "Desarrollo":              "#94a3b8",
+  "Director de Proyectos": "#4a90e2",
+  "Director": "#4a90e2",
+  "Gerente de Proyectos": "#4a90e2",
+  "Gerente": "#4a90e2",
+  // Asociado / Consultor Senior
+  "Asociado / Consultor Senior": "#e2884a",
+  "Asociado": "#e2884a",
+  "Consultor Senior": "#4ab89a",
+  // Consultor de Proyectos
+  "Consultor de Proyectos": "#e24a6a",
+  "Consultor Proyecto": "#e24a6a",
+  "Consultor": "#e24a6a",
+  // Consultor Analista / Analista Senior
+  "Consultor Analista": "#a0b84a",
+  "Analista Senior": "#a0b84a",
+  // Consultor Trainee / Analista / Practicante
+  "Consultor Trainee": "#c07c4a",
+  "Analista": "#c07c4a",
+  "Practicante": "#c07c4a",
+  // Desarrollo / otros
+  "Desarrollo": "#94a3b8",
 };
 export const CARGO_COLOR_DEFAULT = "#94a3b8";
+
+/** Devuelve el color del cargo, buscando coincidencia parcial si no hay exacta. */
+export function getCargoColor(cargo: string | null | undefined): string {
+  if (!cargo) return CARGO_COLOR_DEFAULT;
+  if (CARGO_COLORS[cargo]) return CARGO_COLORS[cargo];
+  // Partial match: busca la key que está contenida en el cargo o viceversa
+  const c = cargo.toLowerCase();
+  for (const [key, color] of Object.entries(CARGO_COLORS)) {
+    if (c.includes(key.toLowerCase()) || key.toLowerCase().includes(c)) return color;
+  }
+  return CARGO_COLOR_DEFAULT;
+}
 
 /** Cargos que el rol GyD NO puede ver en ninguna pantalla */
 export const CARGOS_OCULTOS_GYD: string[] = [

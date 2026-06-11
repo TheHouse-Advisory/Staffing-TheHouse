@@ -104,6 +104,10 @@ export function EngagementDetail({ id }: Props) {
   const [nuevoDiaDesc, setNuevoDiaDesc] = useState("");
   const [diasCriticosGuardando, setDiasCriticosGuardando] = useState(false);
 
+  // Control de acceso
+  const [rolActual, setRolActual] = useState<string | null>(null);
+  const isReadOnly = rolActual === "planificador" || rolActual === "GyD";
+
   // ── Carga de datos ─────────────────────────────────────────────
   const load = async () => {
     const supabase = createClient();
@@ -206,7 +210,16 @@ export function EngagementDetail({ id }: Props) {
     setDiasCriticos((prev) => prev.filter((d) => d.id !== dcId));
   };
 
-  useEffect(() => { load(); }, [id]);
+  useEffect(() => {
+    load();
+    (async () => {
+      const sb = createAnyClient();
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) return;
+      const { data } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
+      setRolActual((data as any)?.rol_sistema ?? null);
+    })();
+  }, [id]);
 
   // ── Eliminar engagement ────────────────────────────────────────
   const handleEliminar = async () => {
@@ -356,14 +369,18 @@ export function EngagementDetail({ id }: Props) {
               <p className="text-[#888]">{engagement.cliente}</p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
-              <Button variant="ghost" size="sm" onClick={() => setEditando(true)}
-                className="text-[#888] hover:text-[#1a1a1a]" title="Editar engagement">
-                <Pencil className="w-3.5 h-3.5" />
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(true)}
-                className="text-[#888] hover:text-red-500" title="Eliminar engagement">
-                <Trash2 className="w-3.5 h-3.5" />
-              </Button>
+              {!isReadOnly && (
+                <Button variant="ghost" size="sm" onClick={() => setEditando(true)}
+                  className="text-[#888] hover:text-[#1a1a1a]" title="Editar engagement">
+                  <Pencil className="w-3.5 h-3.5" />
+                </Button>
+              )}
+              {!isReadOnly && (
+                <Button variant="ghost" size="sm" onClick={() => setConfirmDelete(true)}
+                  className="text-[#888] hover:text-red-500" title="Eliminar engagement">
+                  <Trash2 className="w-3.5 h-3.5" />
+                </Button>
+              )}
               <span className="text-xs px-2.5 py-1 rounded-full font-medium"
                 style={{ background: estilos.bg, color: estilos.text }}>
                 {estilos.label}
@@ -442,10 +459,12 @@ export function EngagementDetail({ id }: Props) {
         <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-[15px]">Requerimientos y asignaciones</h3>
-            <Button size="sm" onClick={abrirNuevoReq}>
-              <Plus className="w-3.5 h-3.5" />
-              Nuevo requerimiento
-            </Button>
+            {!isReadOnly && (
+              <Button size="sm" onClick={abrirNuevoReq}>
+                <Plus className="w-3.5 h-3.5" />
+                Nuevo requerimiento
+              </Button>
+            )}
           </div>
 
           {tieneRequerimientos ? (
@@ -496,27 +515,31 @@ export function EngagementDetail({ id }: Props) {
                                 {cubierto ? "Cubierto" : "Sin cubrir"}
                               </span>
                               {/* Editar y eliminar requerimiento */}
-                              <button
-                                onClick={() => abrirEditarReq(r.requerimiento_id)}
-                                className="p-1 rounded hover:bg-[#f0f0f0] text-[#aaa] hover:text-[#555] transition-colors"
-                                title="Editar requerimiento"
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setReqDeleteId(r.requerimiento_id)}
-                                className="p-1 rounded hover:bg-red-50 text-[#aaa] hover:text-red-500 transition-colors"
-                                title="Eliminar requerimiento"
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </button>
-                              <button
-                                onClick={() => setReqFitOpen(r)}
-                                className="p-1 rounded hover:bg-blue-50 text-[#aaa] hover:text-blue-500 transition-colors"
-                                title="Asignar persona"
-                              >
-                                <Plus className="w-3.5 h-3.5" />
-                              </button>
+                              {!isReadOnly && (
+                                <>
+                                  <button
+                                    onClick={() => abrirEditarReq(r.requerimiento_id)}
+                                    className="p-1 rounded hover:bg-[#f0f0f0] text-[#aaa] hover:text-[#555] transition-colors"
+                                    title="Editar requerimiento"
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => setReqDeleteId(r.requerimiento_id)}
+                                    className="p-1 rounded hover:bg-red-50 text-[#aaa] hover:text-red-500 transition-colors"
+                                    title="Eliminar requerimiento"
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </button>
+                                  <button
+                                    onClick={() => setReqFitOpen(r)}
+                                    className="p-1 rounded hover:bg-blue-50 text-[#aaa] hover:text-blue-500 transition-colors"
+                                    title="Asignar persona"
+                                  >
+                                    <Plus className="w-3.5 h-3.5" />
+                                  </button>
+                                </>
+                              )}
                             </div>
                           </div>
 
@@ -545,13 +568,15 @@ export function EngagementDetail({ id }: Props) {
                                         ? ` → ${format(fLocal(a.fecha_fin), "d MMM yy", { locale: es })}`
                                         : " →"}
                                     </span>
-                                    <button
-                                      onClick={() => setQuitarAsigId(a.id)}
-                                      className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-400 transition-colors flex-shrink-0"
-                                      title="Quitar asignación"
-                                    >
-                                      <X className="w-3 h-3" />
-                                    </button>
+                                    {!isReadOnly && (
+                                      <button
+                                        onClick={() => setQuitarAsigId(a.id)}
+                                        className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-400 transition-colors flex-shrink-0"
+                                        title="Quitar asignación"
+                                      >
+                                        <X className="w-3 h-3" />
+                                      </button>
+                                    )}
                                   </div>
                                 );
                               })}
@@ -573,10 +598,12 @@ export function EngagementDetail({ id }: Props) {
               <p className="text-sm text-[#888] mb-3">
                 Este engagement no tiene requerimientos definidos aún.
               </p>
-              <Button size="sm" onClick={abrirNuevoReq}>
-                <Plus className="w-3.5 h-3.5" />
-                Agregar primer requerimiento
-              </Button>
+              {!isReadOnly && (
+                <Button size="sm" onClick={abrirNuevoReq}>
+                  <Plus className="w-3.5 h-3.5" />
+                  Agregar primer requerimiento
+                </Button>
+              )}
             </div>
           )}
         </div>
@@ -608,10 +635,12 @@ export function EngagementDetail({ id }: Props) {
                       <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: color }} />
                       <span className="font-medium text-[#1a1a1a]">{fechaLabel}</span>
                       {dc.descripcion && <span className="text-[#888] text-xs">· {dc.descripcion}</span>}
-                      <button type="button" onClick={() => eliminarDiaCritico(dc.id)}
-                        className="ml-1 text-[#ccc] hover:text-red-400 transition-colors" title="Quitar">
-                        <X className="w-3 h-3" />
-                      </button>
+                      {!isReadOnly && (
+                        <button type="button" onClick={() => eliminarDiaCritico(dc.id)}
+                          className="ml-1 text-[#ccc] hover:text-red-400 transition-colors" title="Quitar">
+                          <X className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
                   );
                 })}
@@ -621,7 +650,7 @@ export function EngagementDetail({ id }: Props) {
             )}
 
             {/* Agregar nuevo período de intensidad */}
-            <div className="pt-2 border-t border-[#f5f5f5] space-y-2">
+            {!isReadOnly && <div className="pt-2 border-t border-[#f5f5f5] space-y-2">
               <div className="flex items-end gap-2 flex-wrap">
                 <div className="flex flex-col gap-1">
                   <label className="text-xs text-[#888] font-medium">Fecha inicio</label>
@@ -665,7 +694,7 @@ export function EngagementDetail({ id }: Props) {
                   Agregar
                 </button>
               </div>
-            </div>
+            </div>}
           </div>
         </div>
 
@@ -702,15 +731,17 @@ export function EngagementDetail({ id }: Props) {
           </div>
         )}
         {/* ── Extender Proyecto ─────────────────────────────────── */}
-        <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
-          <div className="px-5 py-3 bg-[#f0f9ff] border-b border-[#dbeafe] flex items-center gap-2">
-            <Users className="w-4 h-4 text-[#4a90e2] flex-shrink-0" />
-            <p className="font-semibold text-sm text-[#1a1a1a]">Extender Proyecto</p>
+        {!isReadOnly && (
+          <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
+            <div className="px-5 py-3 bg-[#f0f9ff] border-b border-[#dbeafe] flex items-center gap-2">
+              <Users className="w-4 h-4 text-[#4a90e2] flex-shrink-0" />
+              <p className="font-semibold text-sm text-[#1a1a1a]">Extender Proyecto</p>
+            </div>
+            <div className="p-5">
+              <ExtenderProyecto engagementId={id} engagementTipo={engagement?.tipo} onExtended={load} />
+            </div>
           </div>
-          <div className="p-5">
-            <ExtenderProyecto engagementId={id} engagementTipo={engagement?.tipo} onExtended={load} />
-          </div>
-        </div>
+        )}
       </div>
 
       {/* ── Drawer: crear / editar requerimiento ─────────────── */}

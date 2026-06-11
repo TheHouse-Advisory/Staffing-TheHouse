@@ -42,19 +42,19 @@ const navItems: { section: string; items: NavItem[] }[] = [
   {
     section: "Principal",
     items: [
-      { href: "/inicio",      label: "Inicio",    icon: Home,            allowedRoles: ["admin", "GyD", "proposer"] },
-      { href: "/tablero",     label: "Tablero",   icon: LayoutDashboard, allowedRoles: ["admin", "GyD", "Desarrollo", "proposer"] },
-      { href: "/engagements", label: "Proyectos", icon: Briefcase,       allowedRoles: ["admin", "proposer"] },
-      { href: "/personas",    label: "Personas",  icon: Users,           allowedRoles: ["admin", "GyD", "AySr", "proposer"] },
-      { href: "/ausencias",   label: "Ausencias", icon: CalendarOff,     allowedRoles: ["admin", "GyD", "AySr", "Desarrollo", "proposer"] },
+      { href: "/inicio",      label: "Inicio",    icon: Home,            allowedRoles: ["admin", "GyD", "proposer", "planificador"] },
+      { href: "/tablero",     label: "Tablero",   icon: LayoutDashboard, allowedRoles: ["admin", "GyD", "Desarrollo", "proposer", "planificador"] },
+      { href: "/engagements", label: "Proyectos", icon: Briefcase,       allowedRoles: ["admin", "proposer", "planificador", "GyD"] },
+      { href: "/personas",    label: "Personas",  icon: Users,           allowedRoles: ["admin", "GyD", "AySr", "proposer", "planificador"] },
+      { href: "/ausencias",   label: "Ausencias", icon: CalendarOff,     allowedRoles: ["admin", "GyD", "AySr", "Desarrollo", "proposer", "planificador"] },
       { href: "/alertas",     label: "Alertas",   icon: Bell,            allowedRoles: ["admin", "proposer"] },
-      { href: "/reportes",    label: "Reportes",  icon: BarChart2,       allowedRoles: ["admin", "GyD", "proposer"] },
+      { href: "/reportes",    label: "Reportes",  icon: BarChart2,       allowedRoles: ["admin", "proposer"] },
     ],
   },
   {
     section: "Gestión",
     items: [
-      { href: "/planificacion", label: "Planificación", icon: Kanban,      allowedRoles: ["admin"] },
+      { href: "/planificacion", label: "Planificación", icon: Kanban,      allowedRoles: ["admin", "planificador"] },
       { href: "/capacity",      label: "Capacity",       icon: BarChart3,   allowedRoles: ["admin"] },
       { href: "/accesos",       label: "Accesos",        icon: ShieldCheck, allowedRoles: ["admin"] },
       { href: "/configuracion", label: "Configuración",  icon: Settings,    allowedRoles: ["admin"] },

@@ -182,11 +182,13 @@ interface Props {
   onSnapshotChange?: (engs: any[]) => void;
   /** Llamado cuando un cambio visual (color, etc.) no pasa por el snapshot pero debe degradar el estado */
   onSimDirty?: () => void;
+  /** Solo lectura: deshabilita drag-drop y mutaciones en el tablero */
+  readOnly?: boolean;
 }
 
 // ── Componente ─────────────────────────────────────────────────
 
-export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChange, onSimDirty }: Props) {
+export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChange, onSimDirty, readOnly = false }: Props) {
   const [personas, setPersonas]       = useState<Persona[]>([]);
   const [asignacionesDetalle, setAsignacionesDetalle] = useState<AsigDetalle[]>([]);
   const [ausenciasActivas, setAusenciasActivas] = useState<{ persona_id: string; fecha_inicio: string; fecha_fin: string }[]>([]);
@@ -442,7 +444,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
                 )}
 
                 {seleccionada && (
-                  <PersonaResumenModal personaId={seleccionada.id} onClose={() => setSeleccionada(null)} simulationSnapshot={snapshot as any} />
+                  <PersonaResumenModal personaId={seleccionada.id} onClose={() => setSeleccionada(null)} simulationSnapshot={snapshot as any} ocultarMatriz={readOnly} />
                 )}
               </div>
             )}
@@ -477,16 +479,16 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
               {/* simulationMode={true} + readOnly={false} → interacciones habilitadas, sin escribir en Supabase */}
               <DesgloceEngagements
                 key={planId}
-                readOnly={false}
+                readOnly={readOnly}
                 simulationMode={true}
                 initialEngs={snapToEngRows(snapshot)}
-                onOpenPanel={abrirPanel}
+                onOpenPanel={readOnly ? undefined : abrirPanel}
                 externalReloadKey={tableroReloadKey}
-                onSimPersonaAsignada={registerSimHandler}
-                onSimEngsChange={onSnapshotChange}
-                onSimDirty={onSimDirty}
-                onSimDropRequest={handleSimAsignarConValidacion}
-                onRegisterUndoPush={registerUndoPush}
+                onSimPersonaAsignada={readOnly ? undefined : registerSimHandler}
+                onSimEngsChange={readOnly ? undefined : onSnapshotChange}
+                onSimDirty={readOnly ? undefined : onSimDirty}
+                onSimDropRequest={readOnly ? undefined : handleSimAsignarConValidacion}
+                onRegisterUndoPush={readOnly ? undefined : registerUndoPush}
               />
             </div>
           </div>

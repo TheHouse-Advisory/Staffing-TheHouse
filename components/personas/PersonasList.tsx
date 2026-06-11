@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
   Plus, UserX, UserCheck, ChevronRight, Archive, Trash2, X,
-  RotateCcw, ChevronLeft, Circle,
+  RotateCcw, ChevronLeft, Circle, Lock,
 } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
@@ -26,6 +26,7 @@ function PersonaCard({
   persona,
   isAdmin,
   canView = true,
+  blockedView = false,
   onDesactivar,
   cargoColor,
   dimmed = false,
@@ -33,6 +34,7 @@ function PersonaCard({
   persona: Persona;
   isAdmin: boolean;
   canView?: boolean;
+  blockedView?: boolean;
   onDesactivar?: (p: Persona) => void;
   cargoColor?: string;
   dimmed?: boolean;
@@ -71,13 +73,18 @@ function PersonaCard({
             <UserX className="w-3.5 h-3.5" />
           </button>
         )}
-        {canView && (
+        {canView && !blockedView && (
           <Link
             href={`/personas/${persona.id}`}
             className="flex items-center gap-1 text-[11px] text-[#888] hover:text-[#1a1a1a] px-2 py-1 rounded-md hover:bg-[#f5f5f5] transition-colors font-medium"
           >
             Ver <ChevronRight className="w-3 h-3" />
           </Link>
+        )}
+        {blockedView && (
+          <span className="flex items-center gap-1 text-[11px] text-[#ccc] px-2 py-1 cursor-not-allowed opacity-50 font-medium select-none">
+            <Lock className="w-3 h-3" /> Ver
+          </span>
         )}
       </div>
     </div>
@@ -114,10 +121,11 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   // Diálogo de destino al restaurar desde papelera
   const [restaurando, setRestaurando] = useState<PersonaEliminada | null>(null);
 
-  const isAdmin      = rolActual === "admin";
-  const isGyD        = rolActual === "GyD";
-  const isAySr       = rolActual === "AySr";
-  const isDesarrollo = rolActual === "Desarrollo";
+  const isAdmin         = rolActual === "admin";
+  const isGyD           = rolActual === "GyD";
+  const isAySr          = rolActual === "AySr";
+  const isDesarrollo    = rolActual === "Desarrollo";
+  const isPlanificador  = rolActual === "planificador" || rolActual === "GyD";
   const sb = createAnyClient();
 
   // Cargos visibles para AySr
@@ -489,6 +497,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
                     <PersonaCard
                       key={p.id} persona={p} isAdmin={isAdmin} cargoColor={color}
                       canView={!isDesarrollo}
+                      blockedView={isPlanificador && CARGOS_OCULTOS_GYD.includes(p.cargo_actual ?? "")}
                       onDesactivar={isAdmin ? setDesactivando : undefined}
                     />
                   ))}

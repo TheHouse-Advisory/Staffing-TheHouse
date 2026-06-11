@@ -64,12 +64,14 @@ interface Props {
   onClose: () => void;
   /** Snapshot del escenario activo — cuando se pasa, sobreescribe ocupación y proyectos actuales */
   simulationSnapshot?: SimEngSnap[];
+  /** Oculta la sección de Matriz de Talento para roles restringidos */
+  ocultarMatriz?: boolean;
   /** Ignorado — mantenido para compatibilidad con llamadores existentes */
   anchorX?: number;
   anchorY?: number;
 }
 
-export function PersonaResumenModal({ personaId, onClose, simulationSnapshot }: Props) {
+export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, ocultarMatriz = false }: Props) {
   const [persona, setPersona] = useState<Persona | null>(null);
   const [resumen, setResumen] = useState<ResumenData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -380,7 +382,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot }: 
                   </div>
                 )}
               </div>
-              {(persona.talento_potencial != null || persona.talento_desempeno != null) && (
+              {!ocultarMatriz && (persona.talento_potencial != null || persona.talento_desempeno != null) && (
                 <div className="flex flex-col gap-2">
                   <span className="text-gray-400 text-xs">
                     Talento{getTalentBoxName(persona.talento_potencial, persona.talento_desempeno) && (

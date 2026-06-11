@@ -931,7 +931,7 @@ export function HeatmapAusencias({
                                     {fila.persona.nombre} {fila.persona.apellido}
                                   </button>
                                   {/* Badge días acumulados año actual */}
-                                  {(() => {
+                                  {!readOnly && (() => {
                                     const d = totalesAnio[fila.persona.id] ?? 0;
                                     if (d === 0) return null;
                                     const style: React.CSSProperties =
