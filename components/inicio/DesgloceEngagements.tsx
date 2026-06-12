@@ -119,6 +119,8 @@ interface ReqData {
   id: string; cargo_requerido: string | null;
   fecha_inicio: string; fecha_fin: string;
   pct_dedicacion: number;
+  persona_nombre?: string; // nombre de la persona asignada al slot (solo sim)
+  fase_nombre?: string | null;
 }
 interface ActividadEng { tipo: "Viajes" | "Taller"; titulo: string; descripcion: string | null; fecha_inicio: string; fecha_fin: string; }
 
@@ -225,12 +227,22 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
         // Buscar slot libre del mismo cargo (requerimiento sin persona asignada)
         // Un slot libre = cargo existe en reqs pero ninguna PersonaAsig lo ocupa
+        const CARGO_GRUPO_SIM: Record<string, string> = {
+          "Socio": "Socio",
+          "Director de Proyectos": "Director", "Gerente de Proyectos": "Director",
+          "Director": "Director", "Gerente": "Director",
+          "Director / Gerente de Proyectos": "Director",
+          "Asociado": "Asociado", "Consultor Senior": "Asociado",
+          "Asociado / Consultor Senior": "Asociado",
+          "Consultor Proyecto": "Consultor Proyecto",
+          "Consultor Analista": "Consultor Analista",
+        };
+        const grupoPayload = payload.cargo ? (CARGO_GRUPO_SIM[payload.cargo] ?? payload.cargo) : null;
         const reqLibre = eg.reqs.find((r) => {
           if (!r.cargo_requerido) return false;
-          const cargoNormalizado = r.cargo_requerido.trim().toLowerCase();
-          const cargoPayload = payload.cargo.trim().toLowerCase();
-          if (cargoNormalizado !== cargoPayload) return false;
-          // Verificar que ninguna persona ya esté asignada a ese req
+          const grupoReq = CARGO_GRUPO_SIM[r.cargo_requerido] ?? r.cargo_requerido;
+          const coincide = grupoPayload === null || grupoPayload === grupoReq;
+          if (!coincide) return false;
           return !eg.personas.some((p) => p.requerimiento_id === r.id);
         });
 
@@ -877,15 +889,39 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     try { data = JSON.parse(e.dataTransfer.getData("persona")); } catch { return; }
     if (!data?.personaId) return;
 
-    // ── SIMULACIÓN: delega al padre para validar ausencias antes de insertar ─
+    const cargoRequerido = data.cargo_actual || null;
+
+    // Normaliza cargo a grupo canónico — compartido por ruta real y simulación
+    const CARGO_GRUPO: Record<string, string> = {
+      "Socio": "Socio",
+      "Director de Proyectos": "Director", "Gerente de Proyectos": "Director",
+      "Director": "Director", "Gerente": "Director",
+      "Director / Gerente de Proyectos": "Director",
+      "Asociado": "Asociado", "Consultor Senior": "Asociado",
+      "Asociado / Consultor Senior": "Asociado",
+      "Consultor Proyecto": "Consultor Proyecto",
+      "Consultor Analista": "Consultor Analista",
+    };
+    const grupoPersona = cargoRequerido ? (CARGO_GRUPO[cargoRequerido] ?? cargoRequerido) : null;
+
+    // ── SIMULACIÓN: busca req libre en snapshot local y delega al padre ──
     if (simulationMode) {
       if (onSimDropRequest) {
+        // Buscar slot libre del mismo cargo en los reqs del snapshot
+        const reqLibreSim = eng.reqs.find((r) => {
+          const grupoReq = r.cargo_requerido ? (CARGO_GRUPO[r.cargo_requerido] ?? r.cargo_requerido) : null;
+          const coincide = grupoPersona === null || grupoReq === null || grupoPersona === grupoReq;
+          if (!coincide) return false;
+          return !eng.personas.some((p) => p.requerimiento_id === r.id);
+        });
         onSimDropRequest({
-          engagementId: eng.id, reqId: "", personaId: data.personaId,
+          engagementId: eng.id,
+          reqId: reqLibreSim?.id ?? "",
+          personaId: data.personaId,
           nombre: data.nombre, apellido: data.apellido, cargo: data.cargo_actual ?? "",
-          pct: 100,
-          fechaInicio: eng.fecha_inicio,
-          fechaFin: eng.fecha_fin ?? eng.fecha_inicio,
+          pct: reqLibreSim?.pct_dedicacion ?? 100,
+          fechaInicio: reqLibreSim?.fecha_inicio ?? eng.fecha_inicio,
+          fechaFin: reqLibreSim?.fecha_fin ?? eng.fecha_fin ?? eng.fecha_inicio,
         });
       }
       return;
@@ -893,22 +929,25 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     // ─────────────────────────────────────────────────────────────────────
 
     const sb = createAnyClient();
-    const cargoRequerido = data.cargo_actual || null;
 
-    // Busca req libre (sin asignación activa) con cargo coincidente
+    // Trae todos los reqs del engagement (sin filtro de cargo) para normalizar en JS
     const { data: reqsLibres } = await (sb as any)
       .from("requerimiento_engagement")
-      .select("id, fecha_inicio, fecha_fin, cargo_requerido")
-      .eq("engagement_id", eng.id)
-      .eq("cargo_requerido", cargoRequerido ?? "");
+      .select("id, fecha_inicio, fecha_fin, cargo_requerido, pct_dedicacion")
+      .eq("engagement_id", eng.id);
 
     let reqId: string;
     let fechaInicio: string;
     let fechaFin: string;
+    let pctReq = 100; // hereda pct del requerimiento vinculado
 
     let reqMatch: any = null;
     if (reqsLibres && (reqsLibres as any[]).length > 0) {
       for (const r of reqsLibres as any[]) {
+        // Compara por grupo normalizado (o exacto si no hay grupo)
+        const grupoReq = r.cargo_requerido ? (CARGO_GRUPO[r.cargo_requerido] ?? r.cargo_requerido) : null;
+        const cargoCoincide = grupoPersona === null || grupoReq === null || grupoPersona === grupoReq;
+        if (!cargoCoincide) continue;
         const { count } = await (sb as any)
           .from("asignacion")
           .select("id", { count: "exact", head: true })
@@ -919,10 +958,11 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     }
 
     if (reqMatch) {
-      // Reutiliza el req existente con sus fechas reales
+      // Reutiliza el req existente con sus fechas y pct reales
       reqId = reqMatch.id;
       fechaInicio = reqMatch.fecha_inicio ?? eng.fecha_inicio;
       fechaFin = reqMatch.fecha_fin ?? eng.fecha_fin ?? eng.fecha_inicio;
+      pctReq = reqMatch.pct_dedicacion ?? 100;
     } else {
       // Crea req nuevo solo si no hay match libre
       fechaInicio = eng.fecha_inicio;
@@ -958,7 +998,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       requerimiento_id: reqId,
       persona_id: data.personaId,
       cargo_al_momento: cargoRequerido,
-      pct_dedicacion: 100,
+      pct_dedicacion: pctReq,
       estado: "activa",
       estado_staffing: "PLAN" as const,
     };
@@ -1828,7 +1868,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                           {/* Botones acción: ocultos en readOnly */}
                           {!readOnly && (
                           <div className="absolute right-0 top-0 bottom-0 flex items-center gap-0.5 bg-white pl-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => { prevReqsForUndoRef.current = eng.reqs ?? []; setEngToEdit(eng.raw); setReqsToEdit(eng.reqs ?? []); setActividadesToEdit(eng.actividades ?? []); setFormOpen(true); }}
+                            <button onClick={() => {
+  prevReqsForUndoRef.current = eng.reqs ?? [];
+  setEngToEdit(eng.raw);
+  const personaByReq = Object.fromEntries((eng.personas ?? []).filter(p => p.requerimiento_id).map(p => [p.requerimiento_id!, `${p.nombre} ${p.apellido}`]));
+  setReqsToEdit((eng.reqs ?? []).map(r => ({ ...r, persona_nombre: personaByReq[r.id] ?? r.persona_nombre })));
+  setActividadesToEdit(eng.actividades ?? []);
+  setFormOpen(true);
+}}
                               title="Editar"
                               className="p-0.5 rounded hover:bg-gray-100 text-gray-400">
                               <Pencil className="w-3 h-3" />
@@ -2405,7 +2452,15 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
                   {!readOnly && <button
-                    onClick={() => { const eg = engs.find(e => e.id === engModal.id); setEngToEdit(engModal.raw); setReqsToEdit(eg?.reqs ?? []); setActividadesToEdit(eg?.actividades ?? []); setFormOpen(true); setEngModal(null); }}
+                    onClick={() => {
+  const eg = engs.find(e => e.id === engModal.id);
+  setEngToEdit(engModal.raw);
+  const personaByReq2 = Object.fromEntries((eg?.personas ?? []).filter(p => p.requerimiento_id).map(p => [p.requerimiento_id!, `${p.nombre} ${p.apellido}`]));
+  setReqsToEdit((eg?.reqs ?? []).map(r => ({ ...r, persona_nombre: personaByReq2[r.id] ?? r.persona_nombre })));
+  setActividadesToEdit(eg?.actividades ?? []);
+  setFormOpen(true);
+  setEngModal(null);
+}}
                     title="Editar"
                     className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
                   >
@@ -2616,10 +2671,18 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 codigo: eng.codigo, nombre: eng.nombre, cliente: eng.cliente,
                 tipo: eng.tipo, fecha_inicio: eng.fecha_inicio, fecha_fin: eng.fecha_fin,
                 reqs: nuevosReqs,
-                // Personas adoptan las fechas del engagement (comportamiento por defecto)
+                // Personas adoptan fechas y pct del req vinculado (equivalente a cascada en BD real)
                 personas: e.personas
                   .filter((p) => !p.requerimiento_id || nuevosReqs.some((r) => r.id === p.requerimiento_id))
-                  .map((p) => ({ ...p, fecha_inicio: eng.fecha_inicio, fecha_fin: eng.fecha_fin ?? p.fecha_fin })),
+                  .map((p) => {
+                    const reqVinculado = p.requerimiento_id ? nuevosReqs.find((r) => r.id === p.requerimiento_id) : null;
+                    return {
+                      ...p,
+                      fecha_inicio: eng.fecha_inicio,
+                      fecha_fin: eng.fecha_fin ?? p.fecha_fin,
+                      ...(reqVinculado ? { pct: reqVinculado.pct_dedicacion } : {}),
+                    };
+                  }),
                 // Actualiza actividades (viajes/talleres) desde el form
                 actividades: (eng.actividades ?? []).map((a: any) => ({
                   id: a.id, tipo: a.tipo, titulo: a.titulo ?? "",

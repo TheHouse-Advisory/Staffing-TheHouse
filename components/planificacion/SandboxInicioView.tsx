@@ -93,8 +93,9 @@ function ordenarCargos(cargos: string[]) {
 interface PersonaSnap {
   id: string; nombre: string; apellido: string; iniciales: string | null;
   cargo: string; pct: number; fecha_inicio: string; fecha_fin: string;
+  requerimiento_id?: string | null;
 }
-interface ReqSnapLocal { id: string; cargo_requerido: string | null; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string | null; fase_nombre: string | null; }
+interface ReqSnapLocal { id: string; cargo_requerido: string | null; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string | null; fase_nombre: string | null; persona_nombre?: string; }
 interface ActividadSnapLocal { id?: string; tipo: string; titulo: string; fecha_inicio: string; fecha_fin: string; }
 interface EngSnap {
   id: string; codigo: string | null; nombre: string; cliente: string | null;
@@ -135,14 +136,34 @@ function snapToEngRows(snapshot: EngSnap[]): any[] {
     fecha_fin: e.fecha_fin,
     sort_order: (e as any).sort_order ?? i,
     // Restaura reqs del snapshot (preserva eliminaciones hechas en simulación)
-    reqs: (e.reqs ?? []).map((r: any) => ({
-      id: r.id,
-      cargo_requerido: r.cargo_requerido ?? null,
-      pct_dedicacion: r.pct_dedicacion ?? 100,
-      fecha_inicio: r.fecha_inicio,
-      fecha_fin: r.fecha_fin ?? e.fecha_fin,
-      fase_nombre: r.fase_nombre ?? null,
-    })),
+    reqs: (() => {
+      const normC = (s: string) => s.trim().toLowerCase();
+      const personasSinReq = e.personas.filter((p) => !p.requerimiento_id);
+      return (e.reqs ?? []).map((r: any) => {
+        // 1. Match exacto por requerimiento_id
+        const personaExacta = e.personas.find((p) => p.requerimiento_id === r.id);
+        // 2. Fallback: cargo match para asignaciones antiguas sin requerimiento_id
+        const personaFallback = !personaExacta
+          ? personasSinReq.find((p) => {
+              const cp = normC(p.cargo ?? "");
+              const cr = normC(r.cargo_requerido ?? "");
+              return cp === cr || cr.includes(cp) || cp.includes(cr);
+            })
+          : null;
+        const personaAsig = personaExacta ?? personaFallback;
+        return {
+          id: r.id,
+          cargo_requerido: r.cargo_requerido ?? null,
+          pct_dedicacion: r.pct_dedicacion ?? 100,
+          fecha_inicio: r.fecha_inicio,
+          fecha_fin: r.fecha_fin ?? e.fecha_fin,
+          fase_nombre: r.fase_nombre ?? null,
+          persona_nombre: personaAsig
+            ? `${personaAsig.nombre} ${personaAsig.apellido}`.trim()
+            : (r.persona_nombre ?? undefined),
+        };
+      });
+    })(),
     // Restaura actividades (viajes/talleres) del snapshot
     actividades: (e.actividades ?? []).map((a: any) => ({
       id: a.id,
@@ -167,7 +188,7 @@ function snapToEngRows(snapshot: EngSnap[]): any[] {
       fecha_inicio: p.fecha_inicio,
       fecha_fin: p.fecha_fin,
       estado_staffing: "CONFIRMADO",
-      requerimiento_id: null,
+      requerimiento_id: p.requerimiento_id ?? null,
     })),
   }));
 }
