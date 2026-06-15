@@ -521,10 +521,11 @@ export function PersonaProfile({ id }: Props) {
               <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50">
                 <div className="bg-white rounded-xl shadow-2xl border border-gray-100 p-6 w-full max-w-sm mx-4">
                   <p className="text-[14px] font-semibold text-[#1a1a2e] mb-2">¿Eliminar proyecto del historial?</p>
+                  <p className="text-[12px] text-amber-600 font-medium leading-relaxed mb-3">
+                    ⚠️ Atención: Esta acción eliminará permanentemente el registro histórico de staffing. ¿Deseas continuar?
+                  </p>
                   <p className="text-[12px] text-slate-500 leading-relaxed mb-5">
-                    ¿Estás seguro de que deseas eliminar <span className="font-semibold text-slate-700">{h?.nombre}</span> del historial de{" "}
-                    <span className="font-semibold text-slate-700">{persona.nombre} {persona.apellido}</span>?
-                    Esta acción eliminará todas las asignaciones de esta persona en dicho proyecto y no se puede deshacer.
+                    Se eliminarán todas las asignaciones de <span className="font-semibold text-slate-700">{persona.nombre} {persona.apellido}</span> en <span className="font-semibold text-slate-700">{h?.nombre}</span>. Esta operación no se puede deshacer.
                   </p>
                   <div className="flex gap-2 justify-end">
                     <button

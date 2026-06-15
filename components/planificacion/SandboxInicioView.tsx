@@ -234,6 +234,16 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
     pushUndoRef.current = pushFn;
   }, []);
 
+  // ── Modal confirmación D&D (escenario) ───────────────────────
+  const [pendingSimDrop, setPendingSimDrop] = useState<SimAsigPayload | null>(null);
+  const [pendingSimFechas, setPendingSimFechas] = useState<{ inicio: string; fin: string }>({ inicio: "", fin: "" });
+
+  // ── Modal truncar desasignación (escenario) ──────────────────
+  const [pendingSimDesasignar, setPendingSimDesasignar] = useState<{
+    asignacionId: string; engId: string; nombrePersona: string;
+  } | null>(null);
+  const [simDesasignarFecha, setSimDesasignarFecha] = useState<string>("");
+
   // ── Modal de ausencias detectadas ────────────────────────────
   const [ausenciaModal, setAusenciaModal] = useState<{
     payload: SimAsigPayload;
@@ -243,6 +253,32 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
 
   /** Valida ausencias antes de inyectar la asignación simulada (panel Y drag&drop) */
   async function handleSimAsignarConValidacion(payload: SimAsigPayload) {
+    // Abre modal de confirmación con fechas editables antes de validar ausencias
+    const hoyStr = format(new Date(), "yyyy-MM-dd");
+    const defaultInicio = payload.fechaInicio > hoyStr ? payload.fechaInicio : hoyStr;
+    setPendingSimDrop(payload);
+    setPendingSimFechas({ inicio: defaultInicio, fin: payload.fechaFin });
+    return;
+  }
+
+  /** Ejecuta la validación de ausencias tras confirmar el modal D&D (escenario).
+   *  En simulación no hay estado_staffing real — se delega al handler interno. */
+  async function confirmSimDrop() {
+    if (!pendingSimDrop) return;
+    const payload = { ...pendingSimDrop, fechaInicio: pendingSimFechas.inicio, fechaFin: pendingSimFechas.fin };
+    setPendingSimDrop(null);
+    await _doSimAsignar(payload);
+  }
+
+  async function confirmSimDropRapido() {
+    if (!pendingSimDrop) return;
+    // Staffing rápido: usa las fechas por defecto ya calculadas, sin modificar
+    const payload = { ...pendingSimDrop, fechaInicio: pendingSimFechas.inicio, fechaFin: pendingSimFechas.fin };
+    setPendingSimDrop(null);
+    await _doSimAsignar(payload);
+  }
+
+  async function _doSimAsignar(payload: SimAsigPayload) {
     const sb = createAnyClient();
     const { data: aus } = await sb
       .from("ausencia")
@@ -283,6 +319,30 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
   const [vistaResumen, setVistaResumen]   = useState<"gantt" | "perfil">("gantt");
   const [semanaResumen, setSemanaResumen] = useState(() => startOfISOWeek(new Date()));
   const [periodoResumen, setPeriodoResumen] = useState<"dia" | "semana" | "mes">("dia");
+
+  /** Recibe el request de desasignación en sim y abre el modal de truncado */
+  function handleSimDesasignarRequest(payload: { asignacionId: string; engId: string; nombrePersona: string }) {
+    setSimDesasignarFecha(format(new Date(), "yyyy-MM-dd"));
+    setPendingSimDesasignar(payload);
+  }
+
+  /** Trunca la persona en el snapshot local (sim) actualizando su fecha_fin */
+  function confirmarSimDesasignar(fechaFin: string) {
+    if (!pendingSimDesasignar) return;
+    const { asignacionId, engId } = pendingSimDesasignar;
+    setPendingSimDesasignar(null);
+    onSnapshotChange?.((prev: any[]) => prev.map((eg: any) => {
+      if (eg.id !== engId) return eg;
+      return {
+        ...eg,
+        personas: eg.personas.map((p: any) =>
+          p.asignacionId === asignacionId || p.requerimiento_id === asignacionId || (p.simId && p.simId === asignacionId)
+            ? { ...p, fecha_fin: fechaFin }
+            : p
+        ),
+      };
+    }));
+  }
 
   function navResumenPrev() {
     if (periodoResumen === "semana") setSemanaResumen((s) => subWeeks(s, 5));
@@ -510,6 +570,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
                 onSimDirty={readOnly ? undefined : onSimDirty}
                 onSimDropRequest={readOnly ? undefined : handleSimAsignarConValidacion}
                 onRegisterUndoPush={readOnly ? undefined : registerUndoPush}
+                onSimDesasignarRequest={readOnly ? undefined : handleSimDesasignarRequest}
               />
             </div>
           </div>
@@ -684,6 +745,95 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
           </div>
         )}
       </Modal>
+
+      {/* ── Modal: Truncar desasignación en escenario ── */}
+      {pendingSimDesasignar && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-100 p-6 w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-[14px] font-semibold text-[#1a1a2e]">¿Último día de trabajo?</p>
+              <button onClick={() => setPendingSimDesasignar(null)} className="text-slate-400 hover:text-slate-600 transition-colors">✕</button>
+            </div>
+            <p className="text-[12px] text-slate-500 mb-4">
+              ¿Cuál es el último día de <span className="font-semibold text-slate-700">{pendingSimDesasignar.nombrePersona}</span> en este proyecto?
+            </p>
+            <div className="mb-5">
+              <label className="block text-[11px] font-medium text-slate-500 mb-1">Último día de trabajo</label>
+              <input
+                type="date"
+                value={simDesasignarFecha}
+                onChange={(e) => setSimDesasignarFecha(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingSimDesasignar(null)}
+                className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => confirmarSimDesasignar(simDesasignarFecha)}
+                disabled={!simDesasignarFecha}
+                className="px-4 py-2 text-[12px] font-bold text-white bg-[#1a1a2e] hover:bg-[#2d2d4e] rounded-lg transition-colors disabled:opacity-40"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Confirmación D&D en escenario ── */}
+      {pendingSimDrop && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-100 p-6 w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-[14px] font-semibold text-[#1a1a2e]">Confirmar asignación (simulación)</p>
+              <button onClick={confirmSimDropRapido} title="Staffing rápido con fechas por defecto" className="text-slate-400 hover:text-slate-600 transition-colors">✕</button>
+            </div>
+            <p className="text-[12px] text-slate-500 mb-4">
+              Staffear <span className="font-semibold text-slate-700">{pendingSimDrop.nombre} {pendingSimDrop.apellido}</span> en este engagement
+            </p>
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="block text-[11px] font-medium text-slate-500 mb-1">Fecha Inicio</label>
+                <input
+                  type="date"
+                  value={pendingSimFechas.inicio}
+                  onChange={(e) => setPendingSimFechas((f) => ({ ...f, inicio: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-slate-500 mb-1">Fecha Fin</label>
+                <input
+                  type="date"
+                  value={pendingSimFechas.fin}
+                  onChange={(e) => setPendingSimFechas((f) => ({ ...f, fin: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingSimDrop(null)}
+                className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmSimDrop}
+                disabled={!pendingSimFechas.inicio || !pendingSimFechas.fin}
+                className="px-4 py-2 text-[12px] font-bold text-white bg-[#1a1a2e] hover:bg-[#2d2d4e] rounded-lg transition-colors disabled:opacity-40"
+              >
+                Confirmar asignación
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
