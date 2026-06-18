@@ -48,6 +48,8 @@ interface ReqRow {
   pct_dedicacion: string;
   fecha_inicio: string;
   fecha_fin: string;
+  /** Nombre de la persona asignada activamente a este req (si existe) */
+  persona_nombre?: string;
   /** Solo en simulación: períodos de ausencia dentro del rango (para badge informativo) */
   ausenciasPeriodo?: { desde: string; hasta: string }[];
 }
@@ -152,11 +154,33 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       setTematicasOpts((temData.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
 
       if (engagement) {
-        const [{ data: reqData }, { data: ecData }, { data: etData }] = await Promise.all([
+        const [{ data: reqData }, { data: ecData }, { data: etData }, { data: asigData }] = await Promise.all([
           supabase.from("requerimiento_engagement").select("*").eq("engagement_id", engagement.id).order("fase_nombre"),
           (supabase as any).from("engagement_capacidad").select("capacidad_id").eq("engagement_id", engagement.id),
           (supabase as any).from("engagement_tematica").select("tematica_id").eq("engagement_id", engagement.id),
+          (supabase as any).from("asignacion")
+            .select("requerimiento_id, persona:persona_id(nombre, apellido, cargo_actual)")
+            .eq("engagement_id", engagement.id)
+            .eq("estado", "activa"),
         ]);
+
+        // Mapa requerimiento_id → nombre (match exacto)
+        type AsigRow = { requerimiento_id: string | null; persona: { nombre: string; apellido: string; cargo_actual?: string } | null };
+        const asigRows = (asigData ?? []) as AsigRow[];
+        const personaPorReq = new Map<string, string>(
+          asigRows
+            .filter((a) => a.requerimiento_id && a.persona)
+            .map((a) => [a.requerimiento_id!, `${a.persona!.nombre} ${a.persona!.apellido}`])
+        );
+        // Mapa cargo_normalizado → nombre — fallback para asignaciones antiguas sin requerimiento_id
+        const normCargoEF = (s: string) => s.trim().toLowerCase();
+        const cargoContieneEF = (cargoPersona: string, cargoReq: string) => {
+          const cp = normCargoEF(cargoPersona);
+          const cr = normCargoEF(cargoReq);
+          return cp === cr || cr.includes(cp) || cp.includes(cr);
+        };
+        // Solo las asignaciones sin requerimiento_id vinculado
+        const asigSinReq = asigRows.filter((a) => !a.requerimiento_id && a.persona);
         setForm({
           codigo: engagement.codigo ?? "",
           nombre: engagement.nombre,
@@ -216,6 +240,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                 pct_dedicacion: String(r.pct_dedicacion ?? 100),
                 fecha_inicio: r.fecha_inicio ?? "",
                 fecha_fin: r.fecha_fin ?? "",
+                persona_nombre: (r as any).persona_nombre,
               });
             }
           }
@@ -229,6 +254,13 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
             pct_dedicacion: String(r.pct_dedicacion),
             fecha_inicio: r.fecha_inicio ?? "",
             fecha_fin: r.fecha_fin ?? "",
+            persona_nombre: r.id
+              ? (personaPorReq.get(r.id) ??
+                  (() => {
+                    const m = asigSinReq.find((a) => cargoContieneEF(a.persona!.cargo_actual ?? "", r.cargo_requerido ?? ""));
+                    return m ? `${m.persona!.nombre} ${m.persona!.apellido}` : undefined;
+                  })())
+              : undefined,
           })));
         }
         // En simulación: usar actividades del snapshot local
@@ -552,17 +584,17 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           .from("requerimiento_engagement").update(reqPayload).eq("id", r.id);
         if (updErr) { setServerError(`Error en requerimiento ${i + 1}: ${updErr.message}`); setLoading(false); return; }
 
-        // Cascada: sincroniza asignaciones activas vinculadas al requerimiento
-        if (reqPayload.fecha_inicio || reqPayload.fecha_fin) {
-          const asigUpdate: Record<string, string | null> = {};
-          if (reqPayload.fecha_inicio) asigUpdate.fecha_inicio = reqPayload.fecha_inicio;
-          if (reqPayload.fecha_fin)    asigUpdate.fecha_fin    = reqPayload.fecha_fin;
-          await supabase
-            .from("asignacion")
-            .update(asigUpdate)
-            .eq("requerimiento_id", r.id)
-            .eq("estado", "activa");
-        }
+        // Cascada: sincroniza fechas y pct_dedicacion en asignaciones activas
+        const asigUpdate: Record<string, string | number | null> = {
+          pct_dedicacion: reqPayload.pct_dedicacion,
+        };
+        if (reqPayload.fecha_inicio) asigUpdate.fecha_inicio = reqPayload.fecha_inicio;
+        if (reqPayload.fecha_fin)    asigUpdate.fecha_fin    = reqPayload.fecha_fin;
+        await supabase
+          .from("asignacion")
+          .update(asigUpdate)
+          .eq("requerimiento_id", r.id)
+          .eq("estado", "activa");
       } else {
         const { error: insErr } = await (supabase as any)
           .from("requerimiento_engagement").insert(reqPayload);
@@ -1081,6 +1113,9 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                         Requerimiento {i + 1}
                         {r.fase_nombre && <span className="ml-1.5 font-normal text-[#aaa]">· {r.fase_nombre}</span>}
                         {r.cargo_requerido && <span className="ml-1.5 font-normal text-[#aaa]">· {r.cargo_requerido}</span>}
+                        {r.persona_nombre && (
+                          <span className="ml-1.5 font-normal text-[#4a90e2]">· {r.persona_nombre}</span>
+                        )}
                       </span>
                       {/* Badge de ausencias en simulación */}
                       {r.ausenciasPeriodo && r.ausenciasPeriodo.length > 0 && (

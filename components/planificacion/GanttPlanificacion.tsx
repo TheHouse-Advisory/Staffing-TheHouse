@@ -33,6 +33,7 @@ interface ReqSnap {
   fecha_inicio: string;
   fecha_fin: string | null;
   fase_nombre: string | null;
+  persona_nombre?: string;
 }
 
 interface ActividadSnap {
@@ -184,7 +185,7 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
   const hoy = format(new Date(), "yyyy-MM-dd");
   const fin  = format(addDays(new Date(), 90), "yyyy-MM-dd");
 
-  const [engsRes, asigRes] = await Promise.all([
+  const [engsRes, asigRes, reqsRes] = await Promise.all([
     sb.from("engagement")
       .select("id, codigo, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real, sort_order")
       .in("estado", ["activo", "propuesta", "pausado"])
@@ -194,16 +195,20 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
       // Incluye los que aún no terminaron o no tienen fecha fin
       .or(`fecha_fin_real.gte.${hoy},fecha_fin_estimada.gte.${hoy},fecha_fin_real.is.null,fecha_fin_estimada.is.null`),
     sb.from("asignacion")
-      .select("id, persona_id, engagement_id, pct_dedicacion, fecha_inicio, fecha_fin, persona:persona_id(nombre, apellido, iniciales, cargo_actual)")
+      .select("id, persona_id, engagement_id, requerimiento_id, pct_dedicacion, fecha_inicio, fecha_fin, persona:persona_id(nombre, apellido, iniciales, cargo_actual)")
       .eq("estado", "activa")
       // Incluye asignaciones sin fecha_inicio y las que empiezan dentro del horizonte
       .or(`fecha_inicio.is.null,fecha_inicio.lte.${fin}`)
       // Incluye asignaciones abiertas o vigentes
       .or(`fecha_fin.gte.${hoy},fecha_fin.is.null`) as any,
+    // Solo lectura: carga TODOS los reqs del engagement sin filtro de fecha (sim no muta esta tabla)
+    sb.from("requerimiento_engagement")
+      .select("id, engagement_id, cargo_requerido, pct_dedicacion, fecha_inicio, fecha_fin, fase_nombre") as any,
   ]);
 
-  const engs = (engsRes.data ?? []) as any[];
-  const asigs = (asigRes.data ?? []) as any[];
+  const engs  = (engsRes.data  ?? []) as any[];
+  const asigs = (asigRes.data  ?? []) as any[];
+  const reqs  = (reqsRes.data  ?? []) as any[];
 
   // Respetar sort_order del tablero real; sin orden → al final alfabéticamente
   const sorted = [...engs].sort((a, b) => {
@@ -227,8 +232,39 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
           pct: a.pct_dedicacion,
           fecha_inicio: a.fecha_inicio,
           fecha_fin: a.fecha_fin,
+          requerimiento_id: a.requerimiento_id ?? null,
         };
       });
+
+    // Reqs base del proyecto real — solo lectura para mostrar en EngagementForm (sim no los muta)
+    // Cargo normalization para fallback cuando requerimiento_id es null en asignaciones antiguas
+    const normCargo = (s: string) => s.trim().toLowerCase();
+    const cargoContiene = (cargoPersona: string, cargoReq: string) => {
+      const cp = normCargo(cargoPersona);
+      const cr = normCargo(cargoReq);
+      return cp === cr || cr.includes(cp) || cp.includes(cr);
+    };
+    const reqsEng: ReqSnap[] = reqs
+      .filter((r) => r.engagement_id === e.id)
+      .map((r) => {
+        // 1. Match exacto por requerimiento_id
+        const personaExacta = personas.find((p) => p.requerimiento_id === r.id);
+        // 2. Fallback: cargo match entre personas sin requerimiento_id asignado
+        const personaFallback = !personaExacta
+          ? personas.find((p) => !p.requerimiento_id && cargoContiene(p.cargo, r.cargo_requerido ?? ""))
+          : null;
+        const persona = personaExacta ?? personaFallback;
+        return {
+          id: r.id,
+          cargo_requerido: r.cargo_requerido ?? null,
+          pct_dedicacion: r.pct_dedicacion ?? 100,
+          fecha_inicio: r.fecha_inicio,
+          fecha_fin: r.fecha_fin ?? null,
+          fase_nombre: r.fase_nombre ?? null,
+          persona_nombre: persona ? `${persona.nombre} ${persona.apellido}`.trim() : undefined,
+        };
+      });
+
     return {
       id: e.id,
       codigo: e.codigo ?? null,
@@ -239,6 +275,7 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
       fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? null,
       sort_order: e.sort_order ?? null,
       personas,
+      reqs: reqsEng,
     };
   });
 }

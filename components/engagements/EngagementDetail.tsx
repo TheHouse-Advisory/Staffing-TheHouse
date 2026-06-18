@@ -298,6 +298,15 @@ export function EngagementDetail({ id }: Props) {
 
     if (error) { setReqError(error.message); setReqLoading(false); return; }
 
+    // Cascada: sincroniza pct_dedicacion en asignaciones activas del req editado
+    if (reqForm.id) {
+      await sb
+        .from("asignacion")
+        .update({ pct_dedicacion: payload.pct_dedicacion })
+        .eq("requerimiento_id", reqForm.id)
+        .eq("estado", "activa");
+    }
+
     setReqForm(null);
     setReqLoading(false);
     load();

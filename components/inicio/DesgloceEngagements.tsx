@@ -119,6 +119,8 @@ interface ReqData {
   id: string; cargo_requerido: string | null;
   fecha_inicio: string; fecha_fin: string;
   pct_dedicacion: number;
+  persona_nombre?: string; // nombre de la persona asignada al slot (solo sim)
+  fase_nombre?: string | null;
 }
 interface ActividadEng { tipo: "Viajes" | "Taller"; titulo: string; descripcion: string | null; fecha_inicio: string; fecha_fin: string; }
 
@@ -167,6 +169,8 @@ interface Props {
   onRegisterUndoPush?: (pushFn: (action: UndoEntry) => void) => void;
   /** Llamado cuando un cambio visual (color) no pasa por onSimEngsChange pero debe marcar el plan como modificado */
   onSimDirty?: () => void;
+  /** En simulationMode: delega al padre la confirmación de desasignación para truncar fecha_fin */
+  onSimDesasignarRequest?: (payload: { asignacionId: string; engId: string; nombrePersona: string }) => void;
 }
 
 export interface SimAsigPayload {
@@ -186,7 +190,7 @@ type UndoEntry =
   | { type: "color_semana"; engId: string; label: string; fecha: string; fecha_fin: string; prevEntry: { fecha: string; fecha_fin: string | null; intensidad: string } | null }
   | { type: "edit_reqs";   engId: string; label: string; engNombre: string; prevReqs: ReqData[]; prevPersonas: PersonaAsig[] };
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush }: Props) {
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
   const [baseInterna, setBaseInterna] = useState<Date>(new Date());
 
@@ -225,12 +229,22 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
         // Buscar slot libre del mismo cargo (requerimiento sin persona asignada)
         // Un slot libre = cargo existe en reqs pero ninguna PersonaAsig lo ocupa
+        const CARGO_GRUPO_SIM: Record<string, string> = {
+          "Socio": "Socio",
+          "Director de Proyectos": "Director", "Gerente de Proyectos": "Director",
+          "Director": "Director", "Gerente": "Director",
+          "Director / Gerente de Proyectos": "Director",
+          "Asociado": "Asociado", "Consultor Senior": "Asociado",
+          "Asociado / Consultor Senior": "Asociado",
+          "Consultor Proyecto": "Consultor Proyecto",
+          "Consultor Analista": "Consultor Analista",
+        };
+        const grupoPayload = payload.cargo ? (CARGO_GRUPO_SIM[payload.cargo] ?? payload.cargo) : null;
         const reqLibre = eg.reqs.find((r) => {
           if (!r.cargo_requerido) return false;
-          const cargoNormalizado = r.cargo_requerido.trim().toLowerCase();
-          const cargoPayload = payload.cargo.trim().toLowerCase();
-          if (cargoNormalizado !== cargoPayload) return false;
-          // Verificar que ninguna persona ya esté asignada a ese req
+          const grupoReq = CARGO_GRUPO_SIM[r.cargo_requerido] ?? r.cargo_requerido;
+          const coincide = grupoPayload === null || grupoPayload === grupoReq;
+          if (!coincide) return false;
           return !eg.personas.some((p) => p.requerimiento_id === r.id);
         });
 
@@ -262,7 +276,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           pct: payload.pct,
           fecha_inicio: payload.fechaInicio,
           fecha_fin: payload.fechaFin,
-          estado_staffing: "CONFIRMADO",
+          estado_staffing: "PLAN",
           requerimiento_id: reqId,
         };
         return { ...eg, reqs: nuevosReqs, personas: [...eg.personas, nuevaPersona] };
@@ -275,6 +289,22 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const [engToEdit, setEngToEdit] = useState<Engagement | undefined>();
   const [reqsToEdit, setReqsToEdit] = useState<any[]>([]); // reqs locales al editar en simulación
   const [actividadesToEdit, setActividadesToEdit] = useState<any[]>([]); // actividades locales en simulación
+
+  // Modal confirmación D&D
+  const [pendingDrop, setPendingDrop] = useState<{
+    eng: EngRow;
+    personaId: string; nombre: string; apellido: string; cargo_actual: string;
+    fechaInicio: string; fechaFin: string;
+    reqMatch: { id: string; pct_dedicacion: number; fecha_inicio: string; fecha_fin: string } | null;
+    cargoRequerido: string | null;
+  } | null>(null);
+  const [pendingDropFechas, setPendingDropFechas] = useState<{ inicio: string; fin: string }>({ inicio: "", fin: "" });
+
+  // Modal truncar desasignación
+  const [pendingDesasignar, setPendingDesasignar] = useState<{
+    asignacionId: string; engId: string; nombrePersona: string;
+  } | null>(null);
+  const [desasignarFecha, setDesasignarFecha] = useState<string>("");
 
   // Modal detalle engagement
   const [engModal, setEngModal] = useState<EngRow | null>(null);
@@ -877,15 +907,39 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     try { data = JSON.parse(e.dataTransfer.getData("persona")); } catch { return; }
     if (!data?.personaId) return;
 
-    // ── SIMULACIÓN: delega al padre para validar ausencias antes de insertar ─
+    const cargoRequerido = data.cargo_actual || null;
+
+    // Normaliza cargo a grupo canónico — compartido por ruta real y simulación
+    const CARGO_GRUPO: Record<string, string> = {
+      "Socio": "Socio",
+      "Director de Proyectos": "Director", "Gerente de Proyectos": "Director",
+      "Director": "Director", "Gerente": "Director",
+      "Director / Gerente de Proyectos": "Director",
+      "Asociado": "Asociado", "Consultor Senior": "Asociado",
+      "Asociado / Consultor Senior": "Asociado",
+      "Consultor Proyecto": "Consultor Proyecto",
+      "Consultor Analista": "Consultor Analista",
+    };
+    const grupoPersona = cargoRequerido ? (CARGO_GRUPO[cargoRequerido] ?? cargoRequerido) : null;
+
+    // ── SIMULACIÓN: busca req libre en snapshot local y delega al padre ──
     if (simulationMode) {
       if (onSimDropRequest) {
+        // Buscar slot libre del mismo cargo en los reqs del snapshot
+        const reqLibreSim = eng.reqs.find((r) => {
+          const grupoReq = r.cargo_requerido ? (CARGO_GRUPO[r.cargo_requerido] ?? r.cargo_requerido) : null;
+          const coincide = grupoPersona === null || grupoReq === null || grupoPersona === grupoReq;
+          if (!coincide) return false;
+          return !eng.personas.some((p) => p.requerimiento_id === r.id);
+        });
         onSimDropRequest({
-          engagementId: eng.id, reqId: "", personaId: data.personaId,
+          engagementId: eng.id,
+          reqId: reqLibreSim?.id ?? "",
+          personaId: data.personaId,
           nombre: data.nombre, apellido: data.apellido, cargo: data.cargo_actual ?? "",
-          pct: 100,
-          fechaInicio: eng.fecha_inicio,
-          fechaFin: eng.fecha_fin ?? eng.fecha_inicio,
+          pct: reqLibreSim?.pct_dedicacion ?? 100,
+          fechaInicio: reqLibreSim?.fecha_inicio ?? eng.fecha_inicio,
+          fechaFin: reqLibreSim?.fecha_fin ?? eng.fecha_fin ?? eng.fecha_inicio,
         });
       }
       return;
@@ -893,22 +947,23 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     // ─────────────────────────────────────────────────────────────────────
 
     const sb = createAnyClient();
-    const cargoRequerido = data.cargo_actual || null;
 
-    // Busca req libre (sin asignación activa) con cargo coincidente
+    // Trae todos los reqs del engagement (sin filtro de cargo) para normalizar en JS
     const { data: reqsLibres } = await (sb as any)
       .from("requerimiento_engagement")
-      .select("id, fecha_inicio, fecha_fin, cargo_requerido")
-      .eq("engagement_id", eng.id)
-      .eq("cargo_requerido", cargoRequerido ?? "");
+      .select("id, fecha_inicio, fecha_fin, cargo_requerido, pct_dedicacion")
+      .eq("engagement_id", eng.id);
 
-    let reqId: string;
     let fechaInicio: string;
     let fechaFin: string;
 
     let reqMatch: any = null;
     if (reqsLibres && (reqsLibres as any[]).length > 0) {
       for (const r of reqsLibres as any[]) {
+        // Compara por grupo normalizado (o exacto si no hay grupo)
+        const grupoReq = r.cargo_requerido ? (CARGO_GRUPO[r.cargo_requerido] ?? r.cargo_requerido) : null;
+        const cargoCoincide = grupoPersona === null || grupoReq === null || grupoPersona === grupoReq;
+        if (!cargoCoincide) continue;
         const { count } = await (sb as any)
           .from("asignacion")
           .select("id", { count: "exact", head: true })
@@ -918,49 +973,56 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       }
     }
 
+    // Calcular fechas por defecto: inicio = max(hoy, req.fecha_inicio / eng.fecha_inicio)
+    const hoyStr = format(new Date(), "yyyy-MM-dd");
     if (reqMatch) {
-      // Reutiliza el req existente con sus fechas reales
-      reqId = reqMatch.id;
-      fechaInicio = reqMatch.fecha_inicio ?? eng.fecha_inicio;
+      const baseInicio = reqMatch.fecha_inicio ?? eng.fecha_inicio;
+      fechaInicio = baseInicio > hoyStr ? baseInicio : hoyStr;
       fechaFin = reqMatch.fecha_fin ?? eng.fecha_fin ?? eng.fecha_inicio;
     } else {
-      // Crea req nuevo solo si no hay match libre
-      fechaInicio = eng.fecha_inicio;
+      fechaInicio = eng.fecha_inicio > hoyStr ? eng.fecha_inicio : hoyStr;
       fechaFin = eng.fecha_fin ?? eng.fecha_inicio;
+    }
+
+    // Abre modal de confirmación — el insert real ocurre en confirmDrop
+    setPendingDrop({ eng, personaId: data.personaId, nombre: data.nombre, apellido: data.apellido, cargo_actual: data.cargo_actual, fechaInicio, fechaFin, reqMatch, cargoRequerido });
+    setPendingDropFechas({ inicio: fechaInicio, fin: fechaFin });
+  }
+
+  /** Ejecuta el insert real tras confirmar en el modal D&D.
+   *  estadoStaffing="PLAN" → barra punteada (staffing rápido X)
+   *  estadoStaffing="CONFIRMADO" → barra sólida (botón Confirmar) */
+  async function confirmDrop(estadoStaffing: "PLAN" | "CONFIRMADO" = "CONFIRMADO") {
+    if (!pendingDrop) return;
+    const { eng, personaId, nombre, apellido, cargo_actual, reqMatch, cargoRequerido } = pendingDrop;
+    const fechaInicio = pendingDropFechas.inicio;
+    const fechaFin = pendingDropFechas.fin;
+    setPendingDrop(null);
+
+    const sb = createAnyClient();
+    let reqId: string;
+    let pctReq = 100;
+
+    if (reqMatch) {
+      reqId = reqMatch.id;
+      pctReq = reqMatch.pct_dedicacion ?? 100;
+    } else {
       const { data: newReq, error: reqErr } = await (sb as any)
         .from("requerimiento_engagement")
-        .insert({
-          engagement_id: eng.id,
-          cargo_requerido: cargoRequerido,
-          fase_nombre: null,
-          pct_dedicacion: 100,
-          fecha_inicio: fechaInicio,
-          fecha_fin: fechaFin,
-          descripcion: null,
-        })
-        .select("id")
-        .single();
+        .insert({ engagement_id: eng.id, cargo_requerido: cargoRequerido, fase_nombre: null, pct_dedicacion: 100, fecha_inicio: fechaInicio, fecha_fin: fechaFin, descripcion: null })
+        .select("id").single();
       if (reqErr || !newReq) return;
       reqId = (newReq as any).id;
     }
 
-    // Validar ausencias de la persona dentro del rango del engagement
     const { data: ausPersonaDrop } = await sb
-      .from("ausencia")
-      .select("fecha_inicio, fecha_fin")
-      .eq("persona_id", data.personaId)
-      .lte("fecha_inicio", fechaFin)
-      .gte("fecha_fin", fechaInicio)
-      .order("fecha_inicio");
+      .from("ausencia").select("fecha_inicio, fecha_fin")
+      .eq("persona_id", personaId)
+      .lte("fecha_inicio", fechaFin).gte("fecha_fin", fechaInicio).order("fecha_inicio");
 
     const baseInsert = {
-      engagement_id: eng.id,
-      requerimiento_id: reqId,
-      persona_id: data.personaId,
-      cargo_al_momento: cargoRequerido,
-      pct_dedicacion: 100,
-      estado: "activa",
-      estado_staffing: "PLAN" as const,
+      engagement_id: eng.id, requerimiento_id: reqId, persona_id: personaId,
+      cargo_al_momento: cargo_actual, pct_dedicacion: pctReq, estado: "activa", estado_staffing: estadoStaffing,
     };
 
     const createdIds: string[] = [];
@@ -968,7 +1030,6 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       const { data: ins } = await (sb as any).from("asignacion").insert({ ...baseInsert, fecha_inicio: fechaInicio, fecha_fin: fechaFin }).select("id");
       if (ins) createdIds.push(...(ins as any[]).map((r: any) => r.id));
     } else {
-      // Auto-split: segmentos sin ausencias
       const segments: { fecha_inicio: string; fecha_fin: string }[] = [];
       let cursor = fechaInicio;
       for (const aus of ausPersonaDrop as { fecha_inicio: string; fecha_fin: string }[]) {
@@ -978,42 +1039,37 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       }
       if (cursor <= fechaFin) segments.push({ fecha_inicio: cursor, fecha_fin: fechaFin });
 
-      // Bloqueo total: modal bloqueante
       if (segments.length === 0) {
         if (!reqMatch) await (sb as any).from("requerimiento_engagement").delete().eq("id", reqId);
         const ausItemsTotal: AusenciaItem[] = (ausPersonaDrop as { fecha_inicio: string; fecha_fin: string }[]).map((a) => ({
           fecha_inicio: a.fecha_inicio, fecha_fin: a.fecha_fin,
           dias: Math.round((new Date(a.fecha_fin + "T00:00:00").getTime() - new Date(a.fecha_inicio + "T00:00:00").getTime()) / 86400000) + 1,
         }));
-        setAusenciaConfirmModal({ nombre: `${data.nombre} ${data.apellido}`.trim(), ausencias: ausItemsTotal, onConfirm: async () => setAusenciaConfirmModal(null), totalBloqueo: true });
+        setAusenciaConfirmModal({ nombre: `${nombre} ${apellido}`.trim(), ausencias: ausItemsTotal, onConfirm: async () => setAusenciaConfirmModal(null), totalBloqueo: true });
         return;
       }
 
-      // Ausencias parciales → modal de confirmación antes de insertar
-      const nombre = `${data.nombre} ${data.apellido}`.trim();
+      const nombreCompleto = `${nombre} ${apellido}`.trim();
       const ausItems: AusenciaItem[] = (ausPersonaDrop as { fecha_inicio: string; fecha_fin: string }[]).map((a) => ({
-        fecha_inicio: a.fecha_inicio,
-        fecha_fin: a.fecha_fin,
+        fecha_inicio: a.fecha_inicio, fecha_fin: a.fecha_fin,
         dias: Math.round((new Date(a.fecha_fin + "T00:00:00").getTime() - new Date(a.fecha_inicio + "T00:00:00").getTime()) / 86400000) + 1,
       }));
       setAusenciaConfirmModal({
-        nombre,
-        ausencias: ausItems,
+        nombre: nombreCompleto, ausencias: ausItems,
         onConfirm: async () => {
           for (const seg of segments) {
             const { data: ins } = await (sb as any).from("asignacion").insert({ ...baseInsert, ...seg }).select("id");
             if (ins) createdIds.push(...(ins as any[]).map((r: any) => r.id));
           }
-          if (createdIds.length) pushUndo({ type: "staffear", engId: eng.id, label: `Staffear ${nombre}`, ids: createdIds });
+          if (createdIds.length) pushUndo({ type: "staffear", engId: eng.id, label: `Staffear ${nombreCompleto}`, ids: createdIds });
           refresh(eng.id);
           setAusenciaConfirmModal(null);
         },
       });
-      return; // espera confirmación del modal
+      return;
     }
 
-    // Registrar en undo stack
-    if (createdIds.length) pushUndo({ type: "staffear", engId: eng.id, label: `Staffear ${data.nombre} ${data.apellido}`.trim(), ids: createdIds });
+    if (createdIds.length) pushUndo({ type: "staffear", engId: eng.id, label: `Staffear ${nombre} ${apellido}`.trim(), ids: createdIds });
     refresh(eng.id);
   }
 
@@ -1198,39 +1254,46 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   async function handleDesasignar(asignacionId: string, engId?: string) {
     setDesasignando(asignacionId);
 
-    // ── SIMULACIÓN: eliminar del estado local únicamente ─────────────────
+    // ── SIMULACIÓN: delegar al padre para mostrar modal de truncado ──────
     if (simulationMode) {
-      // Buscar datos de la persona en engs para poder revertir con undo
-      let personaData: any = null;
+      let nombrePersona = "esta persona";
       for (const eg of engs) {
         const p = eg.personas.find((p) => p.asignacionId === asignacionId);
-        if (p) { personaData = { ...p, id: asignacionId, persona_id: p.id, engagement_id: eg.id, cargo_al_momento: p.cargo, pct_dedicacion: p.pct }; break; }
+        if (p) { nombrePersona = `${p.nombre} ${p.apellido}`.trim(); break; }
       }
-      setEngs((prev) => prev.map((eg) =>
-        engId && eg.id !== engId ? eg : {
-          ...eg,
-          personas: eg.personas.filter((p) => p.asignacionId !== asignacionId),
-        }
-      ));
-      if (personaData) pushUndo({ type: "desasignar", engId: engId ?? personaData.engagement_id, label: "Desasignación", asig: personaData });
       setDesasignando(null);
-      showToast("🗑️ [Simulación] Persona removida del escenario");
+      if (onSimDesasignarRequest) {
+        onSimDesasignarRequest({ asignacionId, engId: engId ?? "", nombrePersona });
+      }
       return;
     }
     // ────────────────────────────────────────────────────────────────────
 
+    // Ruta real: abrir modal de truncado en vez de DELETE directo
+    const hoyStr = format(new Date(), "yyyy-MM-dd");
+    // Buscar nombre de la persona para el modal
+    let nombrePersona = "esta persona";
+    for (const eg of engs) {
+      const p = eg.personas.find((p) => p.asignacionId === asignacionId);
+      if (p) { nombrePersona = `${p.nombre} ${p.apellido}`.trim(); break; }
+    }
+    setDesasignando(null);
+    setDesasignarFecha(hoyStr);
+    setPendingDesasignar({ asignacionId, engId: engId ?? "", nombrePersona });
+  }
+
+  /** Trunca la asignación fijando fecha_fin (preserva historial) */
+  async function confirmarDesasignar(fechaFin: string) {
+    if (!pendingDesasignar) return;
+    const { asignacionId, engId } = pendingDesasignar;
+    setPendingDesasignar(null);
     const sb = createAnyClient();
-    // Guardar datos antes de eliminar para permitir undo
     const { data: asigData } = await sb
       .from("asignacion")
       .select("engagement_id, requerimiento_id, persona_id, cargo_al_momento, pct_dedicacion, estado, estado_staffing, fecha_inicio, fecha_fin")
-      .eq("id", asignacionId)
-      .single();
-    await sb.from("asignacion").delete().eq("id", asignacionId);
-    if (asigData) {
-      pushUndo({ type: "desasignar", engId: engId ?? asigData.engagement_id, label: "Desasignación", asig: asigData as any });
-    }
-    setDesasignando(null);
+      .eq("id", asignacionId).single();
+    await sb.from("asignacion").update({ fecha_fin: fechaFin }).eq("id", asignacionId);
+    if (asigData) pushUndo({ type: "desasignar", engId: engId || asigData.engagement_id, label: "Desasignación", asig: asigData as any });
     refresh(engId);
   }
 
@@ -1828,7 +1891,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                           {/* Botones acción: ocultos en readOnly */}
                           {!readOnly && (
                           <div className="absolute right-0 top-0 bottom-0 flex items-center gap-0.5 bg-white pl-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button onClick={() => { prevReqsForUndoRef.current = eng.reqs ?? []; setEngToEdit(eng.raw); setReqsToEdit(eng.reqs ?? []); setActividadesToEdit(eng.actividades ?? []); setFormOpen(true); }}
+                            <button onClick={() => {
+  prevReqsForUndoRef.current = eng.reqs ?? [];
+  setEngToEdit(eng.raw);
+  const personaByReq = Object.fromEntries((eng.personas ?? []).filter(p => p.requerimiento_id).map(p => [p.requerimiento_id!, `${p.nombre} ${p.apellido}`]));
+  setReqsToEdit((eng.reqs ?? []).map(r => ({ ...r, persona_nombre: personaByReq[r.id] ?? r.persona_nombre })));
+  setActividadesToEdit(eng.actividades ?? []);
+  setFormOpen(true);
+}}
                               title="Editar"
                               className="p-0.5 rounded hover:bg-gray-100 text-gray-400">
                               <Pencil className="w-3 h-3" />
@@ -2405,7 +2475,15 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 </div>
                 <div className="flex items-center gap-1 flex-shrink-0">
                   {!readOnly && <button
-                    onClick={() => { const eg = engs.find(e => e.id === engModal.id); setEngToEdit(engModal.raw); setReqsToEdit(eg?.reqs ?? []); setActividadesToEdit(eg?.actividades ?? []); setFormOpen(true); setEngModal(null); }}
+                    onClick={() => {
+  const eg = engs.find(e => e.id === engModal.id);
+  setEngToEdit(engModal.raw);
+  const personaByReq2 = Object.fromEntries((eg?.personas ?? []).filter(p => p.requerimiento_id).map(p => [p.requerimiento_id!, `${p.nombre} ${p.apellido}`]));
+  setReqsToEdit((eg?.reqs ?? []).map(r => ({ ...r, persona_nombre: personaByReq2[r.id] ?? r.persona_nombre })));
+  setActividadesToEdit(eg?.actividades ?? []);
+  setFormOpen(true);
+  setEngModal(null);
+}}
                     title="Editar"
                     className="w-7 h-7 rounded-lg flex items-center justify-center text-gray-400 hover:text-gray-600 hover:bg-gray-100 transition-colors"
                   >
@@ -2616,10 +2694,18 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 codigo: eng.codigo, nombre: eng.nombre, cliente: eng.cliente,
                 tipo: eng.tipo, fecha_inicio: eng.fecha_inicio, fecha_fin: eng.fecha_fin,
                 reqs: nuevosReqs,
-                // Personas adoptan las fechas del engagement (comportamiento por defecto)
+                // Personas adoptan fechas y pct del req vinculado (equivalente a cascada en BD real)
                 personas: e.personas
                   .filter((p) => !p.requerimiento_id || nuevosReqs.some((r) => r.id === p.requerimiento_id))
-                  .map((p) => ({ ...p, fecha_inicio: eng.fecha_inicio, fecha_fin: eng.fecha_fin ?? p.fecha_fin })),
+                  .map((p) => {
+                    const reqVinculado = p.requerimiento_id ? nuevosReqs.find((r) => r.id === p.requerimiento_id) : null;
+                    return {
+                      ...p,
+                      fecha_inicio: eng.fecha_inicio,
+                      fecha_fin: eng.fecha_fin ?? p.fecha_fin,
+                      ...(reqVinculado ? { pct: reqVinculado.pct_dedicacion } : {}),
+                    };
+                  }),
                 // Actualiza actividades (viajes/talleres) desde el form
                 actividades: (eng.actividades ?? []).map((a: any) => ({
                   id: a.id, tipo: a.tipo, titulo: a.titulo ?? "",
@@ -2699,6 +2785,95 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           </div>
         )}
       </Modal>
+
+      {/* ── Modal: Truncar desasignación (preserva historial) ── */}
+      {pendingDesasignar && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-100 p-6 w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-[14px] font-semibold text-[#1a1a2e]">¿Último día de trabajo?</p>
+              <button onClick={() => setPendingDesasignar(null)} className="text-slate-400 hover:text-slate-600 transition-colors">✕</button>
+            </div>
+            <p className="text-[12px] text-slate-500 mb-4">
+              ¿Cuál es el último día de <span className="font-semibold text-slate-700">{pendingDesasignar.nombrePersona}</span> en este proyecto?
+            </p>
+            <div className="mb-5">
+              <label className="block text-[11px] font-medium text-slate-500 mb-1">Último día de trabajo</label>
+              <input
+                type="date"
+                value={desasignarFecha}
+                onChange={(e) => setDesasignarFecha(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
+              />
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingDesasignar(null)}
+                className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => confirmarDesasignar(desasignarFecha)}
+                disabled={!desasignarFecha}
+                className="px-4 py-2 text-[12px] font-bold text-white bg-[#1a1a2e] hover:bg-[#2d2d4e] rounded-lg transition-colors disabled:opacity-40"
+              >
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Modal: Confirmación D&D antes de staffear ── */}
+      {pendingDrop && (
+        <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-100 p-6 w-full max-w-sm mx-4">
+            <div className="flex items-center justify-between mb-1">
+              <p className="text-[14px] font-semibold text-[#1a1a2e]">Confirmar asignación</p>
+              <button onClick={() => confirmDrop("PLAN")} title="Staffing rápido con fechas por defecto" className="text-slate-400 hover:text-slate-600 transition-colors">✕</button>
+            </div>
+            <p className="text-[12px] text-slate-500 mb-4">
+              Staffear <span className="font-semibold text-slate-700">{pendingDrop.nombre} {pendingDrop.apellido}</span> en <span className="font-semibold text-slate-700">{pendingDrop.eng.nombre}</span>
+            </p>
+            <div className="space-y-3 mb-5">
+              <div>
+                <label className="block text-[11px] font-medium text-slate-500 mb-1">Fecha Inicio</label>
+                <input
+                  type="date"
+                  value={pendingDropFechas.inicio}
+                  onChange={(e) => setPendingDropFechas((f) => ({ ...f, inicio: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
+                />
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-slate-500 mb-1">Fecha Fin</label>
+                <input
+                  type="date"
+                  value={pendingDropFechas.fin}
+                  onChange={(e) => setPendingDropFechas((f) => ({ ...f, fin: e.target.value }))}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
+                />
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setPendingDrop(null)}
+                className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={() => confirmDrop("PLAN")}
+                disabled={!pendingDropFechas.inicio || !pendingDropFechas.fin}
+                className="px-4 py-2 text-[12px] font-bold text-white bg-[#1a1a2e] hover:bg-[#2d2d4e] rounded-lg transition-colors disabled:opacity-40"
+              >
+                Confirmar asignación
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
     </div>
   );
