@@ -712,6 +712,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     }
     // ─────────────────────────────────────────────────────────────────────────────────────
     async function load() {
+      // En modo simulación el snapshot es inmutable hasta "Actualizar con data real" → no re-fetchar
+      if (simulationMode) return;
       setLoading(true);
       const sb = createAnyClient();
       const cutoff = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().split("T")[0]; })();
@@ -1297,6 +1299,16 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     refresh(engId);
   }
 
+  /** Elimina físicamente la asignación (asignación de prueba o error) */
+  async function eliminarAsignacionCompleta() {
+    if (!pendingDesasignar) return;
+    const { asignacionId, engId } = pendingDesasignar;
+    setPendingDesasignar(null);
+    const sb = createAnyClient();
+    await sb.from("asignacion").delete().eq("id", asignacionId);
+    refresh(engId);
+  }
+
   // Mover engagement a papelera
   async function moverAPapelera(id: string) {
     // ── SIMULACIÓN: quitar engagement del estado local ───────────────────
@@ -1342,7 +1354,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const focusEngIdRef = useRef<string | null>(null);
 
   // Recarga al guardar cualquier engagement; captura el ID para el scroll posterior
+  // simulationMode: ignorar eventos globales — el snapshot del escenario es inmutable hasta "Actualizar con data real"
   useEffect(() => {
+    if (simulationMode) return;
     const handler = (e: Event) => {
       const id = (e as CustomEvent).detail?.engagementId as string | undefined;
       if (id) focusEngIdRef.current = id;
@@ -1350,7 +1364,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     };
     window.addEventListener("engagementChanged", handler);
     return () => window.removeEventListener("engagementChanged", handler);
-  }, []);
+  }, [simulationMode]);
 
   // Cuando el reload termina, expande y hace scroll al engagement editado
   useEffect(() => {
@@ -2806,20 +2820,30 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
               />
             </div>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setPendingDesasignar(null)}
-                className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => confirmarDesasignar(desasignarFecha)}
-                disabled={!desasignarFecha}
-                className="px-4 py-2 text-[12px] font-bold text-white bg-[#1a1a2e] hover:bg-[#2d2d4e] rounded-lg transition-colors disabled:opacity-40"
-              >
-                Confirmar
-              </button>
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setPendingDesasignar(null)}
+                  className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => confirmarDesasignar(desasignarFecha)}
+                  disabled={!desasignarFecha}
+                  className="px-4 py-2 text-[12px] font-bold text-white bg-[#1a1a2e] hover:bg-[#2d2d4e] rounded-lg transition-colors disabled:opacity-40"
+                >
+                  Confirmar
+                </button>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={eliminarAsignacionCompleta}
+                  className="text-[11px] text-slate-400 hover:text-red-500 underline transition-colors"
+                >
+                  Eliminar por completo (Asignación de prueba o error)
+                </button>
+              </div>
             </div>
           </div>
         </div>
