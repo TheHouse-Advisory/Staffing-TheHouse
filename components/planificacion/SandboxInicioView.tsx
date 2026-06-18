@@ -331,7 +331,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
     if (!pendingSimDesasignar) return;
     const { asignacionId, engId } = pendingSimDesasignar;
     setPendingSimDesasignar(null);
-    onSnapshotChange?.((prev: any[]) => prev.map((eg: any) => {
+    onSnapshotChange?.(snapshot.map((eg: any) => {
       if (eg.id !== engId) return eg;
       return {
         ...eg,
