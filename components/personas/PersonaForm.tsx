@@ -6,7 +6,31 @@ import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
 import { FieldWrapper, Input, Select } from "@/components/ui/FormField";
 import { MultiSelect, type Option } from "@/components/ui/MultiSelect";
+import { Trash2, Plus } from "lucide-react";
 import type { Persona } from "@/lib/types/database";
+
+// ── Desarrollo de Carrera (estado local, sin backend aún) ─────
+interface PeriodoCargo {
+  id: number; // clave local para React key
+  cargo: string;
+  fecha_inicio: string;
+  fecha_fin: string;
+}
+
+const ESCALONES_FORM = [
+  "Trainee",
+  "Consultor Analista",
+  "Consultor de Proyectos",
+  "Senior",
+  "Asociado",
+  "Gerente",
+  "Director",
+  "Socio",
+  "Desarrollo",
+] as const;
+
+let _nextId = 1;
+function nextId() { return _nextId++; }
 
 interface PersonaFormProps {
   open: boolean;
@@ -60,6 +84,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
   const [capacidades, setCapacidades] = useState<Option[]>([]);
   const [tematicas, setTematicas] = useState<Option[]>([]);
   const [mentoresOpciones, setMentoresOpciones] = useState<Option[]>([]);
+  const [periodosCargo, setPeriodosCargo] = useState<PeriodoCargo[]>([]);
 
   // Cargar catálogos una vez
   useEffect(() => {
@@ -94,11 +119,18 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
 
     async function loadRelaciones() {
       const supabase = createAnyClient();
-      const [pi, pc, pt] = await Promise.all([
+      const [pi, pc, pt, hc] = await Promise.all([
         supabase.from("persona_industria").select("industria_id").eq("persona_id", persona!.id),
         supabase.from("persona_capacidad").select("capacidad_id").eq("persona_id", persona!.id),
         supabase.from("persona_tematica").select("tematica_id").eq("persona_id", persona!.id),
+        supabase.from("historial_cargos").select("cargo, fecha_inicio, fecha_fin")
+          .eq("persona_id", persona!.id).order("fecha_inicio", { ascending: true }),
       ]);
+      setPeriodosCargo(
+        ((hc.data ?? []) as { cargo: string; fecha_inicio: string; fecha_fin: string | null }[]).map(
+          (r) => ({ id: nextId(), cargo: r.cargo, fecha_inicio: r.fecha_inicio, fecha_fin: r.fecha_fin ?? "" })
+        )
+      );
       setForm({
         nombre: persona!.nombre,
         apellido: persona!.apellido,
@@ -170,12 +202,22 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
       if (error || !data) { setServerError(error?.message ?? "Error al crear"); setLoading(false); return; }
       personaId = data.id;
 
-      // Historial de cargo inicial
-      await supabase.from("persona_cargo_historial").insert({
-        persona_id: personaId,
-        cargo: form.cargo_actual,
-        fecha_inicio: form.fecha_ingreso || new Date().toISOString().split("T")[0],
-      });
+      // Registrar cargo inicial en historial si no viene de periodosCargo
+      // (se sincroniza justo abajo junto al resto de periodos)
+    }
+
+    // Sincronizar historial_cargos: borrar y re-insertar
+    await supabase.from("historial_cargos").delete().eq("persona_id", personaId);
+    const periodosFiltrados = periodosCargo.filter((p) => p.cargo && p.fecha_inicio);
+    if (periodosFiltrados.length > 0) {
+      await supabase.from("historial_cargos").insert(
+        periodosFiltrados.map((p) => ({
+          persona_id:  personaId,
+          cargo:       p.cargo,
+          fecha_inicio: p.fecha_inicio,
+          fecha_fin:   p.fecha_fin || null,
+        }))
+      );
     }
 
     // Sincronizar relaciones N:N
@@ -361,6 +403,134 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
               />
             </FieldWrapper>
           </div>
+        </div>
+
+        {/* ── Desarrollo de Carrera ────────────────────────── */}
+        <div className="border-t border-[#f0f0f0] pt-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="text-sm font-semibold text-[#1a1a2e]">Desarrollo de Carrera</h3>
+              <p className="text-[11px] text-[#aaa] mt-0.5">Historial de cargos en la consultora</p>
+            </div>
+            <button
+              type="button"
+              onClick={() =>
+                setPeriodosCargo((prev) => [
+                  ...prev,
+                  { id: nextId(), cargo: "", fecha_inicio: "", fecha_fin: "" },
+                ])
+              }
+              className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-lg border border-[#e0e0e0] text-[#555] hover:bg-[#f5f5f5] transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              Añadir periodo
+            </button>
+          </div>
+
+          {periodosCargo.length === 0 ? (
+            <p className="text-[12px] text-[#ccc] italic text-center py-4 border border-dashed border-[#e8e8e8] rounded-lg">
+              Sin periodos registrados. Usa "+ Añadir periodo" para comenzar.
+            </p>
+          ) : (
+            <div className="space-y-2">
+              {/* Encabezado de columnas */}
+              <div className="grid grid-cols-[1fr_130px_130px_32px] gap-2 px-1">
+                <span className="text-[10px] font-semibold text-[#aaa] uppercase tracking-wide">Cargo</span>
+                <span className="text-[10px] font-semibold text-[#aaa] uppercase tracking-wide">Inicio</span>
+                <span className="text-[10px] font-semibold text-[#aaa] uppercase tracking-wide">Término</span>
+                <span />
+              </div>
+
+              {periodosCargo.map((p) => {
+                // Considera Desarrollo si el rol del persona o el cargo actual lo indica
+                const esDesarrollo =
+                  persona?.rol_sistema === "Desarrollo" ||
+                  form.cargo_actual === "Desarrollo" ||
+                  (form.cargo_actual ?? "").toLowerCase().includes("desarrollo");
+
+                return (
+                <div key={p.id} className="grid grid-cols-[1fr_130px_130px_32px] gap-2 items-center">
+                  {/* Cargo: texto libre para Desarrollo, selector fijo para Consultoría */}
+                  {esDesarrollo ? (
+                    <input
+                      type="text"
+                      value={p.cargo}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const pid = p.id;
+                        setPeriodosCargo((prev) =>
+                          prev.map((x) => x.id === pid ? { ...x, cargo: val } : x)
+                        );
+                      }}
+                      placeholder="Ej: Frontend Developer Sr"
+                      autoComplete="off"
+                      className="w-full border border-[#e0e0e0] rounded-lg px-2.5 py-2 text-[12px] text-[#1a1a1a] placeholder-[#ccc] focus:outline-none focus:border-[#4a90e2] transition-colors"
+                    />
+                  ) : (
+                    <select
+                      value={p.cargo}
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        const pid = p.id;
+                        setPeriodosCargo((prev) =>
+                          prev.map((x) => x.id === pid ? { ...x, cargo: val } : x)
+                        );
+                      }}
+                      className="w-full border border-[#e0e0e0] rounded-lg px-2.5 py-2 text-[12px] text-[#1a1a1a] bg-white focus:outline-none focus:border-[#4a90e2] transition-colors"
+                    >
+                      <option value="">Seleccionar cargo…</option>
+                      {ESCALONES_FORM.map((c) => (
+                        <option key={c} value={c}>{c}</option>
+                      ))}
+                    </select>
+                  )}
+
+                  {/* Fecha inicio */}
+                  <input
+                    type="date"
+                    value={p.fecha_inicio}
+                    onChange={(e) =>
+                      setPeriodosCargo((prev) =>
+                        prev.map((x) => x.id === p.id ? { ...x, fecha_inicio: e.target.value } : x)
+                      )
+                    }
+                    className="border border-[#e0e0e0] rounded-lg px-2.5 py-2 text-[12px] text-[#1a1a1a] focus:outline-none focus:border-[#4a90e2] transition-colors w-full"
+                  />
+
+                  {/* Fecha término */}
+                  <input
+                    type="date"
+                    value={p.fecha_fin}
+                    min={p.fecha_inicio || undefined}
+                    onChange={(e) =>
+                      setPeriodosCargo((prev) =>
+                        prev.map((x) => x.id === p.id ? { ...x, fecha_fin: e.target.value } : x)
+                      )
+                    }
+                    placeholder="Presente"
+                    className="border border-[#e0e0e0] rounded-lg px-2.5 py-2 text-[12px] text-[#1a1a1a] focus:outline-none focus:border-[#4a90e2] transition-colors w-full"
+                  />
+
+                  {/* Eliminar fila */}
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setPeriodosCargo((prev) => prev.filter((x) => x.id !== p.id))
+                    }
+                    className="p-1.5 rounded-lg text-[#ccc] hover:text-red-500 hover:bg-red-50 transition-colors"
+                    title="Eliminar periodo"
+                  >
+                    <Trash2 className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              );
+              })}
+
+              <p className="text-[10px] text-[#bbb] pt-1">
+                Deja "Término" vacío si es el cargo actual.
+              </p>
+            </div>
+          )}
         </div>
 
       </div>

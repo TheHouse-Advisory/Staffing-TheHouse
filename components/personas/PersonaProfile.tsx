@@ -7,6 +7,7 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { getDetailedPersonAbsences, type DetalleAusenciasPersona, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 import { getIniciales } from "@/lib/utils/iniciales";
+import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import { ProyectosPersonaDetalle } from "./ProyectosPersonaDetalle";
 import { Button } from "@/components/ui/Button";
 import { PersonaForm } from "./PersonaForm";
@@ -52,6 +53,41 @@ const NIVEL_LABEL: Record<string, string> = {
   avanzado: "avanzado",
 };
 
+// ── Desarrollo de Carrera ─────────────────────────────────────
+const ESCALONES_SENIORITY = [
+  "Trainee",
+  "Consultor Analista",
+  "Consultor de Proyectos",
+  "Senior",
+  "Asociado",
+  "Gerente",
+  "Director",
+] as const;
+
+interface CargoDBRow {
+  cargo: string;
+  fechaInicio: string;
+  fechaFin: string;   // "Presente" si fecha_fin es null
+  actual: boolean;
+}
+
+function fmtDuracion(fechaInicio: string, fechaFin: string): string {
+  const dias = calculateBusinessDays(fechaInicio, fechaFin);
+  if (dias <= 0) return "";
+  const meses = Math.floor(dias / 22); // ~22 días hábiles por mes
+  const resto  = dias % 22;
+  if (meses === 0) return `${dias} días háb.`;
+  if (resto  === 0) return `${meses} ${meses === 1 ? "mes" : "meses"}`;
+  return `${meses} ${meses === 1 ? "mes" : "meses"} y ${resto} días`;
+}
+
+function fmtMesAnio(iso: string): string {
+  if (iso === "Presente") return "Presente";
+  const [y, m, d] = iso.split("-");
+  const MESES = ["enero","febrero","marzo","abril","mayo","junio","julio","agosto","septiembre","octubre","noviembre","diciembre"];
+  return `${parseInt(d)} de ${MESES[parseInt(m) - 1]} ${y}`;
+}
+
 function diasEnEmpresa(fechaIngreso: string | null): string | null {
   if (!fechaIngreso) return null;
   const inicio = new Date(fechaIngreso + "T00:00:00");
@@ -87,13 +123,14 @@ export function PersonaProfile({ id }: Props) {
   const [talentDraft, setTalentDraft] = useState<{ p: number | null; d: number | null }>({ p: null, d: null });
   const [ausenciasDetalle, setAusenciasDetalle] = useState<DetalleAusenciasPersona | null>(null);
   const [historial,        setHistorial]        = useState<HistorialItem[]>([]);
-  const [deletingEngId,    setDeletingEngId]    = useState<string | null>(null); // eng que se va a borrar
-  const [detalleEngId,     setDetalleEngId]     = useState<string | null>(null); // eng cuyo modal está abierto
+  const [deletingEngId,    setDeletingEngId]    = useState<string | null>(null);
+  const [detalleEngId,     setDetalleEngId]     = useState<string | null>(null);
+  const [historialCargosDB, setHistorialCargosDB] = useState<CargoDBRow[]>([]);
 
   const load = async () => {
     const supabase = createAnyClient();
 
-    const [pRes, indRes, capRes, temRes, asigRes, mentoreRes, histRes] = await Promise.all([
+    const [pRes, indRes, capRes, temRes, asigRes, mentoreRes, histRes, cargosRes] = await Promise.all([
       supabase.from("persona").select("*").eq("id", id).single(),
 
       supabase
@@ -136,6 +173,13 @@ export function PersonaProfile({ id }: Props) {
         .not("fecha_fin", "is", null)
         .lt("fecha_fin", new Date().toISOString().slice(0, 10))
         .order("fecha_inicio", { ascending: false }),
+
+      // Historial de cargos (Desarrollo de Carrera)
+      supabase
+        .from("historial_cargos")
+        .select("cargo, fecha_inicio, fecha_fin")
+        .eq("persona_id", id)
+        .order("fecha_inicio", { ascending: true }),
     ]);
 
     if (pRes.data) {
@@ -222,6 +266,17 @@ export function PersonaProfile({ id }: Props) {
       }
     });
     setHistorial([...histMap.values()].sort((a, b) => b.fechaRef.localeCompare(a.fechaRef)));
+
+    setHistorialCargosDB(
+      ((cargosRes.data ?? []) as { cargo: string; fecha_inicio: string; fecha_fin: string | null }[]).map(
+        (r) => ({
+          cargo:       r.cargo,
+          fechaInicio: r.fecha_inicio,
+          fechaFin:    r.fecha_fin ?? "Presente",
+          actual:      r.fecha_fin === null,
+        })
+      )
+    );
 
     setLoading(false);
   };
@@ -702,6 +757,166 @@ export function PersonaProfile({ id }: Props) {
 
           </div>
         </div>
+        {/* ── Desarrollo de Carrera ───────────────────────── */}
+        <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
+          <div className="flex items-center justify-between mb-6">
+            <div>
+              <h3 className="font-semibold">Desarrollo de Carrera</h3>
+              <p className="text-xs text-[#aaa] mt-0.5">Escalones de seniority recorridos</p>
+            </div>
+            <span className="text-[10px] text-[#aaa] font-medium">
+              {historialCargosDB.length === 0 ? "Sin registros" : `${historialCargosDB.length} periodo${historialCargosDB.length > 1 ? "s" : ""}`}
+            </span>
+          </div>
+
+          {/* Escalones horizontales */}
+          <div className="overflow-x-auto pb-2">
+            <div className="flex items-start gap-0 min-w-max">
+              {(() => {
+                // Modo dinámico si: rol_sistema es Desarrollo, o el historial
+                // contiene cargos que no pertenecen a la lista fija de escalones
+                const tieneCargoLibre = historialCargosDB.some(
+                  (h) => !(ESCALONES_SENIORITY as readonly string[]).includes(h.cargo)
+                );
+                if (persona.rol_sistema === "Desarrollo" || tieneCargoLibre) {
+                  if (historialCargosDB.length === 0) {
+                    return (
+                      <p className="text-[12px] text-[#ccc] italic py-4">
+                        Sin periodos registrados aún.
+                      </p>
+                    );
+                  }
+                  return historialCargosDB.map((entrada, idx) => {
+                    const esUltimo = idx === historialCargosDB.length - 1;
+                    return (
+                      <div key={idx} className="flex items-center">
+                        <div className="flex flex-col items-center" style={{ width: 110 }}>
+                          <div
+                            className="relative flex items-center justify-center rounded-full border-2 transition-all duration-300"
+                            style={{
+                              width: entrada.actual ? 52 : 40,
+                              height: entrada.actual ? 52 : 40,
+                              background: entrada.actual
+                                ? "linear-gradient(135deg,#3b82f6,#1d4ed8)"
+                                : "#dbeafe",
+                              borderColor: entrada.actual ? "#1d4ed8" : "#93c5fd",
+                              boxShadow: entrada.actual ? "0 0 0 4px rgba(59,130,246,0.15)" : "none",
+                            }}
+                          >
+                            <span className="text-[11px] font-bold" style={{ color: entrada.actual ? "#fff" : "#2563eb" }}>
+                              {idx + 1}
+                            </span>
+                            {!entrada.actual && (
+                              <span className="absolute -top-1 -right-1 text-[9px] bg-blue-500 text-white rounded-full w-4 h-4 flex items-center justify-center font-bold">
+                                ✓
+                              </span>
+                            )}
+                          </div>
+                          {entrada.actual && (
+                            <span className="mt-1.5 text-[9px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white uppercase tracking-wide">
+                              Actual
+                            </span>
+                          )}
+                          <p className="text-center mt-2 leading-tight px-1 text-[10px] font-semibold"
+                            style={{ color: entrada.actual ? "#1d4ed8" : "#374151", maxWidth: 100, wordBreak: "break-word" }}>
+                            {entrada.cargo}
+                          </p>
+                          <div className="mt-1.5 text-center">
+                            <p className="text-[9px] text-[#60a5fa] font-medium leading-tight">{fmtMesAnio(entrada.fechaInicio)}</p>
+                            <p className="text-[9px] text-[#9ca3af] leading-tight">→ {fmtMesAnio(entrada.fechaFin)}</p>
+                            <p className="text-[8px] text-[#c0c0c0] leading-tight mt-0.5 italic">
+                              {fmtDuracion(entrada.fechaInicio, entrada.actual ? new Date().toISOString().split("T")[0] : entrada.fechaFin)}
+                            </p>
+                          </div>
+                        </div>
+                        {!esUltimo && (
+                          <div className="flex-shrink-0 h-0.5 bg-[#93c5fd]" style={{ width: 20, marginBottom: 20 }} />
+                        )}
+                      </div>
+                    );
+                  });
+                }
+
+                // Consultoría: escalones fijos, iluminados según BD
+                return ESCALONES_SENIORITY.map((escalon, idx) => {
+                  const entrada   = historialCargosDB.find((h) => h.cargo === escalon);
+                  const alcanzado = !!entrada;
+                  const esActual  = entrada?.actual ?? false;
+                  const esUltimo  = idx === ESCALONES_SENIORITY.length - 1;
+                  return (
+                    <div key={escalon} className="flex items-center">
+                      <div className="flex flex-col items-center" style={{ width: 100 }}>
+                        <div
+                          className="relative flex items-center justify-center rounded-full border-2 transition-all duration-300"
+                          style={{
+                            width: esActual ? 52 : 40,
+                            height: esActual ? 52 : 40,
+                            background: alcanzado ? (esActual ? "linear-gradient(135deg,#3b82f6,#1d4ed8)" : "#dbeafe") : "#f3f4f6",
+                            borderColor: alcanzado ? (esActual ? "#1d4ed8" : "#93c5fd") : "#e5e7eb",
+                            boxShadow: esActual ? "0 0 0 4px rgba(59,130,246,0.15)" : "none",
+                          }}
+                        >
+                          <span className="text-[11px] font-bold" style={{ color: alcanzado ? (esActual ? "#fff" : "#2563eb") : "#d1d5db" }}>
+                            {idx + 1}
+                          </span>
+                          {alcanzado && !esActual && (
+                            <span className="absolute -top-1 -right-1 text-[9px] bg-blue-500 text-white rounded-full w-4 h-4 flex items-center justify-center font-bold">
+                              ✓
+                            </span>
+                          )}
+                        </div>
+                        {esActual && (
+                          <span className="mt-1.5 text-[9px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white uppercase tracking-wide">
+                            Actual
+                          </span>
+                        )}
+                        <p className="text-center mt-2 leading-tight px-1"
+                          style={{ fontSize: 10, fontWeight: alcanzado ? 600 : 400, color: alcanzado ? (esActual ? "#1d4ed8" : "#374151") : "#9ca3af", maxWidth: 90, wordBreak: "break-word" }}>
+                          {escalon}
+                        </p>
+                        {entrada && (
+                          <div className="mt-1.5 text-center">
+                            <p className="text-[9px] text-[#60a5fa] font-medium leading-tight">{fmtMesAnio(entrada.fechaInicio)}</p>
+                            <p className="text-[9px] text-[#9ca3af] leading-tight">→ {fmtMesAnio(entrada.fechaFin)}</p>
+                            <p className="text-[8px] text-[#c0c0c0] leading-tight mt-0.5 italic">
+                              {fmtDuracion(entrada.fechaInicio, entrada.actual ? new Date().toISOString().split("T")[0] : entrada.fechaFin)}
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      {!esUltimo && (() => {
+                        const sigAlcanzado = !!historialCargosDB.find((h) => h.cargo === ESCALONES_SENIORITY[idx + 1]);
+                        return (
+                          <div className="flex-shrink-0 h-0.5 transition-colors duration-300"
+                            style={{ width: 20, background: alcanzado && sigAlcanzado ? "#93c5fd" : "#e5e7eb", marginBottom: 20 }} />
+                        );
+                      })()}
+                    </div>
+                  );
+                });
+              })()}
+            </div>
+          </div>
+
+          {/* Leyenda */}
+          <div className="flex items-center gap-4 mt-4 pt-4 border-t border-[#f0f0f0]">
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-full bg-blue-200 border border-blue-300" />
+              <span className="text-[10px] text-[#888]">Completado</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <div className="w-3 h-3 rounded-full bg-blue-600" />
+              <span className="text-[10px] text-[#888]">Cargo actual</span>
+            </div>
+            {persona.rol_sistema !== "Desarrollo" && (
+              <div className="flex items-center gap-1.5">
+                <div className="w-3 h-3 rounded-full bg-gray-100 border border-gray-200" />
+                <span className="text-[10px] text-[#888]">Por alcanzar</span>
+              </div>
+            )}
+          </div>
+        </div>
+
         {/* ── Notebook de Desarrollo ──────────────────────── */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-4">
