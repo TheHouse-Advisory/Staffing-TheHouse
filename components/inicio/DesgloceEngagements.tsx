@@ -171,6 +171,8 @@ interface Props {
   onSimDirty?: () => void;
   /** En simulationMode: delega al padre la confirmación de desasignación para truncar fecha_fin */
   onSimDesasignarRequest?: (payload: { asignacionId: string; engId: string; nombrePersona: string }) => void;
+  /** Oculta el % de carga en "Equipo asignado" para roles restringidos (G&D, A&Sr, planificador, Desarrollo) */
+  ocultarPctEquipo?: boolean;
 }
 
 export interface SimAsigPayload {
@@ -190,7 +192,7 @@ type UndoEntry =
   | { type: "color_semana"; engId: string; label: string; fecha: string; fecha_fin: string; prevEntry: { fecha: string; fecha_fin: string | null; intensidad: string } | null }
   | { type: "edit_reqs";   engId: string; label: string; engNombre: string; prevReqs: ReqData[]; prevPersonas: PersonaAsig[] };
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest }: Props) {
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest, ocultarPctEquipo = false }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
   const [baseInterna, setBaseInterna] = useState<Date>(new Date());
 
@@ -2601,7 +2603,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                             </div>
                             <span className="text-xs truncate text-[#1a1a2e]">{p.nombre} {p.apellido}</span>
                           </div>
-                          <span className="text-[10px] text-gray-400 flex-shrink-0">{p.pct}%</span>
+                          {!ocultarPctEquipo && <span className="text-[10px] text-gray-400 flex-shrink-0">{p.pct}%</span>}
                         </div>
                       ))}
                     </div>

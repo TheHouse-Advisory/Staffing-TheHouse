@@ -135,6 +135,7 @@ function TableroContent() {
                 externalReloadKey={tableroReloadKey}
                 onOpenPanel={abrirPanel}
                 readOnly={isReadOnly}
+                ocultarPctEquipo={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
               />
             </div>
 

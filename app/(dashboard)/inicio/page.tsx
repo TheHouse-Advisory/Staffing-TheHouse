@@ -385,12 +385,14 @@ export default function InicioPage() {
                                 </span>
                               )}
                             </div>
-                            <span
-                              className="text-[9px] font-bold px-1 py-0.5 rounded-full leading-none"
-                              style={{ background: oc.bg, color: oc.text }}
-                            >
-                              {pct}%
-                            </span>
+                            {rol !== "GyD" && (
+                              <span
+                                className="text-[9px] font-bold px-1 py-0.5 rounded-full leading-none"
+                                style={{ background: oc.bg, color: oc.text }}
+                              >
+                                {pct}%
+                              </span>
+                            )}
                           </button>
                         );
                       })}
@@ -407,6 +409,7 @@ export default function InicioPage() {
               personaId={seleccionada.id}
               onClose={() => setSeleccionada(null)}
               ocultarMatriz={rol === "planificador" || rol === "GyD"}
+              ocultarCarga={rol === "GyD"}
             />
           )}
         </div>

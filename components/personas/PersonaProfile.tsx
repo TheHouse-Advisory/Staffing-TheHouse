@@ -367,12 +367,14 @@ export function PersonaProfile({ id }: Props) {
                     {persona.rol_sistema}
                   </span>
                 )}
+                {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
                 <span
                   className="text-xs px-2.5 py-0.5 rounded-full font-medium"
                   style={{ background: bgOcp, color: textOcp }}
                 >
                   {pctTotal}% ocupado actualmente
                 </span>
+                )}
                 {diasEnEmpresa(persona.fecha_ingreso) && (
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#f8f8f8] text-[#888] border border-[#ebebeb]">
                     ⌛ {diasEnEmpresa(persona.fecha_ingreso)} en la empresa
@@ -504,7 +506,7 @@ export function PersonaProfile({ id }: Props) {
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold">Proyectos activos y futuros</h3>
-            {pctTotal > 0 && (() => {
+            {pctTotal > 0 && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (() => {
               const { bg, text } = colorOcupacion(pctTotal);
               return (
                 <span
@@ -516,7 +518,7 @@ export function PersonaProfile({ id }: Props) {
               );
             })()}
           </div>
-          <ProyectosPersonaDetalle personaId={id} />
+          <ProyectosPersonaDetalle personaId={id} ocultarCarga={rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo"} />
         </div>
 
         {/* ── Historial de proyectos ──────────────────────── */}
@@ -918,6 +920,7 @@ export function PersonaProfile({ id }: Props) {
         </div>
 
         {/* ── Notebook de Desarrollo ──────────────────────── */}
+        {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold">Notebook de Desarrollo</h3>
@@ -925,6 +928,7 @@ export function PersonaProfile({ id }: Props) {
           </div>
           <NotebookPanel personaId={id} personaNombre={`${persona.nombre} ${persona.apellido}`} />
         </div>
+        )}
 
       </div>
 
