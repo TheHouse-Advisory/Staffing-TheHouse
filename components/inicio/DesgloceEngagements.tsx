@@ -1679,7 +1679,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               </button>
             )}
             {/* Botón Deshacer */}
-            <button
+            {!ocultarPctEquipo && <button
               onClick={handleUndo}
               disabled={!undoStack.length || undoing}
               title={undoStack.length ? `Deshacer: ${undoStack[undoStack.length - 1]?.label}` : "Sin acciones para deshacer"}
@@ -1689,7 +1689,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 ? <Loader2 className="w-3 h-3 animate-spin" />
                 : <RotateCcw className="w-3 h-3" />}
               <span>Deshacer{undoStack.length > 1 ? ` (${undoStack.length})` : ""}</span>
-            </button>
+            </button>}
           </div>
           {/* Resumen — oculto en readOnly */}
           {!readOnly && <Link
@@ -2005,6 +2005,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 title={readOnly ? "" : "Arrastra para mover · Borde para redimensionar · Clic para intensidad"}
                                 onMouseDown={(ev) => {
                                   if (readOnly) return;
+                                  if (ocultarPctEquipo) return;
                                   ev.stopPropagation();
                                   movingEngActiveRef.current = true;
                                   setMovingEng({ eng, startColIdx: i });
@@ -2014,6 +2015,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 onClick={(ev) => {
                                   if (readOnly) return;
                                   if (movingEng) return;
+                                  if (ocultarPctEquipo) return;
                                   ev.stopPropagation();
                                   setQuickEdit({ engId: eng.id, fecha: format(col.inicio, "yyyy-MM-dd"), fecha_fin: format(col.fin, "yyyy-MM-dd"), x: ev.clientX, y: ev.clientY });
                                 }}>
@@ -2033,8 +2035,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                     </div>
                                   </div>
                                 )}
-                                {!readOnly && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/40 transition-colors" />}
-                                {!readOnly && isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/40 transition-colors" />}
+                                {!readOnly && !ocultarPctEquipo && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/40 transition-colors" />}
+                                {!readOnly && !ocultarPctEquipo && isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/40 transition-colors" />}
                               </div>
                             </td>
                           );
@@ -2060,6 +2062,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               }}
                               onClick={(ev) => {
                                 if (movingEng) return;
+                                if (ocultarPctEquipo) return;
                                 ev.stopPropagation();
                                 setQuickEdit({ engId: eng.id, fecha: format(col.inicio, "yyyy-MM-dd"), fecha_fin: format(col.fin, "yyyy-MM-dd"), x: ev.clientX, y: ev.clientY });
                               }}>
@@ -2079,8 +2082,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                   </div>
                                 </div>
                               )}
-                              {isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/30 transition-colors" />}
-                              {isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/30 transition-colors" />}
+                              {!ocultarPctEquipo && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/30 transition-colors" />}
+                              {!ocultarPctEquipo && isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/30 transition-colors" />}
                             </div>
                           </td>
                         );

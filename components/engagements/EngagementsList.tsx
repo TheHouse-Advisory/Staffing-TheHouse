@@ -53,12 +53,14 @@ function SeccionesTablaEngagements({
   isAdmin,
   hayBusqueda,
   onPapelera,
+  rolActual,
 }: {
   engagements: (EngagementConCobertura | Engagement)[];
   extra: Map<string, EngExtra>;
   isAdmin: boolean;
   hayBusqueda: boolean;
   onPapelera?: (id: string, nombre: string) => void;
+  rolActual: RolSistema | null;
 }) {
   // Nivel 1: secciones colapsadas (tipo → collapsed)
   const [collapsedSections, setCollapsedSections] = useState<Record<string, boolean>>({});
@@ -180,7 +182,7 @@ function SeccionesTablaEngagements({
                                 <Link href={`/engagements/${e.id}`} className="font-semibold text-[#1a1a1a] hover:text-[#4a90e2] hover:underline transition-colors leading-tight">
                                   {e.nombre}
                                 </Link>
-                                {eng.tiene_alerta && <span title="Sin cobertura"><AlertTriangle className="w-3 h-3 text-amber-400 flex-shrink-0" /></span>}
+                                {eng.tiene_alerta && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && <span title="Sin cobertura"><AlertTriangle className="w-3 h-3 text-amber-400 flex-shrink-0" /></span>}
                               </div>
                             </td>
                             {/* Cliente */}
@@ -818,6 +820,7 @@ export function EngagementsList({ rolActual }: Props) {
               <Archive className="w-3 h-3" />
               Archivo Histórico
             </button>
+            {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
             <button onClick={() => setVista("papelera")}
               className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-[#e8e8e8] hover:bg-[#f5f5f5] text-[#888] transition-colors">
               <Trash2 className="w-3 h-3" />
@@ -828,6 +831,7 @@ export function EngagementsList({ rolActual }: Props) {
                 </span>
               )}
             </button>
+            )}
           </div>
           {isAdmin && (
             <Button onClick={() => setDrawerOpen(true)} size="sm">
@@ -879,6 +883,7 @@ export function EngagementsList({ rolActual }: Props) {
         isAdmin={isAdmin}
         hayBusqueda={!!principalBusqueda.trim()}
         onPapelera={(id, nombre) => setConfirmPapelera({ id, nombre })}
+        rolActual={rolActual}
       />
 
       <EngagementForm open={drawerOpen} onClose={() => setDrawerOpen(false)} onSuccess={load} />

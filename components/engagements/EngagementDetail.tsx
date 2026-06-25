@@ -106,7 +106,7 @@ export function EngagementDetail({ id }: Props) {
 
   // Control de acceso
   const [rolActual, setRolActual] = useState<string | null>(null);
-  const isReadOnly = rolActual === "planificador" || rolActual === "GyD";
+  const isReadOnly = rolActual === "planificador" || rolActual === "GyD" || rolActual === "AySr" || rolActual === "Desarrollo";
 
   // ── Carga de datos ─────────────────────────────────────────────
   const load = async () => {
@@ -465,7 +465,7 @@ export function EngagementDetail({ id }: Props) {
         )}
 
         {/* ── Requerimientos + asignaciones ──────────────────── */}
-        <div className="space-y-3">
+        {!isReadOnly && <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-[15px]">Requerimientos y asignaciones</h3>
             {!isReadOnly && (
@@ -619,7 +619,7 @@ export function EngagementDetail({ id }: Props) {
               )}
             </div>
           )}
-        </div>
+        </div>}
 
         {/* ── Días críticos ─────────────────────────────────────── */}
         {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">

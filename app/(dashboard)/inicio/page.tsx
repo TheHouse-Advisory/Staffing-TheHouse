@@ -454,6 +454,7 @@ export default function InicioPage() {
               onAsignacionChange={isReadOnly ? undefined : refreshOcupacion}
               onOpenPanel={isReadOnly ? undefined : abrirPanel}
               externalReloadKey={tableroReloadKey}
+              ocultarPctEquipo={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
             />
           </div>
         </div>

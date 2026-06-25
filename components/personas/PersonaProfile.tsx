@@ -342,7 +342,7 @@ export function PersonaProfile({ id }: Props) {
                 <h2 className="text-xl font-bold">
                   {persona.nombre} {persona.apellido}
                 </h2>
-                {talentBoxName && (
+                {talentBoxName && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#f0f4ff] text-[#3b5bdb] border border-[#c5d0fa] font-medium">
                     {talentBoxName}
                   </span>
@@ -383,6 +383,7 @@ export function PersonaProfile({ id }: Props) {
               </div>
             </div>
           </div>
+          {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
           <div className="flex items-center gap-1">
             <Button
               variant="ghost"
@@ -394,6 +395,7 @@ export function PersonaProfile({ id }: Props) {
               <Pencil className="w-3.5 h-3.5" />
             </Button>
           </div>
+          )}
         </div>
 
         {/* ── Info ───────────────────────────────────────────── */}
@@ -760,7 +762,7 @@ export function PersonaProfile({ id }: Props) {
           </div>
         </div>
         {/* ── Desarrollo de Carrera ───────────────────────── */}
-        <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
+        {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-6">
             <div>
               <h3 className="font-semibold">Desarrollo de Carrera</h3>
@@ -917,7 +919,7 @@ export function PersonaProfile({ id }: Props) {
               </div>
             )}
           </div>
-        </div>
+        </div>}
 
         {/* ── Notebook de Desarrollo ──────────────────────── */}
         {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (

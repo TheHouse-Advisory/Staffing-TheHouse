@@ -117,7 +117,8 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
       const { data: { user } } = await sb.auth.getUser();
       if (!user) return;
       const { data } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
-      setEsGYD((data as any)?.rol_sistema === "GyD");
+      const rol = (data as any)?.rol_sistema;
+      setEsGYD(rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo");
     }
     checkRol();
   }, []);
@@ -349,14 +350,14 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
                           {proy.nombre}
                           {proy.cliente && <span className="text-gray-300 ml-1">· {proy.cliente}</span>}
                         </p>
-                        <span
+                        {!esGYD && <span
                           className="flex-shrink-0 text-[9px] font-bold px-1 py-0.5 rounded leading-none"
                           style={esFuturo
                             ? { background: "#f0fdf4", color: "#15803d" }
                             : { background: "#dbeafe", color: "#1d4ed8" }}
                         >
                           {esFuturo ? `En ${dias}d` : `${dias}d`}
-                        </span>
+                        </span>}
                       </div>
                     </td>
                     {columnasMostradas.map((col, i) => {

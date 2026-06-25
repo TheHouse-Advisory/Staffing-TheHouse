@@ -618,12 +618,18 @@ const ORDEN_BLOQUES = ["Socio", "Directores y Gerentes", "Senior y Asociados", "
 //  Heatmap principal
 // ─────────────────────────────────────────────────────────────
 
+const CARGOS_OCULTOS_AYSR = [
+  "Socio", "Gerente", "Gerente de Proyectos", "Director", "Director de Proyectos",
+  "Consultor Senior", "Analista Senior", "Asociado",
+];
+
 interface HeatmapAusenciasProps {
   year: number;
   month: number;
   externalModalOpen?: boolean;
   onExternalModalClose?: () => void;
   readOnly?: boolean;
+  rolActual?: string | null;
 }
 
 export function HeatmapAusencias({
@@ -632,6 +638,7 @@ export function HeatmapAusencias({
   externalModalOpen = false,
   onExternalModalClose,
   readOnly = false,
+  rolActual,
 }: HeatmapAusenciasProps) {
   const { tipos: tiposDinamicos } = useTiposAusencia(); // para colorear tooltip con tipos dinámicos
   const [filas, setFilas]   = useState<FilaPersona[]>([]);
@@ -699,7 +706,10 @@ export function HeatmapAusencias({
 
     setCargando(false);
     if (result.error) { setError(result.error); return; }
-    setFilas(result.filas);
+    const filasFiltradas = rolActual === "AySr"
+      ? result.filas.filter((f) => !CARGOS_OCULTOS_AYSR.includes(f.persona.cargo_actual ?? ""))
+      : result.filas;
+    setFilas(filasFiltradas);
     setDias(result.dias);
 
     // Calcular totales anuales por persona (días hábiles sin feriados)

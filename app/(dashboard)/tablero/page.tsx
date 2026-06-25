@@ -133,7 +133,7 @@ function TableroContent() {
                 baseExterna={base}
                 openEngagementId={openEngagementId}
                 externalReloadKey={tableroReloadKey}
-                onOpenPanel={abrirPanel}
+                onOpenPanel={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo" ? undefined : abrirPanel}
                 readOnly={isReadOnly}
                 ocultarPctEquipo={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
               />
