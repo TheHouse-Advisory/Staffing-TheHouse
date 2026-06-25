@@ -542,7 +542,7 @@ export function GanttPlanificacion() {
         const simIdSet = new Set(simPersonasReales.map(p => p.id));
 
         simPersonasReales.forEach((pSim) => {
-          const pProd = prodPorPersona.get(pSim.id);
+          const pProd = prodPorPersona.get(pSim.id) as any;
 
           if (!pProd) {
             // Eliminada en Inicio pero sigue en el escenario
