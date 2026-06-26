@@ -620,7 +620,7 @@ const ORDEN_BLOQUES = ["Socio", "Directores y Gerentes", "Senior y Asociados", "
 
 const CARGOS_OCULTOS_AYSR = [
   "Socio", "Gerente", "Gerente de Proyectos", "Director", "Director de Proyectos",
-  "Consultor Senior", "Analista Senior", "Asociado",
+  "Consultor Senior", "Analista Senior", "Asociado", "Desarrollo",
 ];
 
 interface HeatmapAusenciasProps {
@@ -801,6 +801,14 @@ export function HeatmapAusencias({
       const ib = ORDEN_BLOQUES.indexOf(b);
       return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
     });
+    // Dentro de cada grupo: más antiguo primero (fecha_ingreso menor)
+    for (const [, filas] of entries) {
+      filas.sort((a, b) => {
+        const fa = a.persona.fecha_ingreso ?? "9999-12-31";
+        const fb = b.persona.fecha_ingreso ?? "9999-12-31";
+        return fa.localeCompare(fb);
+      });
+    }
     return entries;
   }, [filas]);
 
@@ -950,17 +958,11 @@ export function HeatmapAusencias({
                             style={{ minWidth: 140, width: 140 }}
                           >
                             <div className="flex items-center gap-1">
-                              <button
-                                onClick={() => togglePersona(fila.persona.id)}
-                                className="flex-shrink-0 p-0.5 rounded hover:bg-[#e8e8e8] text-[#ccc] hover:text-[#888] transition-colors"
-                                title={estaColapsadaPersona ? "Expandir" : "Colapsar"}
-                              >
-                                {estaColapsadaPersona
-                                  ? <ChevronRight className="w-3 h-3" />
-                                  : <ChevronDown  className="w-3 h-3" />}
-                              </button>
                               <div className="min-w-0 flex-1 overflow-hidden">
                                 <div className="flex items-center gap-1.5">
+                                  {fila.persona.is_leverager && (
+                                    <span className="w-4 h-4 rounded-full bg-[#3b5bdb] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>A</span>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={(e) => { e.stopPropagation(); setPopoverPersona(fila.persona); }}

@@ -58,8 +58,8 @@ function ocupColor(pct: number) {
 
 export default function InicioPage() {
   const [rol, setRol] = useState<RolSistema | null>(null);
-  const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD";
-  const isPlanificador = rol === "planificador" || rol === "GyD";
+  const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD" || rol === "AySr";
+  const isPlanificador = rol === "planificador" || rol === "GyD" || rol === "AySr";
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [ocupacionMap, setOcupacionMap] = useState<Record<string, number>>({});
   const [asignacionesDetalle, setAsignacionesDetalle] = useState<AsigDetalle[]>([]);
@@ -144,8 +144,12 @@ export default function InicioPage() {
       ]);
 
       const pers = (persRes.data ?? []) as Persona[];
-      // GyD no ve personas con ciertos cargos
-      setPersonas(rolActual === "GyD" ? pers.filter((p) => !CARGOS_OCULTOS_GYD.includes(p.cargo_actual ?? "")) : pers);
+      const CARGOS_OCULTOS_AYSR_EQUIPO = [...CARGOS_OCULTOS_GYD, "Asociado", "Consultor Senior", "Analista Senior"];
+      setPersonas(
+        rolActual === "AySr" ? pers.filter((p) => !CARGOS_OCULTOS_AYSR_EQUIPO.includes(p.cargo_actual ?? ""))
+        : (rolActual === "GyD") ? pers.filter((p) => !CARGOS_OCULTOS_GYD.includes(p.cargo_actual ?? ""))
+        : pers
+      );
 
       // Mapa ocupación hoy
       const map: Record<string, number> = {};
@@ -229,7 +233,7 @@ export default function InicioPage() {
           <h1 className="text-[22px] font-bold text-[#1a1a2e]">Menú Principal</h1>
           <p className="text-sm text-gray-400 mt-0.5">Resumen general del equipo</p>
         </div>
-        {rol !== "planificador" && rol !== "GyD" && (
+        {rol !== "planificador" && rol !== "GyD" && rol !== "AySr" && (
           <div className="flex items-center gap-2">
             <Link
               href="/alertas"
@@ -385,7 +389,7 @@ export default function InicioPage() {
                                 </span>
                               )}
                             </div>
-                            {rol !== "GyD" && (
+                            {rol !== "GyD" && rol !== "AySr" && (
                               <span
                                 className="text-[9px] font-bold px-1 py-0.5 rounded-full leading-none"
                                 style={{ background: oc.bg, color: oc.text }}
@@ -408,8 +412,8 @@ export default function InicioPage() {
             <PersonaResumenModal
               personaId={seleccionada.id}
               onClose={() => setSeleccionada(null)}
-              ocultarMatriz={rol === "planificador" || rol === "GyD"}
-              ocultarCarga={rol === "GyD"}
+              ocultarMatriz={rol === "planificador" || rol === "GyD" || rol === "AySr"}
+              ocultarCarga={rol === "GyD" || rol === "AySr"}
             />
           )}
         </div>
@@ -469,9 +473,9 @@ export default function InicioPage() {
           }
         >
           <div className="flex items-center justify-between mb-3 flex-shrink-0">
-            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Resúmen</p>
-            <div className="flex items-center gap-2">
-              {/* Grupo 1: Toggle Ausencias / Perfil individual — oculto cuando colapsado */}
+            {/* Título + toggle Ausencias/Perfil juntos a la izquierda */}
+            <div className="flex items-center gap-3">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest flex-shrink-0">Resúmen</p>
               {activeQuadrant !== "tablero" && (
                 <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
                   <button
@@ -494,7 +498,8 @@ export default function InicioPage() {
                   </button>
                 </div>
               )}
-
+            </div>
+            <div className="flex items-center gap-2">
               {/* Grupo 2: Granularidad temporal + navegación — oculto cuando colapsado */}
               {activeQuadrant !== "tablero" && (
                 <div className="flex items-center gap-1">

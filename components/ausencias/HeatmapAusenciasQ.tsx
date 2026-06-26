@@ -39,12 +39,15 @@ function diasSolapan(inicio: string, fin: string, mesInicio: Date, mesFin: Date)
   return calculateBusinessDays(a.toISOString().split("T")[0], b.toISOString().split("T")[0]);
 }
 
+const CARGOS_VISIBLES_AYSR = ["Consultor de Proyectos", "Consultor Proyecto", "Consultor Analista", "Consultor Trainee"];
+
 interface Props {
   year: number;
   quarter: 1 | 2 | 3 | 4;
+  rolActual?: string | null;
 }
 
-export function HeatmapAusenciasQ({ year, quarter }: Props) {
+export function HeatmapAusenciasQ({ year, quarter, rolActual }: Props) {
   const [filas, setFilas] = useState<PersonaFila[]>([]);
   const [loading, setLoading] = useState(true);
   const meses = Q_MESES[quarter];
@@ -109,9 +112,12 @@ export function HeatmapAusenciasQ({ year, quarter }: Props) {
         return ia !== ib ? ia - ib : a.apellido.localeCompare(b.apellido);
       });
 
-    setFilas(result);
+    const filasFiltradas = rolActual === "AySr"
+      ? result.filter((p) => CARGOS_VISIBLES_AYSR.includes(p.cargo ?? ""))
+      : result;
+    setFilas(filasFiltradas);
     setLoading(false);
-  }, [year, quarter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [year, quarter, rolActual]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { load(); }, [load]);
 

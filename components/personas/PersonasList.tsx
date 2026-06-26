@@ -125,7 +125,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   const isGyD           = rolActual === "GyD";
   const isAySr          = rolActual === "AySr";
   const isDesarrollo    = rolActual === "Desarrollo";
-  const isPlanificador  = rolActual === "planificador" || rolActual === "GyD";
+  const isPlanificador  = rolActual === "planificador" || rolActual === "GyD" || rolActual === "AySr";
   const sb = createAnyClient();
 
   // Cargos visibles para AySr
@@ -441,6 +441,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
           <p className="text-sm text-[#888]">
             {personas.length} persona{personas.length !== 1 ? "s" : ""} activa{personas.length !== 1 ? "s" : ""}
           </p>
+          {rolActual !== "AySr" && (
           <button onClick={() => setVista("ex_housers")}
             className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-[#e8e8e8] hover:bg-[#f5f5f5] text-[#888] transition-colors">
             <Archive className="w-3 h-3" />
@@ -451,6 +452,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
               </span>
             )}
           </button>
+          )}
           {!(isGyD || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
           <button onClick={() => setVista("papelera")}
             className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-[#e8e8e8] hover:bg-[#f5f5f5] text-[#888] transition-colors">

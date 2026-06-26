@@ -1,8 +1,21 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { format } from "date-fns";
+import { format, intervalToDuration } from "date-fns";
 import { es } from "date-fns/locale";
+
+function calcDiasCard(fechaInicio: string, fechaFin: string) {
+  const hoy = new Date().toISOString().split("T")[0];
+  const esFuturo = fechaInicio > hoy;
+  if (esFuturo) {
+    const d = Math.max(0, Math.floor((new Date(fechaInicio + "T00:00:00").getTime() - new Date(hoy + "T00:00:00").getTime()) / 86_400_000));
+    return { dias: d, esFuturo: true, diasRestantes: null };
+  }
+  const fin = fechaFin < hoy ? fechaFin : hoy;
+  const dias = Math.max(0, Math.floor((new Date(fin + "T00:00:00").getTime() - new Date(fechaInicio + "T00:00:00").getTime()) / 86_400_000));
+  const diasRestantes = Math.max(0, Math.floor((new Date(fechaFin + "T00:00:00").getTime() - new Date(hoy + "T00:00:00").getTime()) / 86_400_000));
+  return { dias, esFuturo: false, diasRestantes };
+}
 import { X, ChevronDown } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { getDetailedPersonAbsences, type AusenciaDetalle } from "@/lib/queries/ausencias";
@@ -26,11 +39,16 @@ function iniciales(n: string, a: string, custom?: string | null) {
 
 function diasEnEmpresa(f: string | null | undefined): string | null {
   if (!f) return null;
-  const d = Math.floor((Date.now() - new Date(f + "T00:00:00").getTime()) / 86_400_000);
-  if (d < 0) return null;
-  if (d < 365) return `${d} días`;
-  const y = Math.floor(d / 365);
-  return `${y} ${y === 1 ? "año" : "años"} y ${d % 365} días`;
+  const total = Math.floor((Date.now() - new Date(f + "T00:00:00").getTime()) / 86_400_000);
+  if (total < 0) return null;
+  const years = Math.floor(total / 365);
+  const months = Math.floor((total % 365) / 30);
+  const days = (total % 365) % 30;
+  const partes: string[] = [];
+  if (years > 0) partes.push(`${years} ${years === 1 ? "año" : "años"}`);
+  if (months > 0) partes.push(`${months} ${months === 1 ? "mes" : "meses"}`);
+  if (days > 0 || partes.length === 0) partes.push(`${days} ${days === 1 ? "día" : "días"}`);
+  return partes.length === 1 ? partes[0] : partes.slice(0, -1).join(", ") + " y " + partes[partes.length - 1];
 }
 
 interface HistorialProyecto {
@@ -251,28 +269,46 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                 })()}
               </div>
               )}
-              <div className="flex justify-between items-center">
-                <span className="text-gray-400 text-xs">Nº proyectos</span>
-                <span className="font-medium text-[#1a1a2e] text-xs">
-                  {simData ? simData.proyectos.length : resumen.totalProyectos}
-                </span>
-              </div>
+              {(simData ? simData.proyectos.length : resumen.totalProyectos) > 0 && (
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-400 text-xs">Nº proyectos</span>
+                  <span className="font-medium text-[#1a1a2e] text-xs">
+                    {simData ? simData.proyectos.length : resumen.totalProyectos}
+                  </span>
+                </div>
+              )}
               <div>
                 <p className="text-gray-400 text-xs mb-1.5">Proyectos actuales</p>
                 {simData ? (
                   simData.proyectos.length === 0 ? (
                     <p className="text-[11px] text-gray-300 italic">Sin proyectos activos en este escenario</p>
                   ) : (
-                    <div className="space-y-1">
+                    <div className="space-y-1.5">
                       {simData.proyectos.map((eng) => {
-                        const pct = eng.personas.find((p) => p.id === personaId)?.pct ?? 0;
+                        const { dias, esFuturo, diasRestantes } = calcDiasCard(eng.fecha_inicio, eng.fecha_fin);
                         return (
-                          <div key={eng.id} className="flex items-center justify-between gap-2 px-2 py-1 rounded-lg bg-amber-50 border border-amber-100">
-                            <div className="min-w-0 flex-1">
-                              <p className="text-[11px] font-semibold text-slate-800 truncate leading-tight">{eng.nombre}</p>
-                              {eng.cliente && <p className="text-[10px] text-gray-400 truncate">{eng.cliente}</p>}
+                          <div key={eng.id} className="px-2 py-1 rounded-lg bg-amber-50 border border-amber-100">
+                            <div className="flex items-baseline justify-between gap-2">
+                              <div className="min-w-0 flex items-baseline gap-1.5">
+                                <span className="text-[11px] font-semibold text-slate-800 truncate">{eng.nombre}</span>
+                                {eng.cliente && <span className="text-[9px] text-gray-400 truncate">{eng.cliente}</span>}
+                              </div>
+                              <span className="text-[9px] text-slate-400 flex-shrink-0">
+                                {esFuturo ? "Inicia:" : "Inicio:"} {format(new Date(eng.fecha_inicio + "T00:00:00"), "d MMM yyyy", { locale: es })}
+                              </span>
                             </div>
-                            {!ocultarCarga && <span className="flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">{pct}%</span>}
+                            <div className="flex justify-end gap-2 mt-0.5">
+                              {esFuturo ? (
+                                <span className="text-[9px] font-semibold" style={{ color: "#15803d" }}>Inicia en {dias}d</span>
+                              ) : (
+                                <>
+                                  <span className="text-[9px] font-semibold" style={{ color: "#1d4ed8" }}>{dias}d en el proyecto</span>
+                                  {diasRestantes !== null && (
+                                    <><span className="text-[9px] text-gray-300">·</span><span className="text-[9px] font-semibold" style={{ color: "#92400e" }}>{diasRestantes}d restantes</span></>
+                                  )}
+                                </>
+                              )}
+                            </div>
                           </div>
                         );
                       })}
@@ -288,27 +324,17 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                   <p className="text-gray-400 text-xs mb-1.5">Historial de proyectos</p>
                   <div className="space-y-1.5">
                     {resumen.historialProyectos.slice(0, 3).map((h) => (
-                      <div key={h.engagement_id} className="flex items-start justify-between gap-2">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-[11px] font-semibold text-slate-800 truncate leading-tight">
-                            {h.codigo ? `${h.codigo} · ` : ""}{h.nombre}
-                          </p>
-                          <div className="flex items-center gap-1 mt-0.5 flex-wrap">
-                            {h.industria && (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-600 font-medium">
-                                {h.industria}
-                              </span>
-                            )}
-                            {h.activo && (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded bg-[#dcf5e7] text-[#1e7e45] font-medium">
-                                Activo
-                              </span>
-                            )}
+                      <div key={h.engagement_id} className="px-2 py-1 rounded-lg bg-amber-50 border border-amber-100">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <div className="min-w-0 flex items-baseline gap-1.5">
+                            <span className="text-[11px] font-semibold text-slate-800 truncate">{h.codigo ? `${h.codigo} · ` : ""}{h.nombre}</span>
+                            {h.industria && <span className="text-[9px] text-gray-400 truncate">{h.industria}</span>}
                           </div>
+                          <span className="text-[9px] text-slate-400 flex-shrink-0">Inicio: {h.fechaInicioLabel}</span>
                         </div>
-                        <div className="flex-shrink-0 text-right">
-                          <p className="text-[9px] text-slate-400 leading-tight">Inició: {h.fechaInicioLabel}</p>
-                          <p className="text-[10px] font-semibold text-[#4a90e2] mt-0.5">{h.dias} días</p>
+                        <div className="flex justify-end gap-2 mt-0.5">
+                          <span className="text-[9px] font-semibold" style={{ color: "#1d4ed8" }}>{h.dias}d en el proyecto</span>
+                          {h.activo && <><span className="text-[9px] text-gray-300">·</span><span className="text-[9px] font-semibold" style={{ color: "#15803d" }}>Activo</span></>}
                         </div>
                       </div>
                     ))}

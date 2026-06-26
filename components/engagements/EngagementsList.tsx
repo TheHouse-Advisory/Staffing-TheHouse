@@ -172,7 +172,6 @@ function SeccionesTablaEngagements({
                               onClick={() => toggleRow(e.id)}
                             >
                               <div className="flex items-center gap-1">
-                                <RowChevron className="w-3 h-3 flex-shrink-0 text-[#bbb]" />
                                 {e.codigo || "—"}
                               </div>
                             </td>

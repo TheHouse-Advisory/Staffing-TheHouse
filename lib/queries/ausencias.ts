@@ -50,6 +50,8 @@ export interface PersonaConSeniority {
   apellido: string;
   cargo_actual: string | null;
   seniority_order: number;  // índice en SENIORITY_ORDER (menor = más senior)
+  fecha_ingreso: string | null;
+  is_leverager: boolean;
 }
 
 export interface CeldaAusencia {
@@ -120,7 +122,7 @@ export async function fetchAusenciasMes(
   // Personas activas
   const { data: personasRaw, error: pErr } = await supabase
     .from("persona")
-    .select("id, nombre, apellido, cargo_actual, iniciales")
+    .select("id, nombre, apellido, cargo_actual, iniciales, fecha_ingreso, is_leverager")
     .eq("activo", true)
     .order("apellido");
 
@@ -135,7 +137,7 @@ export async function fetchAusenciasMes(
 
   if (aErr) return { filas: [], dias: [], error: aErr.message };
 
-  interface PRow { id: string; nombre: string; apellido: string; cargo_actual: string | null; iniciales?: string | null }
+  interface PRow { id: string; nombre: string; apellido: string; cargo_actual: string | null; iniciales?: string | null; fecha_ingreso: string | null; is_leverager: boolean }
   interface ARow { id: string; persona_id: string; tipo: string; fecha_inicio: string; fecha_fin: string; descripcion: string | null }
 
   const personas = (personasRaw ?? []) as unknown as PRow[];
@@ -158,6 +160,8 @@ export async function fetchAusenciasMes(
       apellido: p.apellido,
       cargo_actual: p.cargo_actual,
       seniority_order: seniorityIdx(p.cargo_actual),
+      fecha_ingreso: p.fecha_ingreso,
+      is_leverager: p.is_leverager ?? false,
     };
 
     // Mapa día → celda

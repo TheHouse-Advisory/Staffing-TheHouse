@@ -3,7 +3,7 @@
 import { useState, useEffect } from "react";
 import { Pencil, Trash2 } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
-import { format } from "date-fns";
+import { format, intervalToDuration } from "date-fns";
 import { es } from "date-fns/locale";
 import { getDetailedPersonAbsences, type DetalleAusenciasPersona, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 import { getIniciales } from "@/lib/utils/iniciales";
@@ -90,14 +90,16 @@ function fmtMesAnio(iso: string): string {
 
 function diasEnEmpresa(fechaIngreso: string | null): string | null {
   if (!fechaIngreso) return null;
-  const inicio = new Date(fechaIngreso + "T00:00:00");
-  const hoy = new Date();
-  const totalDias = Math.floor((hoy.getTime() - inicio.getTime()) / 86_400_000);
-  if (totalDias < 0) return null;
-  if (totalDias < 365) return `${totalDias} días`;
-  const anios = Math.floor(totalDias / 365);
-  const resto = totalDias % 365;
-  return `${anios} ${anios === 1 ? "año" : "años"} y ${resto} días`;
+  const total = Math.floor((Date.now() - new Date(fechaIngreso + "T00:00:00").getTime()) / 86_400_000);
+  if (total < 0) return null;
+  const years = Math.floor(total / 365);
+  const months = Math.floor((total % 365) / 30);
+  const days = (total % 365) % 30;
+  const partes: string[] = [];
+  if (years > 0) partes.push(`${years} ${years === 1 ? "año" : "años"}`);
+  if (months > 0) partes.push(`${months} ${months === 1 ? "mes" : "meses"}`);
+  if (days > 0 || partes.length === 0) partes.push(`${days} ${days === 1 ? "día" : "días"}`);
+  return partes.length === 1 ? partes[0] : partes.slice(0, -1).join(", ") + " y " + partes[partes.length - 1];
 }
 
 function colorOcupacion(pct: number) {
@@ -305,7 +307,7 @@ export function PersonaProfile({ id }: Props) {
   if (!persona) return <p className="text-sm text-red-500 p-6">Persona no encontrada.</p>;
 
   // Blindaje por URL: planificador no puede ver perfiles de cargos sensibles
-  if ((rolActual === "planificador" || rolActual === "GyD") && CARGOS_OCULTOS_GYD.includes(persona.cargo_actual ?? "")) {
+  if ((rolActual === "planificador" || rolActual === "GyD" || rolActual === "AySr") && CARGOS_OCULTOS_GYD.includes(persona.cargo_actual ?? "")) {
     return (
       <div className="flex flex-col items-center justify-center h-full gap-4 text-center py-24">
         <div className="w-14 h-14 rounded-full bg-[#f5f5f5] flex items-center justify-center">
@@ -455,7 +457,7 @@ export function PersonaProfile({ id }: Props) {
         </div>
 
         {/* ── Matriz de Talento 9-Box ──────────────────────── */}
-        {rolActual !== "planificador" && rolActual !== "GyD" && <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
+        {rolActual !== "planificador" && rolActual !== "GyD" && rolActual !== "AySr" && <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold">Matriz de Talento</h3>
             {!isEditingTalent ? (

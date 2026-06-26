@@ -305,14 +305,17 @@ function ModalAusencia({ personas, fechaInicial, personaInicial, editarId, onClo
 }
 
 // ── Componente principal ──────────────────────────────────────
+const CARGOS_VISIBLES_AYSR = ["Consultor de Proyectos", "Consultor Proyecto", "Consultor Analista", "Consultor Trainee"];
+
 interface Props {
   selectedDate: Date;
   externalModalOpen?: boolean;
   onExternalModalClose?: () => void;
   readOnly?: boolean;
+  rolActual?: string | null;
 }
 
-export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false, onExternalModalClose, readOnly = false }: Props) {
+export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false, onExternalModalClose, readOnly = false, rolActual }: Props) {
   const weekDays = useMemo(() => getWeekDays(selectedDate), [selectedDate]);
   const { tipos: tiposDinamicos } = useTiposAusencia();
 
@@ -379,21 +382,36 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
       }
       merged = Array.from(byId.values());
     }
-    setFilas(merged);
-  }, [weekDays]); // eslint-disable-line react-hooks/exhaustive-deps
+    const filasFiltradas = rolActual === "AySr"
+      ? merged.filter((f) => CARGOS_VISIBLES_AYSR.includes(f.persona.cargo_actual ?? ""))
+      : merged;
+    setFilas(filasFiltradas);
+  }, [weekDays, rolActual]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { cargar(); }, [cargar]);
 
-  // Agrupar por cargo (orden de aparición = orden de seniority del fetch)
+  // Agrupar por cargo. Para AySr los 3 cargos visibles se unifican bajo "Consultores".
   const grupos = useMemo(() => {
     const map = new Map<string, FilaPersona[]>();
     for (const fila of filas) {
-      const cargo = fila.persona.cargo_actual ?? "Sin cargo";
-      if (!map.has(cargo)) map.set(cargo, []);
-      map.get(cargo)!.push(fila);
+      const cargoReal = fila.persona.cargo_actual ?? "Sin cargo";
+      const cargoKey = rolActual === "AySr" && CARGOS_VISIBLES_AYSR.includes(cargoReal)
+        ? "Consultores"
+        : cargoReal;
+      if (!map.has(cargoKey)) map.set(cargoKey, []);
+      map.get(cargoKey)!.push(fila);
     }
-    return Array.from(map.entries());
-  }, [filas]);
+    const entries = Array.from(map.entries());
+    // Dentro de cada grupo: más antiguo primero (fecha_ingreso menor)
+    for (const [, grupo] of entries) {
+      grupo.sort((a, b) => {
+        const fa = a.persona.fecha_ingreso ?? "9999-12-31";
+        const fb = b.persona.fecha_ingreso ?? "9999-12-31";
+        return fa.localeCompare(fb);
+      });
+    }
+    return entries;
+  }, [filas, rolActual]);
 
   const personas = useMemo(() => filas.map(f => f.persona), [filas]);
 
@@ -453,10 +471,10 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
               <div className="flex items-center justify-between gap-1">
                 <span>Persona</span>
                 <div className="flex items-center gap-1">
-                  <button onClick={handleUndo} disabled={!undoStack.length || undoing} title="Deshacer"
+                  {!readOnly && <button onClick={handleUndo} disabled={!undoStack.length || undoing} title="Deshacer"
                     className="p-0.5 rounded hover:bg-[#e8e8e8] text-[#bbb] hover:text-[#555] disabled:opacity-30 transition-colors">
                     {undoing ? <Loader2 className="w-3 h-3 animate-spin" /> : <RotateCcw className="w-3 h-3" />}
-                  </button>
+                  </button>}
                   <button onClick={cargoColapsados.size >= grupos.length ? expandirTodo : colapsarTodo}
                     title={cargoColapsados.size >= grupos.length ? "Expandir todo" : "Colapsar todo"}
                     className="p-0.5 rounded hover:bg-[#e8e8e8] text-[#bbb] hover:text-[#555] transition-colors">
@@ -519,10 +537,9 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                       {/* Columna nombre */}
                       <td className="sticky left-0 z-10 bg-inherit border-r border-[#ebebeb] px-1.5 py-0">
                         <div className="flex items-center gap-1">
-                          <button onClick={() => togglePersona(fila.persona.id)}
-                            className="flex-shrink-0 p-0.5 rounded hover:bg-[#e8e8e8] text-[#ccc] hover:text-[#888] transition-colors">
-                            {estaColapsadaPersona ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                          </button>
+                          {fila.persona.is_leverager && (
+                            <span className="w-4 h-4 rounded-full bg-[#3b5bdb] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>A</span>
+                          )}
                           <div className="min-w-0 flex-1 overflow-hidden">
                             <p className="text-[11px] font-medium leading-tight text-[#1a1a1a] truncate">
                               {fila.persona.nombre} {fila.persona.apellido}

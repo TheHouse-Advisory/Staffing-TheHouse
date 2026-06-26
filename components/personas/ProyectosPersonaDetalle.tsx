@@ -28,11 +28,13 @@ interface AsignacionRow {
   id: string;
   engagementNombre: string;
   engagementCliente: string;
+  engagementIndustria: string;
   fechaInicio: string;
   fechaFin: string | null;
   pct: number;
   dias: number;
   esFuturo: boolean;
+  diasRestantes: number | null;
 }
 
 interface Props {
@@ -154,7 +156,7 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
       const hoy = new Date().toISOString().split("T")[0];
       const { data } = await (sb as any)
         .from("asignacion")
-        .select("id, fecha_inicio, fecha_fin, pct_dedicacion, engagement:engagement_id(id, nombre, cliente)")
+        .select("id, fecha_inicio, fecha_fin, pct_dedicacion, engagement:engagement_id(id, nombre, cliente, industria:industria_id(nombre))")
         .eq("persona_id", personaId)
         .eq("estado", "activa")
         .gte("fecha_fin", hoy)
@@ -163,15 +165,20 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
       setAsignaciones(
         ((data ?? []) as any[]).map((a) => {
           const { dias, esFuturo } = calcDias(a.fecha_inicio, a.fecha_fin);
+          const diasRestantes = a.fecha_fin && !esFuturo
+            ? diasHabiles(hoy, a.fecha_fin)
+            : null;
           return {
             id: a.id,
-            engagementNombre:  a.engagement?.nombre  ?? "—",
-            engagementCliente: a.engagement?.cliente ?? "",
+            engagementNombre:    a.engagement?.nombre  ?? "—",
+            engagementCliente:   a.engagement?.cliente ?? "",
+            engagementIndustria: a.engagement?.industria?.nombre ?? "",
             fechaInicio: a.fecha_inicio,
             fechaFin:    a.fecha_fin,
             pct:         Number(a.pct_dedicacion),
             dias,
             esFuturo,
+            diasRestantes,
           };
         })
       );
@@ -184,22 +191,34 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
   if (asignaciones.length === 0)
     return <p className="text-xs text-gray-300 italic">Sin proyectos activos o futuros.</p>;
 
-  // ── Modo compacto — sin cambios ───────────────────────────────
+  // ── Modo compacto ────────────────────────────────────────────
   if (compact) {
     return (
-      <div className="space-y-2">
+      <div className="space-y-1.5">
         {asignaciones.map((a) => (
-          <div key={a.id} className="flex items-start justify-between gap-2">
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-medium text-[#1a1a2e] truncate leading-tight">{a.engagementNombre}</p>
-              {a.engagementCliente && <p className="text-[10px] text-gray-400 truncate">{a.engagementCliente}</p>}
-            </div>
-            <div className="flex-shrink-0 flex flex-col items-end gap-0.5">
-              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full leading-none"
-                style={a.esFuturo ? { background: "#f0fdf4", color: "#15803d" } : { background: "#dbeafe", color: "#1d4ed8" }}>
-                {a.esFuturo ? `En ${a.dias}d` : `${a.dias}d`}
+          <div key={a.id} className="px-2 py-1 rounded-lg bg-amber-50 border border-amber-100">
+            {/* Fila única: nombre+cliente · fecha */}
+            <div className="flex items-baseline justify-between gap-2">
+              <div className="min-w-0 flex items-baseline gap-1.5">
+                <span className="text-[11px] font-semibold text-slate-800 truncate leading-tight">{a.engagementNombre}</span>
+                {a.engagementCliente && <span className="text-[9px] text-gray-400 truncate">{a.engagementCliente}</span>}
+              </div>
+              <span className="text-[9px] text-slate-400 flex-shrink-0">
+                {a.esFuturo ? "Inicia:" : "Inicio:"} {format(new Date(a.fechaInicio + "T00:00:00"), "d MMM yyyy", { locale: es })}
               </span>
-              {!ocultarCarga && <span className="text-[9px] text-gray-400">{a.pct}%</span>}
+            </div>
+            {/* Fila días: en línea horizontal */}
+            <div className="flex justify-end gap-2 mt-0.5">
+              {a.esFuturo ? (
+                <span className="text-[9px] font-semibold" style={{ color: "#15803d" }}>Inicia en {a.dias}d</span>
+              ) : (
+                <>
+                  <span className="text-[9px] font-semibold" style={{ color: "#1d4ed8" }}>{a.dias}d en el proyecto</span>
+                  {a.diasRestantes !== null && (
+                    <><span className="text-[9px] text-gray-300">·</span><span className="text-[9px] font-semibold" style={{ color: "#92400e" }}>{a.diasRestantes}d restantes</span></>
+                  )}
+                </>
+              )}
             </div>
           </div>
         ))}

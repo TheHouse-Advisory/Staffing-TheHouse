@@ -601,8 +601,8 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
             }
           >
             <div className="flex items-center justify-between mb-3 flex-shrink-0">
-              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Resúmen</p>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-3">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-widest flex-shrink-0">Resúmen</p>
                 {activeQuadrant !== "tablero" && (
                   <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
                     <button onClick={() => setVistaResumen("gantt")} className="px-2.5 py-1 transition-colors"
@@ -615,6 +615,8 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
                     </button>
                   </div>
                 )}
+              </div>
+              <div className="flex items-center gap-2">
                 {activeQuadrant !== "tablero" && (
                   <div className="flex items-center gap-1">
                     <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
