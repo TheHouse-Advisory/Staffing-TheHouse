@@ -229,6 +229,7 @@ export default function AusenciasPage() {
               externalModalOpen={isReadOnly ? false : modalOpen}
               onExternalModalClose={() => setModalOpen(false)}
               readOnly={isReadOnly}
+              rolActual={rol}
             />
           )}
 

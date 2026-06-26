@@ -38,6 +38,7 @@ interface AsignacionRow {
 interface Props {
   personaId: string;
   compact?: boolean;
+  ocultarCarga?: boolean;
 }
 
 // ── Helpers de ventana temporal ───────────────────────────────
@@ -137,7 +138,7 @@ const VISTAS: { id: PeriodoVista; label: string }[] = [
 ];
 
 // ── Componente ────────────────────────────────────────────────
-export function ProyectosPersonaDetalle({ personaId, compact = false }: Props) {
+export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCarga = false }: Props) {
   const [asignaciones, setAsignaciones] = useState<AsignacionRow[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [pv,           setPv]           = useState<PeriodoVista>("semana");
@@ -198,7 +199,7 @@ export function ProyectosPersonaDetalle({ personaId, compact = false }: Props) {
                 style={a.esFuturo ? { background: "#f0fdf4", color: "#15803d" } : { background: "#dbeafe", color: "#1d4ed8" }}>
                 {a.esFuturo ? `En ${a.dias}d` : `${a.dias}d`}
               </span>
-              <span className="text-[9px] text-gray-400">{a.pct}%</span>
+              {!ocultarCarga && <span className="text-[9px] text-gray-400">{a.pct}%</span>}
             </div>
           </div>
         ))}
@@ -343,9 +344,11 @@ export function ProyectosPersonaDetalle({ personaId, compact = false }: Props) {
                 <p className="text-[9px] text-slate-400 truncate">{a.engagementCliente}</p>
               )}
               <div className="flex items-center gap-1 mt-0.5 flex-wrap">
+                {!ocultarCarga && (
                 <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full" style={pctBadgeStyle(a.pct)}>
                   {a.pct}%
                 </span>
+                )}
                 <span className="text-[8px] text-slate-400">
                   {format(new Date(a.fechaInicio + "T00:00:00"), "d MMM", { locale: es })}
                   {a.fechaFin ? ` → ${format(new Date(a.fechaFin + "T00:00:00"), "d MMM", { locale: es })}` : ""}
@@ -397,9 +400,11 @@ export function ProyectosPersonaDetalle({ personaId, compact = false }: Props) {
                   }}
                   title={`${a.engagementNombre} · ${a.pct}%${a.esFuturo ? " (futuro)" : ""}`}
                 >
+                  {!ocultarCarga && (
                   <span className="text-[7px] font-bold text-white/90 px-1.5 truncate leading-none">
                     {a.pct}%
                   </span>
+                  )}
                 </div>
               )}
             </div>

@@ -593,8 +593,35 @@ function pctStyle(pct: number): { bg: string; text: string } | null {
 }
 
 // ─────────────────────────────────────────────────────────────
+//  Agrupación funcional de cargos
+// ─────────────────────────────────────────────────────────────
+
+const CARGO_A_BLOQUE: Record<string, string> = {
+  "Director":               "Directores y Gerentes",
+  "Director de Proyectos":  "Directores y Gerentes",
+  "Gerente":                "Directores y Gerentes",
+  "Gerente de Proyectos":   "Directores y Gerentes",
+  "Asociado":               "Senior y Asociados",
+  "Senior":                 "Senior y Asociados",
+  "Consultor Senior":       "Senior y Asociados",
+  "Consultor de Proyectos": "Consultores",
+  "Consultor Proyecto":     "Consultores",
+  "Consultor Analista":     "Consultores",
+  "Analista Senior":        "Consultores",
+  "Consultor Trainee":      "Consultores",
+  "Analista":               "Consultores",
+};
+
+const ORDEN_BLOQUES = ["Socio", "Directores y Gerentes", "Senior y Asociados", "Consultores", "Desarrollo"];
+
+// ─────────────────────────────────────────────────────────────
 //  Heatmap principal
 // ─────────────────────────────────────────────────────────────
+
+const CARGOS_OCULTOS_AYSR = [
+  "Socio", "Gerente", "Gerente de Proyectos", "Director", "Director de Proyectos",
+  "Consultor Senior", "Analista Senior", "Asociado",
+];
 
 interface HeatmapAusenciasProps {
   year: number;
@@ -602,6 +629,7 @@ interface HeatmapAusenciasProps {
   externalModalOpen?: boolean;
   onExternalModalClose?: () => void;
   readOnly?: boolean;
+  rolActual?: string | null;
 }
 
 export function HeatmapAusencias({
@@ -610,6 +638,7 @@ export function HeatmapAusencias({
   externalModalOpen = false,
   onExternalModalClose,
   readOnly = false,
+  rolActual,
 }: HeatmapAusenciasProps) {
   const { tipos: tiposDinamicos } = useTiposAusencia(); // para colorear tooltip con tipos dinámicos
   const [filas, setFilas]   = useState<FilaPersona[]>([]);
@@ -677,7 +706,10 @@ export function HeatmapAusencias({
 
     setCargando(false);
     if (result.error) { setError(result.error); return; }
-    setFilas(result.filas);
+    const filasFiltradas = rolActual === "AySr"
+      ? result.filas.filter((f) => !CARGOS_OCULTOS_AYSR.includes(f.persona.cargo_actual ?? ""))
+      : result.filas;
+    setFilas(filasFiltradas);
     setDias(result.dias);
 
     // Calcular totales anuales por persona (días hábiles sin feriados)
@@ -754,15 +786,22 @@ export function HeatmapAusencias({
 
   const todasPersonas = filas.map((f) => f.persona);
 
-  // Agrupar filas por cargo (manteniendo el orden original de seniority)
+  // Agrupar filas por bloque funcional (o por cargo individual si no pertenece a un bloque)
   const grupos = useMemo(() => {
     const map = new Map<string, FilaPersona[]>();
     for (const fila of filas) {
       const cargo = fila.persona.cargo_actual ?? "Sin cargo";
-      if (!map.has(cargo)) map.set(cargo, []);
-      map.get(cargo)!.push(fila);
+      const label = CARGO_A_BLOQUE[cargo] ?? cargo;
+      if (!map.has(label)) map.set(label, []);
+      map.get(label)!.push(fila);
     }
-    return Array.from(map.entries()); // [cargo, FilaPersona[]][]
+    const entries = Array.from(map.entries());
+    entries.sort(([a], [b]) => {
+      const ia = ORDEN_BLOQUES.indexOf(a);
+      const ib = ORDEN_BLOQUES.indexOf(b);
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    });
+    return entries;
   }, [filas]);
 
   function colapsarTodo() { setCargoColapsados(new Set(grupos.map(([c]) => c))); }

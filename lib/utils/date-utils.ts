@@ -18,6 +18,15 @@ export function calculateBusinessDays(startDate: string, endDate: string): numbe
   return count;
 }
 
+/**
+ * Días hábiles efectivos en un cargo dado su rango.
+ * Alias semántico de calculateBusinessDays para uso en historial_cargos.
+ * fecha_fin puede ser la fecha de hoy si el cargo sigue activo.
+ */
+export function calcularDiasHabilesEnCargo(fechaInicio: string, fechaFin: string): number {
+  return calculateBusinessDays(fechaInicio, fechaFin);
+}
+
 /** Igual que expandirRango pero excluye feriados además de fines de semana */
 export function expandirRangoHabil(inicio: string, fin: string): string[] {
   const result: string[] = [];

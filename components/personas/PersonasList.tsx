@@ -451,6 +451,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
               </span>
             )}
           </button>
+          {!(isGyD || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
           <button onClick={() => setVista("papelera")}
             className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-[#e8e8e8] hover:bg-[#f5f5f5] text-[#888] transition-colors">
             <Trash2 className="w-3 h-3" />
@@ -461,6 +462,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
               </span>
             )}
           </button>
+          )}
         </div>
         {isAdmin && (
           <Button onClick={() => setDrawerOpen(true)} size="sm">

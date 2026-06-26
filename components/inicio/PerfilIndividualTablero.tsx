@@ -101,6 +101,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
   const [filas, setFilas] = useState<PersonaFila[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
+  const [esGYD, setEsGYD] = useState(false);
 
   const pv = periodoVista ?? "dia";
 
@@ -108,6 +109,19 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
   const totalDias = pv === "semana" ? 35 : pv === "mes" ? 120 : 7;
   const fechaInicio = format(semanaInicio, "yyyy-MM-dd");
   const fechaFin = format(addDays(semanaInicio, totalDias - 1), "yyyy-MM-dd");
+
+  // Carga rol del usuario para ocultar datos de carga a G&D
+  useEffect(() => {
+    async function checkRol() {
+      const sb = createAnyClient();
+      const { data: { user } } = await sb.auth.getUser();
+      if (!user) return;
+      const { data } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
+      const rol = (data as any)?.rol_sistema;
+      setEsGYD(rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo");
+    }
+    checkRol();
+  }, []);
 
   useEffect(() => {
     async function load() {
@@ -336,20 +350,22 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
                           {proy.nombre}
                           {proy.cliente && <span className="text-gray-300 ml-1">· {proy.cliente}</span>}
                         </p>
-                        <span
+                        {!esGYD && <span
                           className="flex-shrink-0 text-[9px] font-bold px-1 py-0.5 rounded leading-none"
                           style={esFuturo
                             ? { background: "#f0fdf4", color: "#15803d" }
                             : { background: "#dbeafe", color: "#1d4ed8" }}
                         >
                           {esFuturo ? `En ${dias}d` : `${dias}d`}
-                        </span>
+                        </span>}
                       </div>
                     </td>
                     {columnasMostradas.map((col, i) => {
                       const activo = overlapsColumna(proy.inicio, proy.fin, col);
-                      // semáforo: <50% verde, 50-90% naranja, >90% rojo
-                      const semColor = proy.pct < 50
+                      // semáforo: <50% verde, 50-90% naranja, >90% rojo (oculto para G&D)
+                      const semColor = esGYD
+                        ? "#fef3c7" // amber-100 neutro para G&D
+                        : proy.pct < 50
                         ? "#16a34a"
                         : proy.pct <= 90
                         ? "#f59e0b"
@@ -361,7 +377,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
                               className="h-5 rounded flex items-center justify-center text-[10px] font-semibold text-white"
                               style={{ background: semColor }}
                             >
-                              {proy.pct}%
+                              {!esGYD && `${proy.pct}%`}
                             </div>
                           ) : (
                             <div className="h-5 rounded bg-gray-50" />

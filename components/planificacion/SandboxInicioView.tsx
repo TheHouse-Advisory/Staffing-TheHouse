@@ -344,6 +344,22 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
     }));
   }
 
+  /** Elimina físicamente del snapshot (escenario: sin trazabilidad) */
+  function eliminarSimAsignacionCompleta() {
+    if (!pendingSimDesasignar) return;
+    const { asignacionId, engId } = pendingSimDesasignar;
+    setPendingSimDesasignar(null);
+    onSnapshotChange?.(snapshot.map((eg: any) => {
+      if (eg.id !== engId) return eg;
+      return {
+        ...eg,
+        personas: eg.personas.filter((p: any) =>
+          p.asignacionId !== asignacionId && p.requerimiento_id !== asignacionId && !(p.simId && p.simId === asignacionId)
+        ),
+      };
+    }));
+  }
+
   function navResumenPrev() {
     if (periodoResumen === "semana") setSemanaResumen((s) => subWeeks(s, 5));
     else if (periodoResumen === "mes") setSemanaResumen((s) => subMonths(s, 4));
@@ -766,7 +782,8 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
               />
             </div>
-            <div className="flex gap-2 justify-end">
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2 justify-end">
               <button
                 onClick={() => setPendingSimDesasignar(null)}
                 className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
@@ -780,6 +797,15 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
               >
                 Confirmar
               </button>
+            </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={eliminarSimAsignacionCompleta}
+                  className="text-[11px] text-slate-400 hover:text-red-500 underline transition-colors"
+                >
+                  Eliminar por completo (Asignación de prueba o error)
+                </button>
+              </div>
             </div>
           </div>
         </div>

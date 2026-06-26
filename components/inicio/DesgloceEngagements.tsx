@@ -171,6 +171,8 @@ interface Props {
   onSimDirty?: () => void;
   /** En simulationMode: delega al padre la confirmación de desasignación para truncar fecha_fin */
   onSimDesasignarRequest?: (payload: { asignacionId: string; engId: string; nombrePersona: string }) => void;
+  /** Oculta el % de carga en "Equipo asignado" para roles restringidos (G&D, A&Sr, planificador, Desarrollo) */
+  ocultarPctEquipo?: boolean;
 }
 
 export interface SimAsigPayload {
@@ -190,7 +192,7 @@ type UndoEntry =
   | { type: "color_semana"; engId: string; label: string; fecha: string; fecha_fin: string; prevEntry: { fecha: string; fecha_fin: string | null; intensidad: string } | null }
   | { type: "edit_reqs";   engId: string; label: string; engNombre: string; prevReqs: ReqData[]; prevPersonas: PersonaAsig[] };
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest }: Props) {
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest, ocultarPctEquipo = false }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
   const [baseInterna, setBaseInterna] = useState<Date>(new Date());
 
@@ -712,6 +714,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     }
     // ─────────────────────────────────────────────────────────────────────────────────────
     async function load() {
+      // En modo simulación el snapshot es inmutable hasta "Actualizar con data real" → no re-fetchar
+      if (simulationMode) return;
       setLoading(true);
       const sb = createAnyClient();
       const cutoff = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().split("T")[0]; })();
@@ -1297,6 +1301,16 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     refresh(engId);
   }
 
+  /** Elimina físicamente la asignación (asignación de prueba o error) */
+  async function eliminarAsignacionCompleta() {
+    if (!pendingDesasignar) return;
+    const { asignacionId, engId } = pendingDesasignar;
+    setPendingDesasignar(null);
+    const sb = createAnyClient();
+    await sb.from("asignacion").delete().eq("id", asignacionId);
+    refresh(engId);
+  }
+
   // Mover engagement a papelera
   async function moverAPapelera(id: string) {
     // ── SIMULACIÓN: quitar engagement del estado local ───────────────────
@@ -1342,7 +1356,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const focusEngIdRef = useRef<string | null>(null);
 
   // Recarga al guardar cualquier engagement; captura el ID para el scroll posterior
+  // simulationMode: ignorar eventos globales — el snapshot del escenario es inmutable hasta "Actualizar con data real"
   useEffect(() => {
+    if (simulationMode) return;
     const handler = (e: Event) => {
       const id = (e as CustomEvent).detail?.engagementId as string | undefined;
       if (id) focusEngIdRef.current = id;
@@ -1350,7 +1366,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     };
     window.addEventListener("engagementChanged", handler);
     return () => window.removeEventListener("engagementChanged", handler);
-  }, []);
+  }, [simulationMode]);
 
   // Cuando el reload termina, expande y hace scroll al engagement editado
   useEffect(() => {
@@ -1663,7 +1679,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               </button>
             )}
             {/* Botón Deshacer */}
-            <button
+            {!ocultarPctEquipo && <button
               onClick={handleUndo}
               disabled={!undoStack.length || undoing}
               title={undoStack.length ? `Deshacer: ${undoStack[undoStack.length - 1]?.label}` : "Sin acciones para deshacer"}
@@ -1673,7 +1689,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 ? <Loader2 className="w-3 h-3 animate-spin" />
                 : <RotateCcw className="w-3 h-3" />}
               <span>Deshacer{undoStack.length > 1 ? ` (${undoStack.length})` : ""}</span>
-            </button>
+            </button>}
           </div>
           {/* Resumen — oculto en readOnly */}
           {!readOnly && <Link
@@ -1989,6 +2005,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 title={readOnly ? "" : "Arrastra para mover · Borde para redimensionar · Clic para intensidad"}
                                 onMouseDown={(ev) => {
                                   if (readOnly) return;
+                                  if (ocultarPctEquipo) return;
                                   ev.stopPropagation();
                                   movingEngActiveRef.current = true;
                                   setMovingEng({ eng, startColIdx: i });
@@ -1998,6 +2015,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 onClick={(ev) => {
                                   if (readOnly) return;
                                   if (movingEng) return;
+                                  if (ocultarPctEquipo) return;
                                   ev.stopPropagation();
                                   setQuickEdit({ engId: eng.id, fecha: format(col.inicio, "yyyy-MM-dd"), fecha_fin: format(col.fin, "yyyy-MM-dd"), x: ev.clientX, y: ev.clientY });
                                 }}>
@@ -2017,8 +2035,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                     </div>
                                   </div>
                                 )}
-                                {!readOnly && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/40 transition-colors" />}
-                                {!readOnly && isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/40 transition-colors" />}
+                                {!readOnly && !ocultarPctEquipo && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/40 transition-colors" />}
+                                {!readOnly && !ocultarPctEquipo && isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/40 transition-colors" />}
                               </div>
                             </td>
                           );
@@ -2044,6 +2062,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               }}
                               onClick={(ev) => {
                                 if (movingEng) return;
+                                if (ocultarPctEquipo) return;
                                 ev.stopPropagation();
                                 setQuickEdit({ engId: eng.id, fecha: format(col.inicio, "yyyy-MM-dd"), fecha_fin: format(col.fin, "yyyy-MM-dd"), x: ev.clientX, y: ev.clientY });
                               }}>
@@ -2063,8 +2082,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                   </div>
                                 </div>
                               )}
-                              {isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/30 transition-colors" />}
-                              {isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/30 transition-colors" />}
+                              {!ocultarPctEquipo && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/30 transition-colors" />}
+                              {!ocultarPctEquipo && isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/30 transition-colors" />}
                             </div>
                           </td>
                         );
@@ -2587,7 +2606,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                             </div>
                             <span className="text-xs truncate text-[#1a1a2e]">{p.nombre} {p.apellido}</span>
                           </div>
-                          <span className="text-[10px] text-gray-400 flex-shrink-0">{p.pct}%</span>
+                          {!ocultarPctEquipo && <span className="text-[10px] text-gray-400 flex-shrink-0">{p.pct}%</span>}
                         </div>
                       ))}
                     </div>
@@ -2806,20 +2825,30 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 className="w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
               />
             </div>
-            <div className="flex gap-2 justify-end">
-              <button
-                onClick={() => setPendingDesasignar(null)}
-                className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-              >
-                Cancelar
-              </button>
-              <button
-                onClick={() => confirmarDesasignar(desasignarFecha)}
-                disabled={!desasignarFecha}
-                className="px-4 py-2 text-[12px] font-bold text-white bg-[#1a1a2e] hover:bg-[#2d2d4e] rounded-lg transition-colors disabled:opacity-40"
-              >
-                Confirmar
-              </button>
+            <div className="flex flex-col gap-2">
+              <div className="flex gap-2 justify-end">
+                <button
+                  onClick={() => setPendingDesasignar(null)}
+                  className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+                >
+                  Cancelar
+                </button>
+                <button
+                  onClick={() => confirmarDesasignar(desasignarFecha)}
+                  disabled={!desasignarFecha}
+                  className="px-4 py-2 text-[12px] font-bold text-white bg-[#1a1a2e] hover:bg-[#2d2d4e] rounded-lg transition-colors disabled:opacity-40"
+                >
+                  Confirmar
+                </button>
+              </div>
+              <div className="flex justify-end">
+                <button
+                  onClick={eliminarAsignacionCompleta}
+                  className="text-[11px] text-slate-400 hover:text-red-500 underline transition-colors"
+                >
+                  Eliminar por completo (Asignación de prueba o error)
+                </button>
+              </div>
             </div>
           </div>
         </div>

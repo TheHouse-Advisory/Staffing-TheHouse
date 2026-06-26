@@ -66,12 +66,14 @@ interface Props {
   simulationSnapshot?: SimEngSnap[];
   /** Oculta la sección de Matriz de Talento para roles restringidos */
   ocultarMatriz?: boolean;
+  /** Oculta porcentajes de carga para rol G&D */
+  ocultarCarga?: boolean;
   /** Ignorado — mantenido para compatibilidad con llamadores existentes */
   anchorX?: number;
   anchorY?: number;
 }
 
-export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, ocultarMatriz = false }: Props) {
+export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, ocultarMatriz = false, ocultarCarga = false }: Props) {
   const [persona, setPersona] = useState<Persona | null>(null);
   const [resumen, setResumen] = useState<ResumenData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -231,6 +233,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                   )}
                 </div>
               )}
+              {!ocultarCarga && (
               <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-xs">Disponibilidad</span>
                 {(() => {
@@ -247,6 +250,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                   );
                 })()}
               </div>
+              )}
               <div className="flex justify-between items-center">
                 <span className="text-gray-400 text-xs">Nº proyectos</span>
                 <span className="font-medium text-[#1a1a2e] text-xs">
@@ -268,14 +272,14 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                               <p className="text-[11px] font-semibold text-slate-800 truncate leading-tight">{eng.nombre}</p>
                               {eng.cliente && <p className="text-[10px] text-gray-400 truncate">{eng.cliente}</p>}
                             </div>
-                            <span className="flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">{pct}%</span>
+                            {!ocultarCarga && <span className="flex-shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">{pct}%</span>}
                           </div>
                         );
                       })}
                     </div>
                   )
                 ) : (
-                  <ProyectosPersonaDetalle personaId={persona.id} compact />
+                  <ProyectosPersonaDetalle personaId={persona.id} compact ocultarCarga={ocultarCarga} />
                 )}
               </div>
               {/* ── Historial de proyectos ── */}

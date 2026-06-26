@@ -106,7 +106,7 @@ export function EngagementDetail({ id }: Props) {
 
   // Control de acceso
   const [rolActual, setRolActual] = useState<string | null>(null);
-  const isReadOnly = rolActual === "planificador" || rolActual === "GyD";
+  const isReadOnly = rolActual === "planificador" || rolActual === "GyD" || rolActual === "AySr" || rolActual === "Desarrollo";
 
   // ── Carga de datos ─────────────────────────────────────────────
   const load = async () => {
@@ -465,7 +465,7 @@ export function EngagementDetail({ id }: Props) {
         )}
 
         {/* ── Requerimientos + asignaciones ──────────────────── */}
-        <div className="space-y-3">
+        {!isReadOnly && <div className="space-y-3">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold text-[15px]">Requerimientos y asignaciones</h3>
             {!isReadOnly && (
@@ -501,9 +501,11 @@ export function EngagementDetail({ id }: Props) {
                                   : <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />}
                                 <span className="font-medium text-sm">
                                   {r.cargo_requerido ?? "Cualquier cargo"}
+                                  {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
                                   <span className="ml-2 text-xs font-normal text-[#aaa]">
                                     {r.pct_requerido}%
                                   </span>
+                                  )}
                                 </span>
                               </div>
                               <p className="text-xs text-[#888] mt-0.5 ml-6">
@@ -567,10 +569,12 @@ export function EngagementDetail({ id }: Props) {
                                         <p className="text-[10px] text-[#888]">{a.cargo_al_momento}</p>
                                       )}
                                     </div>
-                                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
-                                      style={{ background: abg, color: atext }}>
-                                      {formatPct(a.pct_dedicacion)}
-                                    </span>
+                                    {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
+                                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+                                        style={{ background: abg, color: atext }}>
+                                        {formatPct(a.pct_dedicacion)}
+                                      </span>
+                                    )}
                                     <span className="text-[10px] text-[#aaa] flex-shrink-0">
                                       {format(fLocal(a.fecha_inicio), "d MMM", { locale: es })}
                                       {a.fecha_fin
@@ -615,10 +619,10 @@ export function EngagementDetail({ id }: Props) {
               )}
             </div>
           )}
-        </div>
+        </div>}
 
         {/* ── Días críticos ─────────────────────────────────────── */}
-        <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
+        {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
           <div className="px-5 py-3 bg-[#fffbf0] border-b border-[#f5e8c0] flex items-center gap-2">
             <Flame className="w-4 h-4 text-orange-500 flex-shrink-0" />
             <p className="font-semibold text-sm text-[#1a1a1a]">Días críticos</p>
@@ -705,7 +709,7 @@ export function EngagementDetail({ id }: Props) {
               </div>
             </div>}
           </div>
-        </div>
+        </div>}
 
         {/* Asignaciones sin requerimiento */}
         {asignacionesSinReq.length > 0 && (
@@ -723,10 +727,12 @@ export function EngagementDetail({ id }: Props) {
                       <p className="text-sm font-medium">{a.persona_nombre}</p>
                       {a.cargo_al_momento && <p className="text-xs text-[#888]">{a.cargo_al_momento}</p>}
                     </div>
-                    <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
-                      style={{ background: bg, color: text }}>
-                      {formatPct(a.pct_dedicacion)}
-                    </span>
+                    {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
+                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+                        style={{ background: bg, color: text }}>
+                        {formatPct(a.pct_dedicacion)}
+                      </span>
+                    )}
                     <span className="text-xs text-[#aaa] flex-shrink-0">
                       {format(fLocal(a.fecha_inicio), "d MMM", { locale: es })}
                       {a.fecha_fin

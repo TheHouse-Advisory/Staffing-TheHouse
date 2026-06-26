@@ -24,6 +24,7 @@ interface PersonaAsig {
   fecha_inicio: string;
   fecha_fin: string;
   requerimiento_id?: string | null;
+  asignacionId?: string | null; // UUID de la fila asignacion en Supabase (null = sim-generada)
 }
 
 interface ReqSnap {
@@ -95,8 +96,15 @@ function guardarPlanes(planes: PlanSimulacion[]) {
   try { localStorage.setItem(LS_KEY, JSON.stringify(planes)); } catch {}
 }
 
-/** Carga planes desde Supabase. Fallback a localStorage si falla. */
+/** Carga planes desde Supabase, mergeando con localStorage (que tiene cambios sim no guardados). */
 async function cargarPlanesRemoto(): Promise<PlanSimulacion[]> {
+  // localStorage puede tener snapshots más recientes (onSnapshotChange escribe ahí continuamente)
+  let localMap: Map<string, PlanSimulacion> = new Map();
+  try {
+    const local = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]") as PlanSimulacion[];
+    local.forEach((p) => localMap.set(p.id, p));
+  } catch {}
+
   try {
     const sb = createAnyClient();
     const { data, error } = await sb
@@ -104,7 +112,6 @@ async function cargarPlanesRemoto(): Promise<PlanSimulacion[]> {
       .select("id, nombre, estado, creado_en, creado_por, fecha_rechazo, data_simulada, data_real_previa")
       .order("creado_en", { ascending: false });
     if (error || !data) throw error;
-    // Resolve creator names via persona.auth_user_id
     const creadorIds = [...new Set((data as any[]).map((r) => r.creado_por).filter(Boolean))];
     let creadorMap: Record<string, { nombre: string; cargo: string | null }> = {};
     if (creadorIds.length > 0) {
@@ -116,21 +123,27 @@ async function cargarPlanesRemoto(): Promise<PlanSimulacion[]> {
         if (p.auth_user_id) creadorMap[p.auth_user_id] = { nombre: p.nombre, cargo: p.cargo };
       });
     }
-    return (data as any[]).map((row) => ({
-      id: row.id,
-      nombre: row.nombre,
-      estado: row.estado as PlanSimulacion["estado"],
-      creadoEn: row.creado_en,
-      creadoPor: row.creado_por ?? null,
-      creadoPorNombre: row.creado_por ? (creadorMap[row.creado_por]?.nombre ?? null) : null,
-      creadoPorCargo: row.creado_por ? (creadorMap[row.creado_por]?.cargo ?? null) : null,
-      fechaRechazo: row.fecha_rechazo ?? null,
-      snapshot: (row.data_simulada ?? []) as EngSnap[],
-      mutaciones: {},
-      tieneRealPrevia: row.data_real_previa != null,
-    }));
+    return (data as any[]).map((row) => {
+      const base = {
+        id: row.id,
+        nombre: row.nombre,
+        estado: row.estado as PlanSimulacion["estado"],
+        creadoEn: row.creado_en,
+        creadoPor: row.creado_por ?? null,
+        creadoPorNombre: row.creado_por ? (creadorMap[row.creado_por]?.nombre ?? null) : null,
+        creadoPorCargo: row.creado_por ? (creadorMap[row.creado_por]?.cargo ?? null) : null,
+        fechaRechazo: row.fecha_rechazo ?? null,
+        snapshot: (row.data_simulada ?? []) as EngSnap[],
+        mutaciones: {},
+        tieneRealPrevia: row.data_real_previa != null,
+      };
+      // Preferir snapshot de localStorage: tiene cambios sim no guardados en Supabase
+      const cached = localMap.get(row.id);
+      if (cached?.snapshot?.length) return { ...base, snapshot: cached.snapshot, estado: cached.estado ?? base.estado };
+      return base;
+    });
   } catch {
-    // Fallback: localStorage mientras la tabla no exista
+    if (localMap.size > 0) return [...localMap.values()];
     try { return JSON.parse(localStorage.getItem(LS_KEY) ?? "[]"); } catch { return []; }
   }
 }
@@ -233,6 +246,7 @@ async function fetchSnapshot(): Promise<EngSnap[]> {
           fecha_inicio: a.fecha_inicio,
           fecha_fin: a.fecha_fin,
           requerimiento_id: a.requerimiento_id ?? null,
+          asignacionId: a.id,
         };
       });
 
@@ -328,6 +342,16 @@ export function GanttPlanificacion() {
   const [sincronizando, setSincronizando] = useState(false);
   const [toastSync,     setToastSync]     = useState(false);
   const [modalEliminar, setModalEliminar] = useState<{ id: string; nombre: string; tipo: "aceptado" | "borrador" } | null>(null);
+
+  // ── Modal de confirmación "Actualizar con data real" ──────────
+  type ConflictoSync = { tipo: "eliminada" | "agregada" | "modificada" | "eng_nuevo" | "eng_eliminado"; descripcion: string };
+  const [modalSync, setModalSync] = useState<{
+    tableroProd: any[];
+    nuevoSnapshot: any[];
+    planActualizado: any;
+    conflictos: ConflictoSync[];
+    tabActiva: "resumen" | "cambios";
+  } | null>(null);
 
   type CambioPendiente = { etiqueta: string; descripcion: string; color: "green" | "red" | "yellow" };
   const [cambiosPendientes,    setCambiosPendientes]    = useState<CambioPendiente[]>([]);
@@ -483,6 +507,7 @@ export function GanttPlanificacion() {
   }
 
   // ── Sincronizar escenario activo con datos reales ─────────
+  // FASE 1: fetch, detecta conflictos y abre modal de confirmación
   async function sincronizarConDatosReales() {
     if (!planActivo) return;
     const planSeleccionado = planes.find((p) => p.id === planActivo);
@@ -490,49 +515,85 @@ export function GanttPlanificacion() {
 
     setSincronizando(true);
     try {
-      const hoy = format(new Date(), "yyyy-MM-dd");
-      const sb  = createAnyClient();
-      const [tableroProd, persRes] = await Promise.all([
-        fetchSnapshot(),
-        sb.from("persona").select("id, nombre, apellido, iniciales, cargo_actual, is_leverager").eq("activo", true),
-      ]);
-
-      const prodMap      = new Map(tableroProd.map((e: any) => [e.id, e]));
-      const personaMap   = new Map((persRes.data ?? []).map((p: any) => [p.id, p]));
+      const tableroProd = await fetchSnapshot();
+      const prodMap     = new Map(tableroProd.map((e: any) => [e.id, e]));
       const snapshotActual = planSeleccionado.snapshot;
 
-      // 1) Mantener solo los engagements que siguen existiendo en producción
-      //    (o que son sim_eng_* — propios de la simulación, sin par en prod)
-      const snapshotFiltrado = snapshotActual.filter((engSim) => {
-        if (engSim.id.startsWith("sim_eng_")) return true; // propio de simulación → conservar
-        return prodMap.has(engSim.id); // fue eliminado del tablero real → sacar
-      });
+      // ── Detectar conflictos ───────────────────────────────────
+      const conflictos: ConflictoSync[] = [];
 
-      // 2) Merge de personas en engagements existentes (mismo algoritmo que Smart Pull)
-      const snapshotMergeado: EngSnap[] = snapshotFiltrado.map((engSim) => {
-        const engProd = prodMap.get(engSim.id);
-        const personasActualizadas = engSim.personas.map((p) => {
-          const pReal = (personaMap as any).get(p.id);
-          if (!pReal) return p;
-          return { ...p, nombre: pReal.nombre ?? p.nombre, apellido: pReal.apellido ?? p.apellido,
-                         iniciales: pReal.iniciales ?? p.iniciales, cargo: pReal.cargo_actual ?? p.cargo };
-        });
-        if (!engProd) return { ...engSim, personas: personasActualizadas };
-        const idsPersonasSim = new Set(engSim.personas.map((p) => p.id));
-        const personasNuevas = engProd.personas.filter((p: any) => !idsPersonasSim.has(p.id));
-        return { ...engSim, personas: [...personasActualizadas, ...personasNuevas] };
-      });
-
-      // 3) Inyectar engagements nuevos en producción que el snapshot no tiene
-      const huellasEnSnapshot = new Set(
-        snapshotActual.map((e) => `${e.nombre}|${e.tipo}|${(e.cliente ?? "").trim().toLowerCase()}`)
-      );
       const idsEnSnapshot = new Set(snapshotActual.map((e) => e.id));
-      const engNuevos = tableroProd.filter((e: any) => {
-        if (idsEnSnapshot.has(e.id)) return false;
-        const huella = `${e.nombre}|${e.tipo}|${(e.cliente ?? "").trim().toLowerCase()}`;
-        return !huellasEnSnapshot.has(huella);
+
+      // Compara por persona.id (asignacionId se pierde en el round-trip EngRow→EngSnap)
+      // Solo personas de origen real (excluye las creadas en sim con asignacionId sim_*)
+      snapshotActual.forEach((engSim) => {
+        if (engSim.id.startsWith("sim_eng_")) return;
+        const engProd = prodMap.get(engSim.id);
+        if (!engProd) return;
+
+        // Prod: mapa por persona.id → datos reales actuales
+        const prodPorPersona = new Map(engProd.personas.map((p: any) => [p.id, p]));
+
+        // Sim: solo personas que no son de simulación pura
+        const simPersonasReales = engSim.personas.filter(
+          p => !p.asignacionId?.startsWith("sim_")
+        );
+
+        const simIdSet = new Set(simPersonasReales.map(p => p.id));
+
+        simPersonasReales.forEach((pSim) => {
+          const pProd = prodPorPersona.get(pSim.id) as any;
+
+          if (!pProd) {
+            // Eliminada en Inicio pero sigue en el escenario
+            conflictos.push({
+              tipo: "eliminada",
+              descripcion: `En la data real de la empresa se eliminó a ${pSim.nombre} ${pSim.apellido}, pero en tu plan aún está activa dentro del engagement "${engSim.nombre}". Si confirmas, se eliminará también de este plan.`,
+            });
+            return;
+          }
+
+          // Existe en ambos lados → detectar diferencias
+          const diffs: string[] = [];
+          if (pSim.fecha_inicio !== pProd.fecha_inicio)
+            diffs.push(`fecha inicio cambia de ${pSim.fecha_inicio} a ${pProd.fecha_inicio}`);
+          if ((pSim.fecha_fin ?? null) !== (pProd.fecha_fin ?? null))
+            diffs.push(`fecha término cambia de ${pSim.fecha_fin ?? "abierta"} a ${pProd.fecha_fin ?? "abierta"}`);
+          if (pSim.pct !== pProd.pct)
+            diffs.push(`dedicación cambia de ${pSim.pct}% a ${pProd.pct}%`);
+
+          if (diffs.length > 0) {
+            conflictos.push({
+              tipo: "modificada",
+              descripcion: `La asignación de ${pSim.nombre} ${pSim.apellido} en "${engSim.nombre}" fue modificada en Inicio: ${diffs.join("; ")}. Si confirmas, se mantendrá la información real de la empresa.`,
+            });
+          }
+        });
+
+        // Persona agregada en Inicio que el escenario no tenía
+        engProd.personas.forEach((pProd: any) => {
+          if (!simIdSet.has(pProd.id)) {
+            conflictos.push({
+              tipo: "agregada",
+              descripcion: `En Inicio se asignó a ${pProd.nombre} ${pProd.apellido} al engagement "${engSim.nombre}", pero tu plan no la contemplaba. Si confirmas, se añadirá a este plan.`,
+            });
+          }
+        });
       });
+
+      // ── Construir nuevo snapshot (replace limpio) ─────────────
+      // Para cada eng real: reemplazar personas de origen real con foto exacta de prod.
+      // Solo sobreviven las sim_* del escenario.
+      const snapshotMergeado: EngSnap[] = snapshotActual
+        .filter((engSim) => engSim.id.startsWith("sim_eng_") || prodMap.has(engSim.id))
+        .map((engSim) => {
+          const engProd = prodMap.get(engSim.id);
+          if (!engProd) return engSim; // sim-only → intacto
+          const personasSim = engSim.personas.filter(p => p.asignacionId?.startsWith("sim_"));
+          return { ...engSim, ...engProd, personas: [...engProd.personas, ...personasSim] };
+        });
+
+      const engNuevos = tableroProd.filter((e: any) => !idsEnSnapshot.has(e.id));
 
       const nuevoSnapshot: EngSnap[] = [...snapshotMergeado, ...engNuevos].sort((a, b) => {
         const sa = a.sort_order ?? Infinity;
@@ -544,29 +605,32 @@ export function GanttPlanificacion() {
       const planActualizado: PlanSimulacion = {
         ...planSeleccionado,
         snapshot: nuevoSnapshot,
-        // Si el plan era Aceptado y hay cambios estructurales (eliminados o nuevos no-ayuda_interna), degradar a Borrador
-        estado: (planSeleccionado.estado === "Aceptado" &&
-                 (snapshotFiltrado.length !== snapshotActual.length ||
-                  engNuevos.filter((e: any) => e.tipo !== "ayuda_interna").length > 0))
-          ? "Borrador"
-          : planSeleccionado.estado,
+        estado: (planSeleccionado.estado === "Aceptado" && conflictos.length > 0) ? "Borrador" : planSeleccionado.estado,
       };
       if (planActualizado.estado === "Borrador" && planSeleccionado.estado === "Aceptado") {
         planActualizado.tieneRealPrevia = false;
       }
 
-      setPlanes((prev) => prev.map((p) => p.id === planActivo ? planActualizado : p));
-      try {
-        const local = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]") as PlanSimulacion[];
-        localStorage.setItem(LS_KEY, JSON.stringify(local.map((p) => p.id === planActivo ? planActualizado : p)));
-      } catch {}
-
-      // Toast de éxito
-      setToastSync(true);
-      setTimeout(() => setToastSync(false), 3000);
+      // Abre modal con preview del resultado y los conflictos detectados
+      setModalSync({ tableroProd, nuevoSnapshot, planActualizado, conflictos, tabActiva: "resumen" });
     } finally {
       setSincronizando(false);
     }
+  }
+
+  // FASE 2: usuario confirmó → aplica el replace y cierra modal
+  function confirmarSync() {
+    if (!modalSync || !planActivo) return;
+    const { planActualizado } = modalSync;
+    setModalSync(null);
+    setPlanes((prev) => prev.map((p) => p.id === planActivo ? planActualizado : p));
+    setSandboxKey((k) => k + 1); // fuerza remount de SandboxInicioView con snapshot fresco
+    try {
+      const local = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]") as PlanSimulacion[];
+      localStorage.setItem(LS_KEY, JSON.stringify(local.map((p) => p.id === planActivo ? planActualizado : p)));
+    } catch {}
+    setToastSync(true);
+    setTimeout(() => setToastSync(false), 3000);
   }
 
   // ── Crear plan ──────────────────────────────────────────────
@@ -1644,6 +1708,81 @@ export function GanttPlanificacion() {
           </p>
         </div>
       </Modal>
+
+      {/* ── Modal: Confirmar "Actualizar con data real" ─────────── */}
+      {modalSync && (
+        <div className="fixed inset-0 z-[500] flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-100 w-full max-w-md mx-4 overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 pt-5 pb-3">
+              <p className="text-[15px] font-bold text-[#1a1a2e]">Actualizar con data real</p>
+              <button onClick={() => setModalSync(null)} className="text-slate-400 hover:text-slate-600 transition-colors"><X className="w-4 h-4" /></button>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex border-b border-gray-200 px-5">
+              {(["resumen", "cambios"] as const).map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setModalSync((s) => s ? { ...s, tabActiva: tab } : s)}
+                  className={`pb-2 mr-4 text-[12px] font-semibold border-b-2 transition-colors ${
+                    modalSync.tabActiva === tab
+                      ? "border-[#4a90e2] text-[#4a90e2]"
+                      : "border-transparent text-slate-400 hover:text-slate-600"
+                  }`}
+                >
+                  {tab === "resumen" ? "Resumen" : `Cambios detectados${modalSync.conflictos.length > 0 ? ` (${modalSync.conflictos.length})` : ""}`}
+                </button>
+              ))}
+            </div>
+
+            {/* Tab content */}
+            <div className="px-5 py-4 max-h-64 overflow-y-auto">
+              {modalSync.tabActiva === "resumen" ? (
+                <p className="text-[13px] text-slate-600 leading-relaxed">
+                  ¿Quieres actualizar este plan con los datos reales de la consultora? Esto reemplazará los cambios que realizaste con lo que está pasando hoy en el Menú Principal.
+                  <br /><br />
+                  Tus proyectos y personas creados desde cero como simulación en este escenario <strong>no se borrarán</strong> (solo si no tienen conflictos de información con la data real).
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {modalSync.conflictos.length === 0 ? (
+                    <p className="text-[12px] text-slate-500 italic">No se detectaron diferencias. Tu escenario ya está al día con Inicio.</p>
+                  ) : (
+                    modalSync.conflictos.map((c, i) => (
+                      <div key={i} className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200">
+                        <span className="text-amber-500 mt-0.5 flex-shrink-0">
+                          {c.tipo === "eliminada" ? "🗑️" : c.tipo === "agregada" ? "➕" : c.tipo === "modificada" ? "✏️" : c.tipo === "eng_nuevo" ? "📁" : "🗂️"}
+                        </span>
+                        <p className="text-[11.5px] text-amber-800 leading-snug">
+                          {c.descripcion}{" "}
+                          <span className="font-semibold">¡Al actualizar, se mantendrá la información real de Inicio!</span>
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end gap-2 px-5 py-4 border-t border-gray-100">
+              <button
+                onClick={() => setModalSync(null)}
+                className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarSync}
+                className="px-4 py-2 text-[12px] font-bold text-white bg-[#4a90e2] hover:bg-[#357abd] rounded-lg transition-colors"
+              >
+                Actualizar escenario
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal: Eliminar escenario Borrador/Rechazado ─────────── */}
       <Modal
