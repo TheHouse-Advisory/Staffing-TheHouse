@@ -53,7 +53,7 @@ function formatWeekLabel(d: Date): string {
 export default function AusenciasPage() {
   const now = new Date();
   const [rol, setRol] = useState<RolSistema | null>(null);
-  const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD";
+  const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD" || rol === "AySr";
   const { tipos: tiposDB } = useTiposAusencia();
   // Leyenda = tipos de BD + feriado fijo al final
   const leyendaDinamica = [...tiposDB, LEYENDA_FERIADO];
@@ -182,7 +182,7 @@ export default function AusenciasPage() {
 
           {/* Acciones */}
           <div className="flex items-center gap-2 flex-shrink-0">
-            {rol !== "planificador" && rol !== "GyD" && (
+            {rol !== "planificador" && rol !== "GyD" && rol !== "AySr" && (
               <button
                 onClick={() => setResumenOpen(true)}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#e0e0e0] hover:bg-[#f5f5f5] rounded-lg text-[12px] font-semibold text-[#555] transition-colors"
@@ -235,7 +235,7 @@ export default function AusenciasPage() {
 
           {/* Vista Trimestre */}
           {vistaActiva === "quarter" && (
-            <HeatmapAusenciasQ year={yearAnio} quarter={quarterQ} />
+            <HeatmapAusenciasQ year={yearAnio} quarter={quarterQ} rolActual={rol} />
           )}
 
           {/* Vista Semana */}
@@ -245,6 +245,7 @@ export default function AusenciasPage() {
               externalModalOpen={isReadOnly ? false : modalOpen}
               onExternalModalClose={() => setModalOpen(false)}
               readOnly={isReadOnly}
+              rolActual={rol}
             />
           )}
 

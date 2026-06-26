@@ -21,7 +21,7 @@ function TableroContent() {
   const openEngagementId = searchParams.get("openEngagementId") ?? undefined;
   const [vistaPrincipal, setVistaPrincipal] = useState<VistaPrincipal>("proyectos");
   const [rol, setRol] = useState<RolSistema | null>(null);
-  const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD";
+  const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD" || rol === "AySr";
 
   useEffect(() => {
     (async () => {

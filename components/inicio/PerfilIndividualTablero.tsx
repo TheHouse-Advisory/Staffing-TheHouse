@@ -2,11 +2,21 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { Search } from "lucide-react";
-import { addDays, addMonths, format, isWeekend, startOfMonth } from "date-fns";
+import { addDays, addMonths, format, isWeekend, startOfMonth, startOfISOWeek } from "date-fns";
 import { es } from "date-fns/locale";
 import { createAnyClient } from "@/lib/supabase/client";
 import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import { expandirRango, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
+
+// Iniciales de los días hábiles para la vista micro-semanal
+const DIAS_SEMANA = ['L', 'M', 'X', 'J', 'V'];
+
+// Suma n días a un string "YYYY-MM-DD"
+function addDayStr(dateStr: string, n: number): string {
+  const d = new Date(dateStr + "T00:00:00");
+  d.setDate(d.getDate() + n);
+  return d.toISOString().split("T")[0];
+}
 
 const JERARQUIA: Record<string, number> = {
   "Socio": 1, "Director de Proyectos": 2, "Director": 2,
@@ -197,19 +207,25 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
           return ia !== ib ? ia - ib : a.apellido.localeCompare(b.apellido);
         })
         .map((p) => {
-          const asigs = ((asigRes.data ?? []) as any[])
+          const asigsSinDedup = ((asigRes.data ?? []) as any[])
             .filter((a) => a.persona_id === p.id)
             .map((a) => {
-            const eng = Array.isArray(a.engagement) ? a.engagement[0] : a.engagement;
-            return {
-              id: eng?.id ?? "",
-              nombre: eng?.codigo ? `${eng.codigo}: ${eng.nombre ?? "—"}` : eng?.nombre ?? "—",
-              cliente: eng?.cliente ?? "",
-              inicio: a.fecha_inicio,
-              fin: a.fecha_fin,
-              pct: a.pct_dedicacion,
-            };
-          });
+              const eng = Array.isArray(a.engagement) ? a.engagement[0] : a.engagement;
+              return {
+                id: eng?.id ?? "",
+                nombre: eng?.codigo ? `${eng.codigo}: ${eng.nombre ?? "—"}` : eng?.nombre ?? "—",
+                cliente: eng?.cliente ?? "",
+                inicio: a.fecha_inicio,
+                fin: a.fecha_fin,
+                pct: a.pct_dedicacion,
+              };
+            });
+          // Deduplicar por engagement id — múltiples tramos del mismo engagement se unifican
+          const engMap = new Map<string, typeof asigsSinDedup[0]>();
+          for (const a of asigsSinDedup) {
+            if (!engMap.has(a.id)) engMap.set(a.id, a);
+          }
+          const asigs = Array.from(engMap.values());
           const ausencias = ((ausenRes.data ?? []) as any[])
             .filter((a) => a.persona_id === p.id)
             .map((a) => ({ inicio: a.fecha_inicio, fin: a.fecha_fin, tipo: a.tipo }));
@@ -362,14 +378,148 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
                     </td>
                     {columnasMostradas.map((col, i) => {
                       const activo = overlapsColumna(proy.inicio, proy.fin, col);
-                      // semáforo: <50% verde, 50-90% naranja, >90% rojo (oculto para G&D)
                       const semColor = esGYD
-                        ? "#fef3c7" // amber-100 neutro para G&D
-                        : proy.pct < 50
-                        ? "#16a34a"
-                        : proy.pct <= 90
-                        ? "#f59e0b"
+                        ? "#fef3c7"
+                        : proy.pct < 50  ? "#16a34a"
+                        : proy.pct <= 90 ? "#f59e0b"
                         : "#dc2626";
+
+                      // ── Vista día: barra partida proyecto|ausencia cuando coinciden ──
+                      if (pv === "dia" && activo) {
+                        const aus = persona.ausencias.find(
+                          (a) => a.inicio <= col.inicioStr && a.fin >= col.inicioStr
+                        );
+                        const ausColor = aus
+                          ? (COLOR_AUSENCIA[aus.tipo as keyof typeof COLOR_AUSENCIA]?.bg ?? "#9ca3af")
+                          : null;
+                        // Inicial del día a partir de col.inicioStr (0=Dom,1=Lun,...6=Sáb)
+                        const diaSemana = new Date(col.inicioStr + "T00:00:00").getDay();
+                        const INICIAL_DIA: Record<number, string> = { 1:"L", 2:"M", 3:"X", 4:"J", 5:"V" };
+                        const initialDia = INICIAL_DIA[diaSemana] ?? "";
+                        const background = ausColor
+                          ? `linear-gradient(to right, ${semColor} 50%, ${ausColor} 50%)`
+                          : semColor;
+                        return (
+                          <td key={i} className="py-0.5 px-0.5">
+                            <div
+                              className="h-5 rounded relative overflow-hidden flex items-center justify-center text-[10px] font-semibold text-white"
+                              style={{ background }}
+                            >
+                              {ausColor ? (
+                                <>
+                                  {/* % en la mitad izquierda (proyecto) */}
+                                  {!esGYD && (
+                                    <span className="absolute left-0 top-0 bottom-0 w-1/2 flex items-center justify-center text-[9px]">
+                                      {proy.pct}%
+                                    </span>
+                                  )}
+                                  {/* Inicial del día en la mitad derecha (ausencia) */}
+                                  <span className="absolute right-0 top-0 bottom-0 w-1/2 flex items-center justify-center text-[9px] font-bold">
+                                    {initialDia}
+                                  </span>
+                                </>
+                              ) : (
+                                !esGYD && `${proy.pct}%`
+                              )}
+                            </div>
+                          </td>
+                        );
+                      }
+
+                      // ── Vista semana: segmentar barra en 5 días (L–V) ──
+                      if (pv === "semana" && activo) {
+                        const segments = DIAS_SEMANA.map((initial, offset) => {
+                          const dayStr = addDayStr(col.inicioStr, offset);
+                          const aus = persona.ausencias.find(
+                            (a) => a.inicio <= dayStr && a.fin >= dayStr
+                          );
+                          const ausColor = aus
+                            ? (COLOR_AUSENCIA[aus.tipo as keyof typeof COLOR_AUSENCIA]?.bg ?? "#9ca3af")
+                            : null;
+                          return { initial, ausColor };
+                        });
+
+                        const hasAbsence = segments.some((s) => s.ausColor);
+                        const gradientParts = segments.map((s, si) => {
+                          const color = s.ausColor ?? semColor;
+                          return `${color} ${si * 20}%, ${color} ${(si + 1) * 20}%`;
+                        });
+                        const background = hasAbsence
+                          ? `linear-gradient(to right, ${gradientParts.join(", ")})`
+                          : semColor;
+
+                        return (
+                          <td key={i} className="py-0.5 px-0.5">
+                            <div
+                              className="h-5 rounded relative overflow-hidden flex items-center justify-center"
+                              style={{ background }}
+                            >
+                              {/* Iniciales de días con ausencia */}
+                              {hasAbsence && segments.map((s, si) =>
+                                s.ausColor ? (
+                                  <span
+                                    key={si}
+                                    className="absolute top-0 bottom-0 flex items-center justify-center text-[9px] font-bold text-white"
+                                    style={{ left: `${si * 20}%`, width: "20%" }}
+                                  >
+                                    {s.initial}
+                                  </span>
+                                ) : null
+                              )}
+                              {/* % carga sobre días sin ausencia (solo si todos los días están libres) */}
+                              {!hasAbsence && !esGYD && (
+                                <span className="text-[10px] font-semibold text-white">{proy.pct}%</span>
+                              )}
+                            </div>
+                          </td>
+                        );
+                      }
+
+                      // ── Vista mes: subdivisión por semanas ──
+                      if (pv === "mes" && activo) {
+                        const mesIni = new Date(col.inicioStr + "T00:00:00");
+                        const mesFin = new Date(col.finStr + "T00:00:00");
+                        const segs: { lbl: string; ausColor: string | null }[] = [];
+                        let wStart = startOfISOWeek(mesIni);
+                        if (addDays(wStart, 6) < mesIni) wStart = addDays(wStart, 7);
+                        let idx = 1;
+                        while (wStart <= mesFin) {
+                          const wEnd = addDays(wStart, 6);
+                          const clampIni = wStart < mesIni ? mesIni : wStart;
+                          const clampFin = wEnd > mesFin ? mesFin : wEnd;
+                          const wIniStr = format(clampIni, "yyyy-MM-dd");
+                          const wFinStr = format(clampFin, "yyyy-MM-dd");
+                          const aus = persona.ausencias.find((a) => a.inicio <= wFinStr && a.fin >= wIniStr);
+                          const ausColor = aus ? (COLOR_AUSENCIA[aus.tipo as keyof typeof COLOR_AUSENCIA]?.bg ?? "#9ca3af") : null;
+                          segs.push({ lbl: `S${idx}`, ausColor });
+                          wStart = addDays(wStart, 7); idx++;
+                        }
+                        const segPct = 100 / segs.length;
+                        const gradientParts = segs.map((s, si) => {
+                          const c = s.ausColor ?? semColor;
+                          return `${c} ${si * segPct}%, ${c} ${(si + 1) * segPct}%`;
+                        });
+                        return (
+                          <td key={i} className="py-0.5 px-0.5">
+                            <div className="h-5 rounded overflow-hidden relative"
+                              style={{ background: `linear-gradient(to right, ${gradientParts.join(", ")})` }}>
+                              {segs.map((s, si) => s.ausColor ? (
+                                <div key={si} className="absolute inset-y-0 flex items-center justify-center select-none pointer-events-none"
+                                  style={{ left: `${si * segPct}%`, width: `${segPct}%`, backgroundColor: s.ausColor }}>
+                                  <span className="text-white font-black drop-shadow-sm" style={{ fontSize: 10, lineHeight: 1 }}>{s.lbl}</span>
+                                </div>
+                              ) : (
+                                <span key={si} className="absolute text-white font-black select-none pointer-events-none"
+                                  style={{ left: `${si * segPct + segPct / 2}%`, top: "50%", transform: "translate(-50%,-50%)", fontSize: 10, lineHeight: 1, opacity: 0.45 }}>
+                                  {s.lbl}
+                                </span>
+                              ))}
+                            </div>
+                          </td>
+                        );
+                      }
+
+                      // ── Vista día / mes sin activo: renderizado original ──
                       return (
                         <td key={i} className="py-0.5 px-0.5">
                           {activo ? (
@@ -395,13 +545,27 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
                       <p className="text-orange-400 pl-2 truncate max-w-[130px]">Ausencia</p>
                     </td>
                     {columnasMostradas.map((col, i) => {
-                      // Toma la primera ausencia activa en la columna para obtener su tipo y color
-                      const ausActiva = persona.ausencias.find((a) => overlapsColumna(a.inicio, a.fin, col));
-                      const cfg = ausActiva ? (COLOR_AUSENCIA[ausActiva.tipo as keyof typeof COLOR_AUSENCIA] ?? { bg: "#9ca3af" }) : null;
+                      const ausEnCol = persona.ausencias.filter((a) => overlapsColumna(a.inicio, a.fin, col));
+                      const ausActiva = ausEnCol[0] ?? null;
+                      const cfg = ausActiva ? (COLOR_AUSENCIA[ausActiva.tipo as keyof typeof COLOR_AUSENCIA] ?? { bg: "#9ca3af", label: "Ausencia" }) : null;
+                      const tooltip = (() => {
+                        if (!ausEnCol.length) return undefined;
+                        const sorted = [...ausEnCol].sort((a, b) => a.inicio.localeCompare(b.inicio));
+                        const iniStr = sorted[0].inicio;
+                        const finStr = sorted[sorted.length - 1].fin;
+                        const totalDias = sorted.reduce((acc, a) => {
+                          const d = Math.round((new Date(a.fin + "T00:00:00").getTime() - new Date(a.inicio + "T00:00:00").getTime()) / 86400000) + 1;
+                          return acc + d;
+                        }, 0);
+                        const tipos = [...new Set(sorted.map((a) => COLOR_AUSENCIA[a.tipo as keyof typeof COLOR_AUSENCIA]?.label ?? a.tipo))].join(" + ");
+                        const fmtIni = format(new Date(iniStr + "T00:00:00"), "d MMM", { locale: es });
+                        const fmtFin = format(new Date(finStr + "T00:00:00"), "d MMM", { locale: es });
+                        return `${persona.nombre} ${persona.apellido} - ${tipos} - ${fmtIni} al ${fmtFin} - (${totalDias} ${totalDias === 1 ? "día" : "días"})`;
+                      })();
                       return (
                         <td key={i} className="py-0.5 px-0.5">
                           {cfg ? (
-                            <div className="h-5 rounded" style={{ background: cfg.bg }} />
+                            <div className="h-5 rounded" style={{ background: cfg.bg }} title={tooltip} />
                           ) : (
                             <div className="h-5 rounded bg-gray-50" />
                           )}

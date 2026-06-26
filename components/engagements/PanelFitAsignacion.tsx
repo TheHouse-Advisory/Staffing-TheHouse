@@ -363,6 +363,9 @@ export function PanelFitAsignacion({
   const [asignando, setAsignando] = useState<string | null>(null);
   const [exito, setExito] = useState<string | null>(null);
   const [err, setErr] = useState<string | null>(null);
+  const [pendingConfirm, setPendingConfirm] = useState<{
+    persona: PersonaFit; fechaInicio: string; fechaFin: string;
+  } | null>(null);
 
   // Popup de perfil
   const [perfilAbierto, setPerfilAbierto] = useState<PersonaFit | null>(null);
@@ -544,25 +547,39 @@ export function PanelFitAsignacion({
     load();
   }, [reqId, engagementId, engagementNombre, engagementCliente]);
 
-  async function handleAsignar(p: PersonaFit) {
+  // Abre el modal de confirmación con las fechas del requerimiento como default
+  function handleAsignar(p: PersonaFit) {
     if (!req || asignando) return;
-    setAsignando(p.persona_id);
+    setErr(null);
+    setPendingConfirm({
+      persona: p,
+      fechaInicio: req.fecha_inicio ?? today(),
+      fechaFin: req.fecha_fin ?? today(),
+    });
+  }
+
+  // Ejecuta la inserción real tras confirmar fechas en el modal
+  async function confirmAsignar() {
+    if (!req || !pendingConfirm) return;
+    const { persona, fechaInicio, fechaFin } = pendingConfirm;
+    setAsignando(persona.persona_id);
     setErr(null);
 
     // ── SIMULACIÓN: sin escritura en Supabase ─────────────────────────
     if (simulationMode) {
       onSimAsignar?.({
         engagementId, reqId,
-        personaId: p.persona_id,
-        nombre: p.nombre,
-        apellido: p.apellido,
-        cargo: p.cargo_actual ?? "",
+        personaId: persona.persona_id,
+        nombre: persona.nombre,
+        apellido: persona.apellido,
+        cargo: persona.cargo_actual ?? "",
         pct: req.pct_dedicacion ?? 100,
-        fechaInicio: req.fecha_inicio,
-        fechaFin: req.fecha_fin,
+        fechaInicio,
+        fechaFin,
       });
-      setExito(`[Simulación] ${p.nombre} ${p.apellido} añadido al escenario.`);
+      setExito(`[Simulación] ${persona.nombre} ${persona.apellido} añadido al escenario.`);
       setAsignando(null);
+      setPendingConfirm(null);
       setTimeout(() => { onAsignado(); onClose(); }, 900);
       return;
     }
@@ -572,11 +589,11 @@ export function PanelFitAsignacion({
     const { error } = await (sb as any).from("asignacion").insert({
       engagement_id: engagementId,
       requerimiento_id: reqId,
-      persona_id: p.persona_id,
-      cargo_al_momento: p.cargo_actual,
+      persona_id: persona.persona_id,
+      cargo_al_momento: persona.cargo_actual,
       pct_dedicacion: req.pct_dedicacion,
-      fecha_inicio: req.fecha_inicio,
-      fecha_fin: req.fecha_fin,
+      fecha_inicio: fechaInicio,
+      fecha_fin: fechaFin,
       estado: "activa",
     });
 
@@ -586,16 +603,66 @@ export function PanelFitAsignacion({
       return;
     }
 
-    setExito(`${p.nombre} ${p.apellido} asignado/a correctamente.`);
+    setExito(`${persona.nombre} ${persona.apellido} asignado/a correctamente.`);
     setAsignando(null);
-    setTimeout(() => {
-      onAsignado();
-      onClose();
-    }, 900);
+    setPendingConfirm(null);
+    setTimeout(() => { onAsignado(); onClose(); }, 900);
   }
 
   return (
     <div className="h-full bg-white flex flex-col relative overflow-hidden">
+
+      {/* ── Modal de confirmación de fechas ── */}
+      {pendingConfirm && (
+        <div className="absolute inset-0 z-50 bg-black/40 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl border border-gray-100 w-full max-w-xs p-5 flex flex-col gap-4">
+            <div>
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest mb-0.5">Confirmar asignación</p>
+              <p className="text-sm font-semibold text-[#1a1a1a]">
+                {pendingConfirm.persona.nombre} {pendingConfirm.persona.apellido}
+              </p>
+              <p className="text-xs text-gray-400">{engagementNombre} · {engagementCliente}</p>
+            </div>
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[11px] text-gray-400 font-medium">Fecha inicio</label>
+                <input
+                  type="date"
+                  value={pendingConfirm.fechaInicio}
+                  onChange={(e) => setPendingConfirm((p) => p ? { ...p, fechaInicio: e.target.value } : p)}
+                  className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
+                />
+              </div>
+              <div className="flex flex-col gap-0.5">
+                <label className="text-[11px] text-gray-400 font-medium">Fecha fin</label>
+                <input
+                  type="date"
+                  value={pendingConfirm.fechaFin}
+                  onChange={(e) => setPendingConfirm((p) => p ? { ...p, fechaFin: e.target.value } : p)}
+                  className="border border-gray-200 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
+                />
+              </div>
+            </div>
+            {err && <p className="text-xs text-red-500">{err}</p>}
+            <div className="flex gap-2">
+              <button
+                onClick={() => setPendingConfirm(null)}
+                className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmAsignar}
+                disabled={!!asignando}
+                className="flex-1 px-3 py-1.5 rounded-lg bg-[#1a1a1a] text-white text-sm font-semibold hover:bg-[#333] disabled:opacity-50 transition-colors flex items-center justify-center gap-1"
+              >
+                {asignando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}
+                Confirmar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Header */}
       <div className="px-5 py-4 border-b border-[#e8e8e8] bg-[#f9f9f9] flex-shrink-0">

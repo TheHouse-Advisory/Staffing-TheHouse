@@ -54,6 +54,7 @@ const COLORES: Record<string, string> = {
   "Consultor Analista": "#a0b84a", "Consultor Trainee": "#c07c4a",
 };
 const COLOR_DEFAULT = "#94a3b8";
+const DIAS_SEMANA_LABELS = ["L", "M", "X", "J", "V"];
 
 type Vista = "dia" | "semana" | "mes";
 interface Columna { label: string; sublabel: string; inicio: Date; fin: Date; }
@@ -2230,19 +2231,70 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               const { isFirst, isLast } = barEdge(p, i);
                               // Ausencia activa de esta persona en esta columna
                               const tieneAusenciaConf = ausencias.some((a) => a.persona_id === p.id && rangoSolapan(a.fecha_inicio, a.fecha_fin, col.inicio, col.fin));
-                              const barBgConf = tieneAusenciaConf
-                                ? `repeating-linear-gradient(45deg, ${cargoColor}99 0px, ${cargoColor}99 4px, ${cargoColor}22 4px, ${cargoColor}22 8px)`
-                                : cargoColor;
+                              // Semana: 5 segmentos L/M/X/J/V · Mes: S1…S5 por semanas del mes
+                              const segmentsConf = vista === "semana" ? DIAS_SEMANA_LABELS.map((lbl, offset) => {
+                                const dayDate = addDays(col.inicio, offset);
+                                const dayStr = format(dayDate, "yyyy-MM-dd");
+                                const aus = ausencias.find((a) => a.persona_id === p.id && a.fecha_inicio <= dayStr && (a.fecha_fin ?? dayStr) >= dayStr);
+                                const ausColor = aus ? (COLOR_AUSENCIA[aus.tipo as keyof typeof COLOR_AUSENCIA]?.bg ?? "#9ca3af") : null;
+                                return { lbl, ausColor };
+                              }) : vista === "mes" ? (() => {
+                                const segs: { lbl: string; ausColor: string | null }[] = [];
+                                let wStart = startOfISOWeek(col.inicio);
+                                if (addDays(wStart, 6) < col.inicio) wStart = addDays(wStart, 7);
+                                let idx = 1;
+                                while (wStart <= col.fin) {
+                                  const wEnd = addDays(wStart, 6);
+                                  const clampIni = wStart < col.inicio ? col.inicio : wStart;
+                                  const clampFin = wEnd > col.fin ? col.fin : wEnd;
+                                  const wIniStr = format(clampIni, "yyyy-MM-dd");
+                                  const wFinStr = format(clampFin, "yyyy-MM-dd");
+                                  const aus = ausencias.find((a) => a.persona_id === p.id && a.fecha_inicio <= wFinStr && (a.fecha_fin ?? a.fecha_inicio) >= wIniStr);
+                                  segs.push({ lbl: `S${idx}`, ausColor: aus ? (COLOR_AUSENCIA[aus.tipo as keyof typeof COLOR_AUSENCIA]?.bg ?? "#9ca3af") : null });
+                                  wStart = addDays(wStart, 7); idx++;
+                                }
+                                return segs;
+                              })() : null;
+                              // Día: ausencia sólida de la celda completa
+                              const diaAusConf = vista === "dia" ? ausencias.find((a) => a.persona_id === p.id && rangoSolapan(a.fecha_inicio, a.fecha_fin, col.inicio, col.fin)) ?? null : null;
+                              const diaAusCfgConf = diaAusConf ? (COLOR_AUSENCIA[diaAusConf.tipo as keyof typeof COLOR_AUSENCIA] ?? { bg: "#9ca3af", label: "Ausencia" }) : null;
+                              const segPct = segmentsConf ? 100 / segmentsConf.length : 20;
+                              const barBgConf = diaAusCfgConf
+                                ? diaAusCfgConf.bg
+                                : segmentsConf
+                                  ? segmentsConf.map((s, si) => {
+                                      const c = s.ausColor ?? cargoColor;
+                                      return `${c} ${si * segPct}%, ${c} ${(si + 1) * segPct}%`;
+                                    }).join(", ")
+                                  : cargoColor;
+                              const finalBarBgConf = (!diaAusCfgConf && segmentsConf) ? `linear-gradient(to right, ${barBgConf})` : barBgConf;
                               return (
                                 <td key={i} className="px-0.5 py-0 relative"
                                   style={{ height: ROW_H, borderTop: btop, borderBottom: borderBtmRow }}
                                   onMouseEnter={() => { if (resizing) { setResizeHoverIdx(i); resizeHoverRef.current = i; } }}>
                                   {isActive && (
                                     <>
-                                      <div className="relative group/bar h-1.5 w-full cursor-pointer overflow-visible"
-                                        style={{ background: barBgConf, opacity: desasignando === p.asignacionId ? 0.3 : tieneAusenciaConf ? 0.55 : esHoy ? 1 : 0.85, borderRadius: 4, marginTop: 7 }}
+                                      <div className="relative group/bar w-full cursor-pointer overflow-hidden"
+                                        style={{ height: 7, background: finalBarBgConf, opacity: desasignando === p.asignacionId ? 0.3 : esHoy ? 1 : 0.85, borderRadius: 4, marginTop: 12 }}
                                         onClick={(e) => handleAvatarClick(e, p, eng)}
                                         title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
+                                        {diaAusCfgConf && (
+                                          <span className="absolute text-white font-black drop-shadow-sm select-none pointer-events-none"
+                                            style={{ left: "50%", top: "50%", transform: "translate(-50%, -50%)", fontSize: 11, lineHeight: 1 }}>
+                                            {diaAusCfgConf.label[0].toUpperCase()}
+                                          </span>
+                                        )}
+                                        {!diaAusCfgConf && segmentsConf && segmentsConf.map((s, si) => s.ausColor ? (
+                                          <div key={si} className="absolute inset-y-0 flex items-center justify-center select-none pointer-events-none"
+                                            style={{ left: `${si * segPct}%`, width: `${segPct}%`, backgroundColor: s.ausColor }}>
+                                            <span className="text-white font-black drop-shadow-sm" style={{ fontSize: vista === "mes" ? 9 : 7, lineHeight: 1 }}>{s.lbl}</span>
+                                          </div>
+                                        ) : (
+                                          <span key={si} className="absolute text-white font-black select-none pointer-events-none"
+                                            style={{ left: `${si * segPct + segPct / 2}%`, top: "50%", transform: "translate(-50%, -50%)", fontSize: vista === "mes" ? 9 : 7, lineHeight: 1, opacity: 0.35 }}>
+                                            {s.lbl}
+                                          </span>
+                                        ))}
                                         {!readOnly && <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
                                           title="Desasignar"
                                           className="absolute top-0 right-0 bottom-0 w-4 flex items-center justify-center opacity-0 group-hover/bar:opacity-100 bg-red-500 transition-opacity z-10"
@@ -2253,21 +2305,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                         {!readOnly && isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r hover:bg-white/30 transition-colors" />}
                                       </div>
                                       {isFirst && (
-                                        <div className="absolute flex items-center gap-0.5 z-20" style={{ top: "50%", left: 18, transform: "translateY(-50%)", pointerEvents: "none" }}>
+                                        <div className="absolute flex items-center gap-0.5 z-20" style={{ top: 0, left: 18, pointerEvents: "none" }}>
                                           <div className="flex items-center justify-center rounded-full text-white font-bold select-none cursor-pointer shadow-sm"
-                                            style={{ width: 14, height: 14, fontSize: 7, backgroundColor: cargoColor, border: "1.5px solid white" }}
+                                            style={{ width: 12, height: 12, fontSize: 6, backgroundColor: cargoColor, border: "1.5px solid white" }}
                                             title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
                                             {iniciales(p.nombre, p.apellido, p.iniciales)}
                                           </div>
-                                          {/* Ícono ausencia */}
-                                          {tieneAusenciaConf && (
-                                            <div className="group/tip relative" style={{ pointerEvents: "auto" }}>
-                                              <AlertTriangle className="w-2.5 h-2.5 text-amber-500" />
-                                              <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-slate-900 text-white text-[10px] rounded px-2 py-1 whitespace-nowrap z-[9999] opacity-0 group-hover/tip:opacity-100 transition-opacity shadow-lg">
-                                                Personal con Ausencia en este periodo
-                                              </div>
-                                            </div>
-                                          )}
                                         </div>
                                       )}
                                     </>
@@ -2281,10 +2324,42 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                             const { isFirst, isLast } = barEdge(p, i);
                             // Ausencia activa en esta columna
                             const tieneAusenciaPlan = ausencias.some((a) => a.persona_id === p.id && rangoSolapan(a.fecha_inicio, a.fecha_fin, col.inicio, col.fin));
-                            // Ausencia en propuesto: franjas densas alto contraste (cargoColor sólido + amarillo alerta)
-                            const barBgPlan = tieneAusenciaPlan
-                              ? `repeating-linear-gradient(45deg, ${cargoColor} 0px, ${cargoColor} 5px, rgba(251,191,36,1) 5px, rgba(251,191,36,1) 10px)`
-                              : `${cargoColor}55`;
+                            // Semana: 5 segmentos L/M/X/J/V · Mes: S1…S5 por semanas del mes
+                            const segmentsPlan = vista === "semana" ? DIAS_SEMANA_LABELS.map((lbl, offset) => {
+                              const dayDate = addDays(col.inicio, offset);
+                              const dayStr = format(dayDate, "yyyy-MM-dd");
+                              const aus = ausencias.find((a) => a.persona_id === p.id && a.fecha_inicio <= dayStr && (a.fecha_fin ?? dayStr) >= dayStr);
+                              const ausColor = aus ? (COLOR_AUSENCIA[aus.tipo as keyof typeof COLOR_AUSENCIA]?.bg ?? "#9ca3af") : null;
+                              return { lbl, ausColor };
+                            }) : vista === "mes" ? (() => {
+                              const segs: { lbl: string; ausColor: string | null }[] = [];
+                              let wStart = startOfISOWeek(col.inicio);
+                              if (addDays(wStart, 6) < col.inicio) wStart = addDays(wStart, 7);
+                              let idx = 1;
+                              while (wStart <= col.fin) {
+                                const wEnd = addDays(wStart, 6);
+                                const clampIni = wStart < col.inicio ? col.inicio : wStart;
+                                const clampFin = wEnd > col.fin ? col.fin : wEnd;
+                                const wIniStr = format(clampIni, "yyyy-MM-dd");
+                                const wFinStr = format(clampFin, "yyyy-MM-dd");
+                                const aus = ausencias.find((a) => a.persona_id === p.id && a.fecha_inicio <= wFinStr && (a.fecha_fin ?? a.fecha_inicio) >= wIniStr);
+                                segs.push({ lbl: `S${idx}`, ausColor: aus ? (COLOR_AUSENCIA[aus.tipo as keyof typeof COLOR_AUSENCIA]?.bg ?? "#9ca3af") : null });
+                                wStart = addDays(wStart, 7); idx++;
+                              }
+                              return segs;
+                            })() : null;
+                            // Día: ausencia sólida de la celda completa
+                            const diaAusPlan = vista === "dia" ? ausencias.find((a) => a.persona_id === p.id && rangoSolapan(a.fecha_inicio, a.fecha_fin, col.inicio, col.fin)) ?? null : null;
+                            const diaAusCfgPlan = diaAusPlan ? (COLOR_AUSENCIA[diaAusPlan.tipo as keyof typeof COLOR_AUSENCIA] ?? { bg: "#9ca3af", label: "Ausencia" }) : null;
+                            const segPctPlan = segmentsPlan ? 100 / segmentsPlan.length : 20;
+                            const barBgPlan = diaAusCfgPlan
+                              ? diaAusCfgPlan.bg
+                              : segmentsPlan
+                                ? `linear-gradient(to right, ${segmentsPlan.map((s, si) => {
+                                    const c = s.ausColor ?? `${cargoColor}55`;
+                                    return `${c} ${si * segPctPlan}%, ${c} ${(si + 1) * segPctPlan}%`;
+                                  }).join(", ")})`
+                                : `${cargoColor}55`;
                             const isResizeHover = resizing?.p.asignacionId === p.asignacionId && resizeHoverIdx === i;
                             const reqsEnCol     = eng.reqs.filter((r) =>
                               matchesCargo(r.cargo_requerido, cargo) &&
@@ -2299,10 +2374,27 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 onDrop={(e) => { setDragOverReqId(null); if (!isActive && reqsEnCol[0]) handleDrop(e, eng, reqsEnCol[0], true); }}>
                                 {isActive && (
                                   <>
-                                    <div className="relative group/bar overflow-visible cursor-pointer"
-                                      style={{ height: 5, marginTop: 7, background: barBgPlan, border: `1.5px dashed ${cargoColor}`, borderRadius: 4, opacity: desasignando === p.asignacionId ? 0.2 : tieneAusenciaPlan ? 0.55 : 1 }}
+                                    <div className="relative group/bar overflow-hidden cursor-pointer"
+                                      style={{ height: 7, marginTop: 12, background: barBgPlan, border: `1.5px dashed ${cargoColor}`, borderRadius: 4, opacity: desasignando === p.asignacionId ? 0.2 : 1 }}
                                       title={`PLAN · ${p.nombre} ${p.apellido} · ${p.pct}%`}
                                       onClick={(e) => handleAvatarClick(e, p, eng)}>
+                                      {diaAusCfgPlan && (
+                                        <span className="absolute text-white font-black drop-shadow-sm select-none pointer-events-none"
+                                          style={{ left: "50%", top: "50%", transform: "translate(-50%, -50%)", fontSize: 11, lineHeight: 1 }}>
+                                          {diaAusCfgPlan.label[0].toUpperCase()}
+                                        </span>
+                                      )}
+                                      {!diaAusCfgPlan && segmentsPlan && segmentsPlan.map((s, si) => s.ausColor ? (
+                                        <div key={si} className="absolute inset-y-0 flex items-center justify-center select-none pointer-events-none"
+                                          style={{ left: `${si * segPctPlan}%`, width: `${segPctPlan}%`, backgroundColor: s.ausColor }}>
+                                          <span className="text-white font-black drop-shadow-sm" style={{ fontSize: vista === "mes" ? 9 : 7, lineHeight: 1 }}>{s.lbl}</span>
+                                        </div>
+                                      ) : (
+                                        <span key={si} className="absolute text-white font-black select-none pointer-events-none"
+                                          style={{ left: `${si * segPctPlan + segPctPlan / 2}%`, top: "50%", transform: "translate(-50%, -50%)", fontSize: vista === "mes" ? 9 : 7, lineHeight: 1, opacity: 0.35 }}>
+                                          {s.lbl}
+                                        </span>
+                                      ))}
                                       {!readOnly && <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
                                         title="Quitar del plan"
                                         className="absolute top-0 right-0 bottom-0 w-4 flex items-center justify-center opacity-0 group-hover/bar:opacity-100 bg-red-400 transition-opacity z-10"
@@ -2313,28 +2405,19 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                       {!readOnly && isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r-sm hover:bg-blue-400 transition-colors" />}
                                     </div>
                                     {isFirst && (
-                                      <div className="absolute flex items-center gap-0.5 z-20" style={{ top: "50%", left: 18, transform: "translateY(-50%)", pointerEvents: "none" }}>
+                                      <div className="absolute flex items-center gap-0.5 z-20" style={{ top: 0, left: 18, pointerEvents: "none" }}>
                                         {!readOnly && <button
                                           style={{ pointerEvents: "auto" }}
                                           onClick={() => confirmarPlan(p, eng.id)} disabled={confirmando === p.asignacionId}
                                           title="Confirmar"
-                                          className="w-3.5 h-3.5 rounded-full bg-green-500 text-white flex items-center justify-center hover:bg-green-600 disabled:opacity-50 text-[7px] font-bold shadow-sm border border-white flex-shrink-0">
+                                          className="w-3 h-3 rounded-full bg-green-500 text-white flex items-center justify-center hover:bg-green-600 disabled:opacity-50 text-[6px] font-bold shadow-sm border border-white flex-shrink-0">
                                           ✓
                                         </button>}
                                         <div className="flex items-center justify-center rounded-full text-white font-bold select-none shadow-sm"
-                                          style={{ width: 14, height: 14, fontSize: 7, backgroundColor: cargoColor, border: "1.5px solid white", pointerEvents: "none" }}
+                                          style={{ width: 12, height: 12, fontSize: 6, backgroundColor: cargoColor, border: "1.5px solid white", pointerEvents: "none" }}
                                           title={`PLAN · ${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
                                           {iniciales(p.nombre, p.apellido, p.iniciales)}
                                         </div>
-                                        {/* Ícono ausencia */}
-                                        {tieneAusenciaPlan && (
-                                          <div className="group/tip relative" style={{ pointerEvents: "auto" }}>
-                                            <AlertTriangle className="w-2.5 h-2.5 text-amber-500" />
-                                            <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1 bg-slate-900 text-white text-[10px] rounded px-2 py-1 whitespace-nowrap z-[9999] opacity-0 group-hover/tip:opacity-100 transition-opacity shadow-lg">
-                                              Personal con Ausencia en este periodo
-                                            </div>
-                                          </div>
-                                        )}
                                       </div>
                                     )}
                                   </>
@@ -2364,21 +2447,25 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                           rangoSolapan(a.fecha_inicio, a.fecha_fin, col.inicio, col.fin)
                         );
                         const vistos = new Set<string>();
-                        const ausUnicos = ausentesEnCol.reduce<{ p: PersonaAsig; tipo: string }[]>((acc, a) => {
+                        const ausUnicos = ausentesEnCol.reduce<{ p: PersonaAsig; tipo: string; fechaInicio: string; fechaFin: string }[]>((acc, a) => {
                           if (vistos.has(a.persona_id)) return acc;
                           vistos.add(a.persona_id);
                           const p = personasUnicas.find((pe) => pe.id === a.persona_id);
-                          if (p) acc.push({ p, tipo: a.tipo ?? "otro" });
+                          if (p) acc.push({ p, tipo: a.tipo ?? "otro", fechaInicio: a.fecha_inicio, fechaFin: a.fecha_fin ?? a.fecha_inicio });
                           return acc;
                         }, []);
                         return (
                           <td key={i} className="pt-1 pb-0.5 px-1">
                             {/* Sin min-h: colapsa a 0 si no hay ausentes en esta columna */}
                             <div className="flex flex-wrap gap-0.5 justify-center items-center">
-                              {ausUnicos.map(({ p, tipo }) => {
+                              {ausUnicos.map(({ p, tipo, fechaInicio, fechaFin }) => {
                                 const cfg = COLOR_AUSENCIA[tipo as keyof typeof COLOR_AUSENCIA] ?? { bg: "#9ca3af", text: "#fff", label: "Ausencia" };
+                                const fmtIni = format(parseLocal(fechaInicio), "d-MMM", { locale: es });
+                                const fmtFin = format(parseLocal(fechaFin), "d-MMM", { locale: es });
+                                const dias = Math.max(1, Math.round((parseLocal(fechaFin).getTime() - parseLocal(fechaInicio).getTime()) / 86400000) + 1);
+                                const tooltipText = `${p.nombre} ${p.apellido} — ${cfg.label} — ${fmtIni} al ${fmtFin} (${dias} ${dias === 1 ? "día" : "días"})`;
                                 return (
-                                <div key={p.id} title={`${p.nombre} ${p.apellido} — ${cfg.label}`}
+                                <div key={p.id} title={tooltipText}
                                   className="w-5 h-5 rounded-full flex items-center justify-center text-[8px] font-bold"
                                   style={{ background: cfg.bg, color: cfg.text }}>
                                   {iniciales(p.nombre, p.apellido, p.iniciales)}

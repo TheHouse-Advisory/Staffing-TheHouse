@@ -36,8 +36,14 @@ function iniciales(nombre: string, apellido: string, custom?: string | null) {
   return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
 }
 
+// Parsea "YYYY-MM-DD" como fecha local (evita desfase UTC en zonas GMT-)
+function parseLocalDate(iso: string): Date {
+  const [y, m, d] = iso.split("-").map(Number);
+  return new Date(y, m - 1, d);
+}
+
 function rangoSolapan(aIni: string, aFin: string, cIni: Date, cFin: Date) {
-  return new Date(aIni) <= cFin && new Date(aFin) >= cIni;
+  return parseLocalDate(aIni) <= cFin && parseLocalDate(aFin) >= cIni;
 }
 
 function ordenarPorCargo(personas: Persona[]) {
