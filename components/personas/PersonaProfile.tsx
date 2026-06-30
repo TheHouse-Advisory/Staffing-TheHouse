@@ -359,7 +359,7 @@ export function PersonaProfile({ id }: Props) {
                 <p className="font-semibold text-sm" style={{ color: cargoColor }}>{persona.cargo_actual ?? "Sin cargo"}</p>
               </div>
               <div className="flex gap-2 mt-1.5 flex-wrap">
-                {persona.is_leverager && (
+                {persona.is_leverager && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
                   <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-[#f0f4ff] text-[#3b5bdb] border border-[#c5d0fa]">
                     Apalancador
                   </span>
@@ -561,14 +561,16 @@ export function PersonaProfile({ id }: Props) {
                     <span className="text-xs font-medium px-2.5 py-1 rounded bg-[#eff6ff] text-[#1d4ed8]">
                       {h.dias} {h.dias === 1 ? "día" : "días"}
                     </span>
-                    {/* Botón eliminar — visible en hover */}
-                    <button
-                      onClick={() => setDeletingEngId(h.engagement_id)}
-                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-50 text-slate-300 hover:text-red-500"
-                      title="Eliminar del historial"
-                    >
-                      <Trash2 className="w-3.5 h-3.5" />
-                    </button>
+                    {/* Botón eliminar — solo roles con permiso */}
+                    {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
+                      <button
+                        onClick={() => setDeletingEngId(h.engagement_id)}
+                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-50 text-slate-300 hover:text-red-500"
+                        title="Eliminar del historial"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    )}
                   </div>
                 </div>
               ))}

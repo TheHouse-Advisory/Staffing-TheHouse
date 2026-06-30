@@ -723,7 +723,7 @@ export function HeatmapAusencias({
       }
       setTotalesAnio(map);
     }
-  }, [year, month]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [year, month, rolActual]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { cargar(); }, [cargar]);
 
@@ -960,7 +960,7 @@ export function HeatmapAusencias({
                             <div className="flex items-center gap-1">
                               <div className="min-w-0 flex-1 overflow-hidden">
                                 <div className="flex items-center gap-1.5">
-                                  {fila.persona.is_leverager && (
+                                  {fila.persona.is_leverager && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
                                     <span className="w-4 h-4 rounded-full bg-[#3b5bdb] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>A</span>
                                   )}
                                   <button

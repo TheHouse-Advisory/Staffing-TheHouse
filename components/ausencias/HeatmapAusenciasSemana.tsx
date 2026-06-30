@@ -537,7 +537,7 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                       {/* Columna nombre */}
                       <td className="sticky left-0 z-10 bg-inherit border-r border-[#ebebeb] px-1.5 py-0">
                         <div className="flex items-center gap-1">
-                          {fila.persona.is_leverager && (
+                          {fila.persona.is_leverager && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
                             <span className="w-4 h-4 rounded-full bg-[#3b5bdb] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>A</span>
                           )}
                           <div className="min-w-0 flex-1 overflow-hidden">
