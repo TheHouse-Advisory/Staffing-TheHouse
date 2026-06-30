@@ -86,12 +86,14 @@ interface Props {
   ocultarMatriz?: boolean;
   /** Oculta porcentajes de carga para rol G&D */
   ocultarCarga?: boolean;
+  /** Oculta badge Apalancador para roles restringidos */
+  ocultarApalancador?: boolean;
   /** Ignorado — mantenido para compatibilidad con llamadores existentes */
   anchorX?: number;
   anchorY?: number;
 }
 
-export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, ocultarMatriz = false, ocultarCarga = false }: Props) {
+export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, ocultarMatriz = false, ocultarCarga = false, ocultarApalancador = false }: Props) {
   const [persona, setPersona] = useState<Persona | null>(null);
   const [resumen, setResumen] = useState<ResumenData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -238,7 +240,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
             <div className="space-y-2.5 text-sm">
               {(persona.is_leverager || diasEnEmpresa(persona.fecha_ingreso)) && (
                 <div className="flex items-center gap-2 pb-1.5 border-b border-gray-100 flex-wrap">
-                  {persona.is_leverager && (
+                  {persona.is_leverager && !ocultarApalancador && (
                     <div className="flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-[#3b5bdb] flex-shrink-0" />
                       <span className="text-[10px] font-bold uppercase tracking-widest text-[#3b5bdb]">Apalancador</span>
@@ -297,7 +299,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                                 {esFuturo ? "Inicia:" : "Inicio:"} {format(new Date(eng.fecha_inicio + "T00:00:00"), "d MMM yyyy", { locale: es })}
                               </span>
                             </div>
-                            <div className="flex justify-end gap-2 mt-0.5">
+                            {!ocultarCarga && <div className="flex justify-end gap-2 mt-0.5">
                               {esFuturo ? (
                                 <span className="text-[9px] font-semibold" style={{ color: "#15803d" }}>Inicia en {dias}d</span>
                               ) : (
@@ -308,7 +310,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                                   )}
                                 </>
                               )}
-                            </div>
+                            </div>}
                           </div>
                         );
                       })}
@@ -332,10 +334,10 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                           </div>
                           <span className="text-[9px] text-slate-400 flex-shrink-0">Inicio: {h.fechaInicioLabel}</span>
                         </div>
-                        <div className="flex justify-end gap-2 mt-0.5">
+                        {!ocultarCarga && <div className="flex justify-end gap-2 mt-0.5">
                           <span className="text-[9px] font-semibold" style={{ color: "#1d4ed8" }}>{h.dias}d en el proyecto</span>
                           {h.activo && <><span className="text-[9px] text-gray-300">·</span><span className="text-[9px] font-semibold" style={{ color: "#15803d" }}>Activo</span></>}
-                        </div>
+                        </div>}
                       </div>
                     ))}
                     {resumen.historialProyectos.length > 3 && (

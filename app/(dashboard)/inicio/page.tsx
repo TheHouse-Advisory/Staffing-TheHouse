@@ -373,7 +373,7 @@ export default function InicioPage() {
                               cargo_actual: p.cargo_actual,
                             }))}
                             onClick={() => abrirResumen(p)}
-                            title={`${p.nombre} ${p.apellido} — ${pct}% ocupado${p.is_leverager ? " · Apalancador" : ""}`}
+                            title={`${p.nombre} ${p.apellido} — ${pct}% ocupado${!isReadOnly && p.is_leverager ? " · Apalancador" : ""}`}
                             className="flex flex-col items-center gap-0.5 hover:scale-110 transition-transform cursor-grab active:cursor-grabbing"
                           >
                             <div className="relative">
@@ -383,7 +383,7 @@ export default function InicioPage() {
                               >
                                 {iniciales(p.nombre, p.apellido, p.iniciales)}
                               </div>
-                              {p.is_leverager && (
+                              {!isReadOnly && p.is_leverager && (
                                 <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#3b5bdb] border-2 border-white flex items-center justify-center text-white font-bold leading-none" style={{ fontSize: 7 }}>
                                   A
                                 </span>
@@ -414,6 +414,7 @@ export default function InicioPage() {
               onClose={() => setSeleccionada(null)}
               ocultarMatriz={rol === "planificador" || rol === "GyD" || rol === "AySr"}
               ocultarCarga={rol === "GyD" || rol === "AySr"}
+              ocultarApalancador={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
             />
           )}
         </div>
