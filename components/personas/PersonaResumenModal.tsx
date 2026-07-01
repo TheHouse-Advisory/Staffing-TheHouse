@@ -88,12 +88,14 @@ interface Props {
   ocultarCarga?: boolean;
   /** Oculta badge Apalancador para roles restringidos */
   ocultarApalancador?: boolean;
+  /** Oculta Nº proyectos, industrias, capacidades, temáticas y ausencias año para roles restringidos */
+  ocultarInfoRestringida?: boolean;
   /** Ignorado — mantenido para compatibilidad con llamadores existentes */
   anchorX?: number;
   anchorY?: number;
 }
 
-export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, ocultarMatriz = false, ocultarCarga = false, ocultarApalancador = false }: Props) {
+export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, ocultarMatriz = false, ocultarCarga = false, ocultarApalancador = false, ocultarInfoRestringida = false }: Props) {
   const [persona, setPersona] = useState<Persona | null>(null);
   const [resumen, setResumen] = useState<ResumenData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -187,6 +189,10 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
 
   const color = persona ? (COLORES[persona.cargo_actual ?? ""] ?? COLOR_DEFAULT) : COLOR_DEFAULT;
 
+  // Cargos junior: mantienen visible el detalle de días en el proyecto aunque el rol del viewer sea restringido
+  const CARGOS_DETALLE_DIAS_VISIBLE = ["Consultor de Proyectos", "Consultor Analista", "Consultor Trainee"];
+  const ocultarDiasProyecto = ocultarCarga && !CARGOS_DETALLE_DIAS_VISIBLE.includes(persona?.cargo_actual ?? "");
+
   // Override simulado: cuando hay snapshot, sobreescribir ocupación y proyectos actuales
   const simData = simulationSnapshot ? (() => {
     const hoy = format(new Date(), "yyyy-MM-dd");
@@ -271,7 +277,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                 })()}
               </div>
               )}
-              {(simData ? simData.proyectos.length : resumen.totalProyectos) > 0 && (
+              {!ocultarInfoRestringida && (simData ? simData.proyectos.length : resumen.totalProyectos) > 0 && (
                 <div className="flex justify-between items-center">
                   <span className="text-gray-400 text-xs">Nº proyectos</span>
                   <span className="font-medium text-[#1a1a2e] text-xs">
@@ -299,7 +305,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                                 {esFuturo ? "Inicia:" : "Inicio:"} {format(new Date(eng.fecha_inicio + "T00:00:00"), "d MMM yyyy", { locale: es })}
                               </span>
                             </div>
-                            {!ocultarCarga && <div className="flex justify-end gap-2 mt-0.5">
+                            {!ocultarDiasProyecto && <div className="flex justify-end gap-2 mt-0.5">
                               {esFuturo ? (
                                 <span className="text-[9px] font-semibold" style={{ color: "#15803d" }}>Inicia en {dias}d</span>
                               ) : (
@@ -317,7 +323,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                     </div>
                   )
                 ) : (
-                  <ProyectosPersonaDetalle personaId={persona.id} compact ocultarCarga={ocultarCarga} />
+                  <ProyectosPersonaDetalle personaId={persona.id} compact ocultarCarga={ocultarDiasProyecto} />
                 )}
               </div>
               {/* ── Historial de proyectos ── */}
@@ -334,7 +340,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                           </div>
                           <span className="text-[9px] text-slate-400 flex-shrink-0">Inicio: {h.fechaInicioLabel}</span>
                         </div>
-                        {!ocultarCarga && <div className="flex justify-end gap-2 mt-0.5">
+                        {!ocultarDiasProyecto && <div className="flex justify-end gap-2 mt-0.5">
                           <span className="text-[9px] font-semibold" style={{ color: "#1d4ed8" }}>{h.dias}d en el proyecto</span>
                           {h.activo && <><span className="text-[9px] text-gray-300">·</span><span className="text-[9px] font-semibold" style={{ color: "#15803d" }}>Activo</span></>}
                         </div>}
@@ -349,7 +355,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                 </div>
               )}
 
-              {resumen.industrias.length > 0 && (
+              {!ocultarInfoRestringida && resumen.industrias.length > 0 && (
                 <div>
                   <p className="text-gray-400 mb-1 text-xs">Industrias</p>
                   <div className="flex flex-wrap gap-1">
@@ -359,7 +365,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                   </div>
                 </div>
               )}
-              {resumen.capacidades.length > 0 && (
+              {!ocultarInfoRestringida && resumen.capacidades.length > 0 && (
                 <div>
                   <p className="text-gray-400 mb-1 text-xs">Capacidades</p>
                   <div className="flex flex-wrap gap-1">
@@ -369,7 +375,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                   </div>
                 </div>
               )}
-              {resumen.tematicas.length > 0 && (
+              {!ocultarInfoRestringida && resumen.tematicas.length > 0 && (
                 <div>
                   <p className="text-gray-400 mb-1 text-xs">Temáticas</p>
                   <div className="flex flex-wrap gap-1">
@@ -379,6 +385,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                   </div>
                 </div>
               )}
+              {!ocultarInfoRestringida && (
               <div>
                 <button
                   onClick={() => setShowAusencias((s) => !s)}
@@ -414,6 +421,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                   </div>
                 )}
               </div>
+              )}
               {!ocultarMatriz && (persona.talento_potencial != null || persona.talento_desempeno != null) && (
                 <div className="flex flex-col gap-2">
                   <span className="text-gray-400 text-xs">

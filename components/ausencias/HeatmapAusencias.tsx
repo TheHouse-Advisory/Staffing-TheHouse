@@ -618,11 +618,6 @@ const ORDEN_BLOQUES = ["Socio", "Directores y Gerentes", "Senior y Asociados", "
 //  Heatmap principal
 // ─────────────────────────────────────────────────────────────
 
-const CARGOS_OCULTOS_AYSR = [
-  "Socio", "Gerente", "Gerente de Proyectos", "Director", "Director de Proyectos",
-  "Consultor Senior", "Analista Senior", "Asociado", "Desarrollo",
-];
-
 interface HeatmapAusenciasProps {
   year: number;
   month: number;
@@ -641,6 +636,7 @@ export function HeatmapAusencias({
   rolActual,
 }: HeatmapAusenciasProps) {
   const { tipos: tiposDinamicos } = useTiposAusencia(); // para colorear tooltip con tipos dinámicos
+  const ocultarPctResumen = rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador";
   const [filas, setFilas]   = useState<FilaPersona[]>([]);
   const [dias, setDias]     = useState<string[]>([]);
   const [cargando, setCargando] = useState(true);
@@ -706,10 +702,7 @@ export function HeatmapAusencias({
 
     setCargando(false);
     if (result.error) { setError(result.error); return; }
-    const filasFiltradas = rolActual === "AySr"
-      ? result.filas.filter((f) => !CARGOS_OCULTOS_AYSR.includes(f.persona.cargo_actual ?? ""))
-      : result.filas;
-    setFilas(filasFiltradas);
+    setFilas(result.filas);
     setDias(result.dias);
 
     // Calcular totales anuales por persona (días hábiles sin feriados)
@@ -963,14 +956,20 @@ export function HeatmapAusencias({
                                   {fila.persona.is_leverager && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
                                     <span className="w-4 h-4 rounded-full bg-[#3b5bdb] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>A</span>
                                   )}
-                                  <button
-                                    type="button"
-                                    onClick={(e) => { e.stopPropagation(); setPopoverPersona(fila.persona); }}
-                                    className="text-[11px] font-medium leading-tight text-[#1a1a1a] truncate hover:text-[#2563eb] hover:underline transition-colors text-left"
-                                    title="Ver resumen de ausencias"
-                                  >
-                                    {fila.persona.nombre} {fila.persona.apellido}
-                                  </button>
+                                  {ocultarPctResumen ? (
+                                    <span className="text-[11px] font-medium leading-tight text-[#1a1a1a] truncate text-left">
+                                      {fila.persona.nombre} {fila.persona.apellido}
+                                    </span>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => { e.stopPropagation(); setPopoverPersona(fila.persona); }}
+                                      className="text-[11px] font-medium leading-tight text-[#1a1a1a] truncate hover:text-[#2563eb] hover:underline transition-colors text-left"
+                                      title="Ver resumen de ausencias"
+                                    >
+                                      {fila.persona.nombre} {fila.persona.apellido}
+                                    </button>
+                                  )}
                                   {/* Badge días acumulados año actual */}
                                   {!readOnly && (() => {
                                     const d = totalesAnio[fila.persona.id] ?? 0;
@@ -998,7 +997,8 @@ export function HeatmapAusencias({
 
                           {/* Celdas de días */}
                           {dias.map((fecha) => {
-                            const celda      = fila.dias[fecha];
+                            const celdaReal  = fila.dias[fecha];
+                            const celda      = ocultarPctResumen && celdaReal?.tipo === "vacaciones_por_confirmar" ? null : celdaReal;
                             const esLunes    = isMonday(fecha);
                             const esFeriado  = isHoliday(fecha);
 
@@ -1093,9 +1093,11 @@ export function HeatmapAusencias({
                             <td key={fecha}
                               className={`px-px py-px text-center ${esLunes ? "border-l border-[#ddd]" : ""}`}
                               style={{ minWidth: 20, width: 20 }}
-                              title={pct > 0 ? `${ausentes} de ${total} ausentes (${pct}%)` : "Sin ausencias"}
+                              title={ocultarPctResumen ? undefined : (pct > 0 ? `${ausentes} de ${total} ausentes (${pct}%)` : "Sin ausencias")}
                             >
-                              {estilo ? (
+                              {ocultarPctResumen ? (
+                                <div className="w-full h-3 rounded" style={{ background: "#f4f4f4" }} />
+                              ) : estilo ? (
                                 <div className="w-full h-3 rounded flex items-center justify-center" style={{ background: estilo.bg }}>
                                   <span className="text-[9px] font-bold leading-none" style={{ color: estilo.text }}>{pct}%</span>
                                 </div>

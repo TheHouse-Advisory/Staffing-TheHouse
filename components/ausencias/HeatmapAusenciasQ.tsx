@@ -39,7 +39,6 @@ function diasSolapan(inicio: string, fin: string, mesInicio: Date, mesFin: Date)
   return calculateBusinessDays(a.toISOString().split("T")[0], b.toISOString().split("T")[0]);
 }
 
-const CARGOS_VISIBLES_AYSR = ["Consultor de Proyectos", "Consultor Proyecto", "Consultor Analista", "Consultor Trainee"];
 
 interface Props {
   year: number;
@@ -48,6 +47,7 @@ interface Props {
 }
 
 export function HeatmapAusenciasQ({ year, quarter, rolActual }: Props) {
+  const ocultarVacacionesPorConfirmar = rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador";
   const [filas, setFilas] = useState<PersonaFila[]>([]);
   const [loading, setLoading] = useState(true);
   const meses = Q_MESES[quarter];
@@ -112,10 +112,7 @@ export function HeatmapAusenciasQ({ year, quarter, rolActual }: Props) {
         return ia !== ib ? ia - ib : a.apellido.localeCompare(b.apellido);
       });
 
-    const filasFiltradas = rolActual === "AySr"
-      ? result.filter((p) => CARGOS_VISIBLES_AYSR.includes(p.cargo ?? ""))
-      : result;
-    setFilas(filasFiltradas);
+    setFilas(result);
     setLoading(false);
   }, [year, quarter, rolActual]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -175,7 +172,10 @@ export function HeatmapAusenciasQ({ year, quarter, rolActual }: Props) {
               </td>
 
               {meses.map((m) => {
-                const tipos = persona.meses[m] ?? [];
+                const tiposMes = persona.meses[m] ?? [];
+                const tipos = ocultarVacacionesPorConfirmar
+                  ? tiposMes.filter((t) => t.tipo !== "vacaciones_por_confirmar")
+                  : tiposMes;
                 const esActual = m === mesActual;
                 return (
                   <td

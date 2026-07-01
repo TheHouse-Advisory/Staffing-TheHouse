@@ -318,6 +318,7 @@ interface Props {
 export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false, onExternalModalClose, readOnly = false, rolActual }: Props) {
   const weekDays = useMemo(() => getWeekDays(selectedDate), [selectedDate]);
   const { tipos: tiposDinamicos } = useTiposAusencia();
+  const ocultarPctResumen = rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador";
 
   // Resuelve color de tipo dinámico > estático > fallback
   function colorDeTipo(tipo: string): { bg: string; label: string } {
@@ -382,10 +383,7 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
       }
       merged = Array.from(byId.values());
     }
-    const filasFiltradas = rolActual === "AySr"
-      ? merged.filter((f) => CARGOS_VISIBLES_AYSR.includes(f.persona.cargo_actual ?? ""))
-      : merged;
-    setFilas(filasFiltradas);
+    setFilas(merged);
   }, [weekDays, rolActual]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { cargar(); }, [cargar]);
@@ -553,7 +551,8 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
 
                       {/* Celdas de días */}
                       {weekDays.map((iso) => {
-                        const celda     = fila.dias[iso];
+                        const celdaReal = fila.dias[iso];
+                        const celda     = ocultarPctResumen && celdaReal?.tipo === "vacaciones_por_confirmar" ? null : celdaReal;
                         const esFeriado = isHoliday(iso);
                         const isActive  = tooltip?.personaId === fila.persona.id && tooltip?.fecha === iso;
                         const cfg       = celda ? colorDeTipo(celda.tipo) : null;
@@ -636,8 +635,10 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                       const estilo   = pctStyle(pct);
                       return (
                         <td key={iso} className="px-0.5 py-0.5 text-center"
-                          title={pct > 0 ? `${ausentes}/${filasGrupo.length} ausentes (${pct}%)` : "Sin ausencias"}>
-                          {estilo ? (
+                          title={ocultarPctResumen ? undefined : (pct > 0 ? `${ausentes}/${filasGrupo.length} ausentes (${pct}%)` : "Sin ausencias")}>
+                          {ocultarPctResumen ? (
+                            <div className="w-full h-3 rounded" style={{ background: "#f4f4f4" }} />
+                          ) : estilo ? (
                             <div className="w-full h-3 rounded flex items-center justify-center" style={{ background: estilo.bg }}>
                               <span className="text-[8px] font-bold leading-none" style={{ color: estilo.text }}>{pct}%</span>
                             </div>

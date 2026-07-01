@@ -6,10 +6,9 @@ import {
   format, isSameDay, parseISO, addDays,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell, BarChart2, Lock } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell, BarChart2 } from "lucide-react";
 import Link from "next/link";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
-import { CARGOS_OCULTOS_GYD } from "@/lib/constants";
 import type { RolSistema } from "@/lib/types/database";
 import { GanttAusencias } from "@/components/inicio/GanttAusencias";
 import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTablero";
@@ -59,7 +58,6 @@ function ocupColor(pct: number) {
 export default function InicioPage() {
   const [rol, setRol] = useState<RolSistema | null>(null);
   const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD" || rol === "AySr";
-  const isPlanificador = rol === "planificador" || rol === "GyD" || rol === "AySr";
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [ocupacionMap, setOcupacionMap] = useState<Record<string, number>>({});
   const [asignacionesDetalle, setAsignacionesDetalle] = useState<AsigDetalle[]>([]);
@@ -119,6 +117,11 @@ export default function InicioPage() {
         const { data: personaData } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
         rolActual = (personaData?.rol_sistema as RolSistema) ?? null;
         setRol(rolActual);
+        // Vista por defecto para Admin: Equipo colapsado, Tablero expandido
+        if (rolActual === "admin") {
+          setEquipoEstado("colapsado");
+          setActiveQuadrant("tablero");
+        }
       }
       const hoy = format(new Date(), "yyyy-MM-dd");
 
@@ -144,12 +147,7 @@ export default function InicioPage() {
       ]);
 
       const pers = (persRes.data ?? []) as Persona[];
-      const CARGOS_OCULTOS_AYSR_EQUIPO = [...CARGOS_OCULTOS_GYD, "Asociado", "Consultor Senior", "Analista Senior"];
-      setPersonas(
-        rolActual === "AySr" ? pers.filter((p) => !CARGOS_OCULTOS_AYSR_EQUIPO.includes(p.cargo_actual ?? ""))
-        : (rolActual === "GyD") ? pers.filter((p) => !CARGOS_OCULTOS_GYD.includes(p.cargo_actual ?? ""))
-        : pers
-      );
+      setPersonas(pers);
 
       // Mapa ocupación hoy
       const map: Record<string, number> = {};
@@ -342,25 +340,6 @@ export default function InicioPage() {
                       {grupos[cargo].map((p) => {
                         const pct = Math.round(ocupacionMap[p.id] ?? 0);
                         const oc = ocupColor(pct);
-                        const esRestringido = isPlanificador && CARGOS_OCULTOS_GYD.includes(p.cargo_actual ?? "");
-
-                        if (esRestringido) {
-                          return (
-                            <div
-                              key={p.id}
-                              title="Información restringida"
-                              className="flex flex-col items-center gap-0.5 opacity-40 cursor-not-allowed"
-                            >
-                              <div
-                                className="w-8 h-8 rounded-full flex items-center justify-center text-white text-[12px] font-bold shadow-sm grayscale"
-                                style={{ backgroundColor: color }}
-                              >
-                                {iniciales(p.nombre, p.apellido, p.iniciales)}
-                              </div>
-                              <Lock className="w-2.5 h-2.5 text-gray-400" />
-                            </div>
-                          );
-                        }
 
                         return (
                           <button
@@ -413,8 +392,9 @@ export default function InicioPage() {
               personaId={seleccionada.id}
               onClose={() => setSeleccionada(null)}
               ocultarMatriz={rol === "planificador" || rol === "GyD" || rol === "AySr"}
-              ocultarCarga={rol === "GyD" || rol === "AySr"}
+              ocultarCarga={rol === "GyD" || rol === "AySr" || rol === "planificador"}
               ocultarApalancador={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
+              ocultarInfoRestringida={rol === "planificador" || rol === "GyD" || rol === "AySr"}
             />
           )}
         </div>

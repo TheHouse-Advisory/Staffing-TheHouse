@@ -208,6 +208,7 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
               </span>
             </div>
             {/* Fila días: en línea horizontal */}
+            {!ocultarCarga && (
             <div className="flex justify-end gap-2 mt-0.5">
               {a.esFuturo ? (
                 <span className="text-[9px] font-semibold" style={{ color: "#15803d" }}>Inicia en {a.dias}d</span>
@@ -220,6 +221,7 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
                 </>
               )}
             </div>
+            )}
           </div>
         ))}
       </div>
