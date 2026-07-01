@@ -112,6 +112,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [esGYD, setEsGYD] = useState(false);
+  const [ocultarVacacionesPorConfirmar, setOcultarVacacionesPorConfirmar] = useState(false);
 
   const pv = periodoVista ?? "dia";
 
@@ -129,6 +130,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
       const { data } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
       const rol = (data as any)?.rol_sistema;
       setEsGYD(rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo");
+      setOcultarVacacionesPorConfirmar(rol === "GyD" || rol === "AySr" || rol === "planificador");
     }
     checkRol();
   }, []);
@@ -251,10 +253,15 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
   const hoy = format(new Date(), "yyyy-MM-dd");
   const columnas = getColumnas(semanaInicio, pv);
 
+  // Oculta ausencias "vacaciones por confirmar" para roles restringidos
+  const filasVisibles = ocultarVacacionesPorConfirmar
+    ? filas.map((f) => ({ ...f, ausencias: f.ausencias.filter((a) => a.tipo !== "vacaciones_por_confirmar") }))
+    : filas;
+
   // Filtrado frontend por persona, cargo o engagement
   const q = searchQuery.toLowerCase().trim();
   const filasFiltradas = q
-    ? filas.filter((f) =>
+    ? filasVisibles.filter((f) =>
         `${f.nombre} ${f.apellido}`.toLowerCase().includes(q) ||
         // Búsqueda por iniciales (ej: "MH" → "Mariana Hernández")
         `${f.nombre[0] ?? ""}${f.apellido[0] ?? ""}`.toLowerCase() === q ||
@@ -264,7 +271,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
           (p.cliente ?? "").toLowerCase().includes(q) // cliente/empresa
         )
       )
-    : filas;
+    : filasVisibles;
 
   // En modo día: filtrar fines de semana
   const columnasMostradas = pv === "dia"

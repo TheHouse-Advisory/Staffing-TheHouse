@@ -10,7 +10,7 @@ import { createAnyClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { Modal, ConfirmDialog } from "@/components/ui/Modal";
 import { PersonaForm } from "./PersonaForm";
-import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT, CARGOS_OCULTOS_GYD } from "@/lib/constants";
+import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import { diasRestantesPapelera, limpiarPersonasCaducadas } from "@/lib/tasks/cleanupEngagements";
 import type { Persona, RolSistema } from "@/lib/types/database";
 import { getIniciales } from "@/lib/utils/iniciales";
@@ -123,13 +123,8 @@ export function PersonasList({ rolActual }: PersonasListProps) {
 
   const isAdmin         = rolActual === "admin";
   const isGyD           = rolActual === "GyD";
-  const isAySr          = rolActual === "AySr";
   const isDesarrollo    = rolActual === "Desarrollo";
-  const isPlanificador  = rolActual === "planificador" || rolActual === "GyD" || rolActual === "AySr";
   const sb = createAnyClient();
-
-  // Cargos visibles para AySr
-  const CARGOS_AYSR = ["Consultor de Proyectos", "Consultor Analista", "Consultor Trainee"];
 
   const load = useCallback(async () => {
     const { data } = await sb
@@ -140,12 +135,9 @@ export function PersonasList({ rolActual }: PersonasListProps) {
       .eq("is_ex_houser", false)
       .order("apellido");
     const all = (data ?? []) as Persona[];
-    let filtradas = all;
-    if (isGyD)  filtradas = all.filter((p) => !CARGOS_OCULTOS_GYD.includes(p.cargo_actual ?? ""));
-    if (isAySr) filtradas = all.filter((p) =>  CARGOS_AYSR.includes(p.cargo_actual ?? ""));
-    setPersonas(filtradas);
+    setPersonas(all);
     setLoading(false);
-  }, [isGyD, isAySr]);
+  }, []);
 
   const loadExHousers = useCallback(async (pagina: number) => {
     setLoadingEx(true);
@@ -441,7 +433,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
           <p className="text-sm text-[#888]">
             {personas.length} persona{personas.length !== 1 ? "s" : ""} activa{personas.length !== 1 ? "s" : ""}
           </p>
-          {rolActual !== "AySr" && (
+          {!(rolActual === "AySr" || rolActual === "GyD" || rolActual === "planificador") && (
           <button onClick={() => setVista("ex_housers")}
             className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-[#e8e8e8] hover:bg-[#f5f5f5] text-[#888] transition-colors">
             <Archive className="w-3 h-3" />
@@ -501,7 +493,6 @@ export function PersonasList({ rolActual }: PersonasListProps) {
                     <PersonaCard
                       key={p.id} persona={p} isAdmin={isAdmin} cargoColor={color}
                       canView={!isDesarrollo}
-                      blockedView={isPlanificador && CARGOS_OCULTOS_GYD.includes(p.cargo_actual ?? "")}
                       onDesactivar={isAdmin ? setDesactivando : undefined}
                     />
                   ))}

@@ -697,7 +697,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           .lte("fecha_inicio", finStr)
           .gte("fecha_fin", inicioStr)
           .then(({ data }: { data: any }) => {
-            setAusencias((data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string }[]);
+            const filas = (data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string }[];
+            setAusencias(ocultarPctEquipo ? filas.filter((a) => a.tipo !== "vacaciones_por_confirmar") : filas);
           });
       }
 
@@ -849,7 +850,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         if (b.sort_order !== null) return 1;
         return a.nombre.localeCompare(b.nombre, "es");
       }));
-      setAusencias((ausRes.data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string }[]);
+      const ausenciasCargadas = (ausRes.data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string }[];
+      setAusencias(ocultarPctEquipo ? ausenciasCargadas.filter((a) => a.tipo !== "vacaciones_por_confirmar") : ausenciasCargadas);
       setLoading(false);
     }
     load();
@@ -2275,7 +2277,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                   {isActive && (
                                     <>
                                       <div className="relative group/bar w-full cursor-pointer overflow-hidden"
-                                        style={{ height: 7, background: finalBarBgConf, opacity: desasignando === p.asignacionId ? 0.3 : esHoy ? 1 : 0.85, borderRadius: 4, marginTop: 12 }}
+                                        style={{ height: 7, background: finalBarBgConf, opacity: desasignando === p.asignacionId ? 0.3 : esHoy ? 1 : 0.85, borderRadius: 4, marginTop: 6 }}
                                         onClick={(e) => handleAvatarClick(e, p, eng)}
                                         title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
                                         {diaAusCfgConf && (
@@ -2305,9 +2307,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                         {!readOnly && isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r hover:bg-white/30 transition-colors" />}
                                       </div>
                                       {isFirst && (
-                                        <div className="absolute flex items-center gap-0.5 z-20" style={{ top: 0, left: 18, pointerEvents: "none" }}>
-                                          <div className="flex items-center justify-center rounded-full text-white font-bold select-none cursor-pointer shadow-sm"
-                                            style={{ width: 12, height: 12, fontSize: 6, backgroundColor: cargoColor, border: "1.5px solid white" }}
+                                        <div className="absolute flex items-center gap-0.5 z-20" style={{ top: 2, left: -14, pointerEvents: "none" }}>
+                                          <div className={`flex items-center justify-center text-center whitespace-nowrap rounded-full text-white font-bold tracking-tighter select-none cursor-pointer shadow-sm ${iniciales(p.nombre, p.apellido, p.iniciales).length > 2 ? "text-[6px]" : "text-[8px]"}`}
+                                            style={{ width: 16, height: 16, backgroundColor: cargoColor, border: "1.5px solid white" }}
                                             title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
                                             {iniciales(p.nombre, p.apellido, p.iniciales)}
                                           </div>
@@ -2375,7 +2377,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 {isActive && (
                                   <>
                                     <div className="relative group/bar overflow-hidden cursor-pointer"
-                                      style={{ height: 7, marginTop: 12, background: barBgPlan, border: `1.5px dashed ${cargoColor}`, borderRadius: 4, opacity: desasignando === p.asignacionId ? 0.2 : 1 }}
+                                      style={{ height: 7, marginTop: 6, background: barBgPlan, border: `1.5px dashed ${cargoColor}`, borderRadius: 4, opacity: desasignando === p.asignacionId ? 0.2 : 1 }}
                                       title={`PLAN · ${p.nombre} ${p.apellido} · ${p.pct}%`}
                                       onClick={(e) => handleAvatarClick(e, p, eng)}>
                                       {diaAusCfgPlan && (
@@ -2405,7 +2407,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                       {!readOnly && isLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); setResizing({ p, edge: "end"   }); setResizeHoverIdx(i); resizeHoverRef.current = i; focusEngIdRef.current = eng.id; }} className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize z-20 rounded-r-sm hover:bg-blue-400 transition-colors" />}
                                     </div>
                                     {isFirst && (
-                                      <div className="absolute flex items-center gap-0.5 z-20" style={{ top: 0, left: 18, pointerEvents: "none" }}>
+                                      <div className="absolute flex items-center gap-0.5 z-20" style={{ top: 2, left: readOnly ? -14 : -28, pointerEvents: "none" }}>
                                         {!readOnly && <button
                                           style={{ pointerEvents: "auto" }}
                                           onClick={() => confirmarPlan(p, eng.id)} disabled={confirmando === p.asignacionId}
@@ -2413,8 +2415,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                           className="w-3 h-3 rounded-full bg-green-500 text-white flex items-center justify-center hover:bg-green-600 disabled:opacity-50 text-[6px] font-bold shadow-sm border border-white flex-shrink-0">
                                           ✓
                                         </button>}
-                                        <div className="flex items-center justify-center rounded-full text-white font-bold select-none shadow-sm"
-                                          style={{ width: 12, height: 12, fontSize: 6, backgroundColor: cargoColor, border: "1.5px solid white", pointerEvents: "none" }}
+                                        <div className={`flex items-center justify-center text-center whitespace-nowrap rounded-full text-white font-bold tracking-tighter select-none shadow-sm ${iniciales(p.nombre, p.apellido, p.iniciales).length > 2 ? "text-[6px]" : "text-[8px]"}`}
+                                          style={{ width: 16, height: 16, backgroundColor: cargoColor, border: "1.5px solid white", pointerEvents: "none" }}
                                           title={`PLAN · ${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
                                           {iniciales(p.nombre, p.apellido, p.iniciales)}
                                         </div>
