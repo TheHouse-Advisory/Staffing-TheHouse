@@ -1,11 +1,11 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Plus, BarChart2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, BarChart2, Loader2 } from "lucide-react";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
 import type { RolSistema } from "@/lib/types/database";
 import { HeatmapAusencias } from "@/components/ausencias/HeatmapAusencias";
-import { HeatmapAusenciasQ } from "@/components/ausencias/HeatmapAusenciasQ";
+import { HeatmapTrimestral, type PersonaTrimestral, type AusenciaTrimestral } from "@/components/ausencias/HeatmapTrimestral";
 import { HeatmapAusenciasSemana } from "@/components/ausencias/HeatmapAusenciasSemana";
 import { ResumenVacaciones } from "@/components/ausencias/ResumenVacaciones";
 import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
@@ -73,6 +73,30 @@ export default function AusenciasPage() {
   // quarter independiente para vista "Trimestre"
   const [yearAnio, setYearAnio]   = useState(now.getFullYear());
   const [quarterQ, setQuarterQ]   = useState<1|2|3|4>(getQuarter(now));
+  const startMonthQ = (quarterQ - 1) * 3 + 1;
+
+  // Datos de la vista Trimestre (HeatmapTrimestral es un componente puro sin fetch propio)
+  const [personasQ, setPersonasQ]     = useState<PersonaTrimestral[]>([]);
+  const [ausenciasQ, setAusenciasQ]   = useState<AusenciaTrimestral[]>([]);
+  const [loadingQ, setLoadingQ]       = useState(false);
+
+  useEffect(() => {
+    if (vistaActiva !== "quarter") return;
+    (async () => {
+      setLoadingQ(true);
+      const sb = createAnyClient();
+      // Rango ampliado (+/-6 días) para cubrir las semanas de borde que HeatmapTrimestral asoma del mes anterior/siguiente
+      const desde = new Date(yearAnio, startMonthQ - 1, 1 - 6).toISOString().split("T")[0];
+      const hasta = new Date(yearAnio, startMonthQ + 2, 0 + 6).toISOString().split("T")[0];
+      const [persRes, ausRes] = await Promise.all([
+        sb.from("persona").select("id, nombre, apellido, cargo_actual, is_leverager").eq("activo", true),
+        sb.from("ausencia").select("persona_id, tipo, fecha_inicio, fecha_fin").lte("fecha_inicio", hasta).gte("fecha_fin", desde),
+      ]);
+      setPersonasQ((persRes.data ?? []) as PersonaTrimestral[]);
+      setAusenciasQ((ausRes.data ?? []) as AusenciaTrimestral[]);
+      setLoadingQ(false);
+    })();
+  }, [vistaActiva, yearAnio, quarterQ]); // eslint-disable-line react-hooks/exhaustive-deps
   // Una sola fecha pivot — cada vista deriva su rango desde aquí
   const [selectedDate, setSelectedDate] = useState<Date>(
     new Date(now.getFullYear(), now.getMonth(), 1)
@@ -217,9 +241,16 @@ export default function AusenciasPage() {
         </div>
       </header>
 
-      {/* ── Contenido ───────────────────────────────────────────── */}
-      <div className="flex-1 overflow-hidden p-5">
-        <div className="h-full bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
+      {/*
+        ── Contenido ───────────────────────────────────────────────
+        min-w-0 en ambos wrappers: son flex-items dentro de un flex-col (ver <div className="flex
+        flex-col h-full"> que envuelve toda la página) y por defecto un flex-item nunca se encoge
+        por debajo del ancho intrínseco de su contenido. Sin esto, la vista Trimestre (que calcula
+        su ancho como % de su contenedor) heredaba un contenedor ya inflado por las ~90 micro-columnas
+        y "100%" dejaba de significar el ancho real disponible en pantalla.
+      */}
+      <div className="flex-1 min-w-0 overflow-hidden px-2 py-4">
+        <div className="h-full min-w-0 w-full max-w-full bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden flex flex-col">
 
           {/* Vista Mes — HeatmapAusencias compactado */}
           {vistaActiva === "month" && (
@@ -233,9 +264,22 @@ export default function AusenciasPage() {
             />
           )}
 
-          {/* Vista Trimestre */}
+          {/* Vista Trimestre — panorámica mes/semana/día con TOTAL y % Cuota por bloque */}
           {vistaActiva === "quarter" && (
-            <HeatmapAusenciasQ year={yearAnio} quarter={quarterQ} rolActual={rol} />
+            loadingQ ? (
+              <div className="flex-1 flex items-center justify-center text-[#888] gap-2">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                <span className="text-sm">Cargando trimestre...</span>
+              </div>
+            ) : (
+              <HeatmapTrimestral
+                year={yearAnio}
+                startMonth={startMonthQ}
+                personasData={personasQ}
+                ausenciasData={ausenciasQ}
+                tiposDinamicos={tiposDB}
+              />
+            )
           )}
 
           {/* Vista Semana */}

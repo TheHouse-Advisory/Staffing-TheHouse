@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { X, Loader2, Plus, ChevronDown, ChevronRight, Calendar, Clock, RotateCcw, Pencil, Trash2 } from "lucide-react";
+import { X, Loader2, Plus, ChevronDown, ChevronRight, RotateCcw, Pencil, Trash2 } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -11,15 +11,13 @@ import {
   eliminarAusencia,
   COLOR_AUSENCIA,
   isHoliday,
-  getDetailedPersonAbsences,
   type FilaPersona,
   type CeldaAusencia,
   type PersonaConSeniority,
-  type AusenciaDetalle,
-  type DetalleAusenciasPersona,
 } from "@/lib/queries/ausencias";
 import type { TipoAusencia } from "@/lib/types/database";
 import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
+import { PopoverPersona } from "./PopoverPersona";
 
 const DIAS_SEMANA_LETRA = ["L", "M", "X", "J", "V"];
 
@@ -38,6 +36,11 @@ function getDow(fechaISO: string): string {
 
 function isMonday(fechaISO: string): boolean {
   return new Date(fechaISO + "T00:00:00").getDay() === 1;
+}
+
+function formatFechaCL(iso: string): string {
+  const [y, m, d] = iso.split("-");
+  return `${d}/${m}/${y}`;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -458,129 +461,6 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
 }
 
 // ─────────────────────────────────────────────────────────────
-//  Popover resumen persona
-// ─────────────────────────────────────────────────────────────
-
-function formatRangoAus(inicio: string, fin: string): string {
-  const MESES = ["ene","feb","mar","abr","may","jun","jul","ago","sep","oct","nov","dic"];
-  const fmt = (iso: string) => {
-    const [, m, d] = iso.split("-");
-    return `${parseInt(d)} ${MESES[parseInt(m) - 1]}`;
-  };
-  return inicio === fin ? fmt(inicio) : `${fmt(inicio)} – ${fmt(fin)}`;
-}
-
-function BloqueAusencias({ titulo, icono, items, emptyMsg }: {
-  titulo: string;
-  icono: React.ReactNode;
-  items: AusenciaDetalle[];
-  emptyMsg: string;
-}) {
-  return (
-    <div>
-      <div className="flex items-center gap-1.5 mb-2">
-        <span className="text-[#aaa]">{icono}</span>
-        <p className="text-[10px] font-bold text-[#888] uppercase tracking-widest">{titulo}</p>
-      </div>
-      {items.length === 0 ? (
-        <p className="text-[11px] text-[#bbb] italic pl-1">{emptyMsg}</p>
-      ) : (
-        <div className="space-y-1 max-h-36 overflow-y-auto">
-          {items.map((a) => (
-            <div key={a.id} className="flex items-center justify-between bg-[#fafafa] rounded-lg border border-[#f0f0f0] px-2.5 py-2">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: COLOR_AUSENCIA[a.tipo]?.bg ?? "#9ca3af" }} />
-                <div className="min-w-0">
-                  <p className="text-[11px] text-[#333] font-semibold truncate">{formatRangoAus(a.fechaInicio, a.fechaFin)}</p>
-                  <p className="text-[10px] text-[#999] truncate">{a.tipoLabel}</p>
-                </div>
-              </div>
-              <span className="text-[11px] font-bold text-[#555] flex-shrink-0 ml-3 bg-white border border-[#e8e8e8] rounded-md px-1.5 py-0.5">
-                {a.numDias}d
-              </span>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function PopoverPersona({ persona, onClose }: { persona: PersonaConSeniority; onClose: () => void }) {
-  const [data, setData]       = useState<DetalleAusenciasPersona | null>(null);
-  const [loading, setLoading] = useState(true);
-  const supabase = createClient();
-
-  useEffect(() => {
-    setLoading(true);
-    getDetailedPersonAbsences(supabase, persona.id).then((d) => { setData(d); setLoading(false); });
-  }, [persona.id]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const total = data?.totalDiasAnioActual ?? 0;
-  const badgeStyle: React.CSSProperties =
-    total >= 15 ? { background: "#fef2f2", color: "#dc2626" } :
-    total >= 10 ? { background: "#fff7ed", color: "#ea580c" } :
-    total >  0  ? { background: "#eff6ff", color: "#2563eb" } :
-                  { background: "#f3f4f6", color: "#9ca3af" };
-
-  return (
-    <>
-      {/* Overlay — cierra al clicar fuera */}
-      <div className="fixed inset-0 z-40" onClick={onClose} />
-
-      {/* Tarjeta flotante */}
-      <div className="fixed z-50 top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-80 bg-white rounded-2xl border border-[#e8e8e8] shadow-2xl overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-4 py-3.5 border-b border-[#f0f0f0] bg-[#fafafa]">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-[#1a1a1a] flex items-center justify-center text-white text-[12px] font-bold flex-shrink-0">
-              {persona.nombre[0]}{persona.apellido[0]}
-            </div>
-            <div>
-              <p className="text-[13px] font-bold text-[#1a1a1a]">{persona.nombre} {persona.apellido}</p>
-              {persona.cargo_actual && <p className="text-[10px] text-[#888] mt-0.5">{persona.cargo_actual}</p>}
-            </div>
-          </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-[#e8e8e8] text-[#bbb] hover:text-[#555] transition-colors">
-            <X className="w-3.5 h-3.5" />
-          </button>
-        </div>
-
-        {/* Cuerpo */}
-        {loading ? (
-          <div className="flex items-center justify-center py-10 gap-2 text-[#888]">
-            <Loader2 className="w-4 h-4 animate-spin" />
-            <span className="text-xs">Cargando...</span>
-          </div>
-        ) : data ? (
-          <div className="px-4 py-4 space-y-4">
-            {/* Total destacado */}
-            <div className="flex items-center justify-between bg-[#f8faff] rounded-xl border border-[#dbeafe] px-4 py-3">
-              <span className="text-[12px] font-semibold text-[#3b82f6]">Total días consumidos</span>
-              <span className="text-[20px] font-black" style={badgeStyle}>{total}</span>
-            </div>
-            {/* Próximas */}
-            <BloqueAusencias
-              titulo="Próximas ausencias"
-              icono={<Clock className="w-3 h-3" />}
-              items={data.ausenciasFuturas}
-              emptyMsg="Sin ausencias planificadas"
-            />
-            {/* Historial */}
-            <BloqueAusencias
-              titulo="Historial año actual"
-              icono={<Calendar className="w-3 h-3" />}
-              items={data.ausenciasPasadasAnioActual}
-              emptyMsg="Sin historial este año"
-            />
-          </div>
-        ) : null}
-      </div>
-    </>
-  );
-}
-
-// ─────────────────────────────────────────────────────────────
 //  Helpers de resumen por cargo
 // ─────────────────────────────────────────────────────────────
 
@@ -817,6 +697,44 @@ export function HeatmapAusencias({
     return { bg: "#9ca3af", label: tipo };
   }
 
+  // ── Celda "efectiva" para un día: aplica el mismo filtro de rol que ya usa el render ──
+  function celdaEfectiva(fila: FilaPersona, fecha: string): CeldaAusencia | null {
+    const real = fila.dias[fecha];
+    if (!real) return null;
+    return ocultarPctResumen && real.tipo === "vacaciones_por_confirmar" ? null : real;
+  }
+
+  // ── Bloque consecutivo (funde tipos distintos si están pegados en el tiempo) ──
+  // El walk usa `dias` (solo el mes visible) para detectar QUÉ celdas están encadenadas,
+  // pero la duración real sale de fecha_inicio/fecha_fin de cada celda tocada — esos son
+  // los datos reales del registro en Supabase, no acotados al mes. Así, una ausencia larga
+  // (ej. un MBA de 2025 a 2026) reporta su rango real aunque el mes visible solo muestre
+  // una fracción de esos días.
+  function calcularBloqueConsecutivo(fila: FilaPersona, fechaISO: string): { inicio: string; fin: string; numDias: number } {
+    const idx = dias.indexOf(fechaISO);
+    let ini = idx, fin = idx;
+    while (ini > 0 && celdaEfectiva(fila, dias[ini - 1])) ini--;
+    while (fin < dias.length - 1 && celdaEfectiva(fila, dias[fin + 1])) fin++;
+
+    let inicioReal = fechaISO;
+    let finReal = fechaISO;
+    for (let i = ini; i <= fin; i++) {
+      const c = celdaEfectiva(fila, dias[i]);
+      if (!c) continue;
+      if (c.fecha_inicio < inicioReal) inicioReal = c.fecha_inicio;
+      if (c.fecha_fin > finReal) finReal = c.fecha_fin;
+    }
+    const numDias = Math.round(
+      (new Date(finReal + "T00:00:00").getTime() - new Date(inicioReal + "T00:00:00").getTime()) / 86400000
+    ) + 1;
+    return { inicio: inicioReal, fin: finReal, numDias };
+  }
+
+  function tooltipAusencia(fila: FilaPersona, fecha: string): string {
+    const b = calcularBloqueConsecutivo(fila, fecha);
+    return `${fila.persona.nombre} ${fila.persona.apellido} - ${formatFechaCL(b.inicio)} al ${formatFechaCL(b.fin)} (${b.numDias} días)`;
+  }
+
   // ── Render ─────────────────────────────────────────────────
   return (
     <div className="h-full flex flex-col">
@@ -927,9 +845,11 @@ export function HeatmapAusencias({
                         return (
                           <td key={fecha} className={`px-0.5 py-1 text-center ${esLunes ? "border-l border-[#ddd]" : ""}`}
                             style={{ minWidth: 34, width: 34 }}
-                            title={pct > 0 ? `${ausentes}/${total} ausentes (${pct}%)` : "Sin ausencias"}
+                            title={ocultarPctResumen ? undefined : (pct > 0 ? `${ausentes}/${total} ausentes (${pct}%)` : "Sin ausencias")}
                           >
-                            {estilo ? (
+                            {ocultarPctResumen ? (
+                              <div className="w-full h-5" />
+                            ) : estilo ? (
                               <div className="w-full h-5 rounded flex items-center justify-center" style={{ background: estilo.bg }}>
                                 <span className="text-[8px] font-bold" style={{ color: estilo.text }}>{pct}%</span>
                               </div>
@@ -1007,7 +927,7 @@ export function HeatmapAusencias({
                                 <td key={fecha}
                                   className={`py-px px-px border-b border-[#f5f5f5] ${esLunes ? "border-l border-[#ddd]" : ""} ${esFeriado ? "bg-gray-200" : ""}`}
                                   style={{ minWidth: 20, width: 20 }}
-                                  title={esFeriado ? "Feriado" : celda ? colorDeTipo(celda.tipo).label : undefined}
+                                  title={esFeriado ? "Feriado" : celda ? tooltipAusencia(fila, fecha) : undefined}
                                 >
                                   {celda
                                     ? <div className="w-full h-2.5 rounded-sm" style={{ background: colorDeTipo(celda.tipo).bg }} />
@@ -1035,7 +955,7 @@ export function HeatmapAusencias({
                                       }}
                                       className="w-full h-4 rounded transition-opacity hover:opacity-75"
                                       style={{ background: colorDeTipo(celda.tipo).bg }}
-                                      title={colorDeTipo(celda.tipo).label}
+                                      title={tooltipAusencia(fila, fecha)}
                                     />
                                     {isActive && (
                                       <CeldaTooltip celda={celda} persona={fila.persona} fecha={fecha}
