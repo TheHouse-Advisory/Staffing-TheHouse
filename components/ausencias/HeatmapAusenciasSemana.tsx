@@ -17,6 +17,7 @@ import {
 } from "@/lib/queries/ausencias";
 import type { TipoAusencia } from "@/lib/types/database";
 import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
+import { PopoverPersona } from "./PopoverPersona";
 
 const MESES_CORTO = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const DOW_LETRA   = ["L","M","X","J","V"];
@@ -346,6 +347,9 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
   const [cargoColapsados,   setCargoColapsados]   = useState<Set<string>>(new Set());
   const [personaColapsados, setPersonaColapsados] = useState<Set<string>>(new Set());
 
+  // Popover de resumen de ausencias — mismo componente que usan las vistas mes/trimestre
+  const [popoverPersona, setPopoverPersona] = useState<PersonaConSeniority | null>(null);
+
   const supabase = createClient();
 
   // Sincronizar modal externo (botón "+ Nueva ausencia" del header)
@@ -539,9 +543,14 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                             <span className="w-4 h-4 rounded-full bg-[#3b5bdb] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>A</span>
                           )}
                           <div className="min-w-0 flex-1 overflow-hidden">
-                            <p className="text-[11px] font-medium leading-tight text-[#1a1a1a] truncate">
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); setPopoverPersona(fila.persona); }}
+                              className="text-[11px] font-medium leading-tight text-[#1a1a1a] truncate block w-full text-left cursor-pointer hover:underline hover:text-blue-600 transition-colors"
+                              title="Ver resumen de ausencias"
+                            >
                               {fila.persona.nombre} {fila.persona.apellido}
-                            </p>
+                            </button>
                             {!estaColapsadaPersona && fila.persona.cargo_actual && (
                               <p className="text-[9px] leading-none text-[#999] truncate">{fila.persona.cargo_actual}</p>
                             )}
@@ -669,6 +678,10 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
 
     {/* Overlay para cerrar tooltip al clicar fuera */}
     {tooltip && <div className="fixed inset-0 z-40" onClick={() => setTooltip(null)} />}
+
+    {popoverPersona && (
+      <PopoverPersona persona={popoverPersona} onClose={() => setPopoverPersona(null)} />
+    )}
     </>
   );
 }

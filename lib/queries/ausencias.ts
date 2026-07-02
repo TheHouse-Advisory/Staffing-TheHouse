@@ -58,6 +58,10 @@ export interface CeldaAusencia {
   tipo: TipoAusencia;
   ausencia_id: string;
   descripcion: string | null;
+  // Fechas REALES del registro completo (no acotadas al mes visible) — necesarias para
+  // calcular la duración real de ausencias que cruzan de un mes a otro en el tooltip.
+  fecha_inicio: string;
+  fecha_fin: string;
 }
 
 export interface FilaPersona {
@@ -177,6 +181,8 @@ export async function fetchAusenciasMes(
             tipo: a.tipo as TipoAusencia,
             ausencia_id: a.id,
             descripcion: a.descripcion,
+            fecha_inicio: a.fecha_inicio,
+            fecha_fin: a.fecha_fin,
           };
         }
       }
