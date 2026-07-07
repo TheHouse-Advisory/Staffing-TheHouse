@@ -2,13 +2,17 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { ChevronDown, ChevronRight, Loader2, Pencil, X, Check, TrendingUp } from "lucide-react";
+import { differenceInCalendarDays } from "date-fns";
 import { createClient } from "@/lib/supabase/client";
+import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
 import {
   fetchCapacityData,
   upsertCapacity,
   upsertCapacityBulkAll,
   labelSemana,
   cargoAGrupo,
+  diasPorTipoEnSemana,
+  estiloFondoAusencia,
   CAPACITY_GRUPO_ORDER,
   type PersonaCapacity,
   type CapacityData,
@@ -18,6 +22,12 @@ import {
 // ─────────────────────────────────────────────────────────────
 //  Helpers
 // ─────────────────────────────────────────────────────────────
+
+/** "2026-03-15" → "15/03/26" */
+function formatSalida(fechaISO: string): string {
+  const [y, m, d] = fechaISO.split("-");
+  return `${d}/${m}/${y.slice(2)}`;
+}
 
 function getVal(valores: Record<string, Record<string, number>>, pid: string, sem: string): number {
   const raw = valores[pid]?.[sem];
@@ -38,14 +48,6 @@ function cellText(v: number, flash: boolean): string {
   if (flash) return "#065f46";
   if (v === 0) return "#9ca3af";
   return "#1d4ed8";
-}
-
-/** Retorna true si la semana (lunes ISO) se solapa con alguna ausencia de la persona */
-function semanaTieneAusencia(semana: string, ausencias: AusenciaCapacity[]): boolean {
-  // La semana va de lunes (semana) a domingo (semana + 6 días)
-  const lunes   = semana;
-  const domingo = (() => { const d = new Date(semana + "T00:00:00"); d.setDate(d.getDate() + 6); return d.toISOString().split("T")[0]; })();
-  return ausencias.some(a => a.fecha_inicio <= domingo && a.fecha_fin >= lunes);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -363,6 +365,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
 
   const timers    = useRef<Record<string, ReturnType<typeof setTimeout>>>({});
   const supabase  = createClient();
+  const { tipos: tiposAusenciaDinamicos } = useTiposAusencia();
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -400,14 +403,93 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     return map;
   }, [data]);
 
-  /** Devuelve { value, ausente } — si hay ausencia en la semana, value = 0 */
+  /**
+   * Devuelve { value, ausente, salida, preIngreso, ascenso } — si hay ausencia en la semana, value = 0.
+   * Regla micro-semanal para Ex-Housers: si `fecha_salida` cae dentro de la
+   * semana (lunes-viernes), se cuentan los días hábiles trabajados; con 3 o
+   * más se mantiene la capacidad normal, con menos se fuerza a 0.
+   * Regla de Nuevos Ingresos: si el viernes de la semana es anterior a
+   * `fecha_ingreso`, la persona todavía no existía → capacidad forzada a 0.
+   * Si `fecha_ingreso` cae dentro de la semana, se cuentan los días hábiles
+   * restantes desde el ingreso hasta el viernes; con 3 o más se muestra la
+   * capacidad normal completa, con menos se fuerza a 0 (estilo pre-ingreso).
+   * Regla de Ascensos (filas partidas por cargo): fuera del rango
+   * `vigenciaInicio`–`vigenciaFin` de ESTA fila/cargo → 0, con la misma
+   * regla micro de 3+ días hábiles en la semana de transición.
+   */
   const getValEfectivo = useCallback(
-    (pid: string, sem: string): { value: number; ausente: boolean } => {
-      const ausencias = ausenciasMap.get(pid) ?? [];
-      if (semanaTieneAusencia(sem, ausencias)) return { value: 0, ausente: true };
-      return { value: getVal(valores, pid, sem), ausente: false };
+    (p: PersonaCapacity, sem: string): { value: number; ausente: boolean; salida: boolean; preIngreso: boolean; ascenso: boolean; fondoAusencia?: string } => {
+      const ausencias = ausenciasMap.get(p.personaId) ?? [];
+      const diasPorTipo = diasPorTipoEnSemana(sem, ausencias);
+      const totalDiasAusencia = Array.from(diasPorTipo.values()).reduce((a, b) => a + b, 0);
+      if (totalDiasAusencia >= 3) {
+        return {
+          value: 0, ausente: true, salida: false, preIngreso: false, ascenso: false,
+          fondoAusencia: estiloFondoAusencia(diasPorTipo, tiposAusenciaDinamicos),
+        };
+      }
+
+      if (p.vigenciaInicio) {
+        const lunesSemana = new Date(sem + "T00:00:00");
+        const viernesSemana = new Date(sem + "T00:00:00");
+        viernesSemana.setDate(viernesSemana.getDate() + 4);
+        const vigenciaInicioDate = new Date(p.vigenciaInicio + "T00:00:00");
+
+        if (viernesSemana < vigenciaInicioDate) return { value: 0, ausente: false, salida: false, preIngreso: false, ascenso: true };
+
+        if (vigenciaInicioDate >= lunesSemana && vigenciaInicioDate <= viernesSemana) {
+          const diasHabilesRestantes = differenceInCalendarDays(viernesSemana, vigenciaInicioDate) + 1;
+          if (diasHabilesRestantes < 3) return { value: 0, ausente: false, salida: false, preIngreso: false, ascenso: true };
+        }
+      }
+
+      if (p.vigenciaFin) {
+        const lunesSemana = sem;
+        if (p.vigenciaFin < lunesSemana) return { value: 0, ausente: false, salida: false, preIngreso: false, ascenso: true };
+
+        const viernesSemana = new Date(sem + "T00:00:00");
+        viernesSemana.setDate(viernesSemana.getDate() + 4);
+        const vigenciaFinDate = new Date(p.vigenciaFin + "T00:00:00");
+
+        if (vigenciaFinDate <= viernesSemana) {
+          const diasHabiles = differenceInCalendarDays(vigenciaFinDate, new Date(sem + "T00:00:00")) + 1;
+          if (diasHabiles < 3) return { value: 0, ausente: false, salida: false, preIngreso: false, ascenso: true };
+        }
+      }
+
+      if (p.fecha_ingreso) {
+        const lunesSemana = new Date(sem + "T00:00:00");
+        const viernesSemana = new Date(sem + "T00:00:00");
+        viernesSemana.setDate(viernesSemana.getDate() + 4);
+        const fechaIngresoDate = new Date(p.fecha_ingreso + "T00:00:00");
+
+        if (viernesSemana < fechaIngresoDate) return { value: 0, ausente: false, salida: false, preIngreso: true, ascenso: false };
+
+        if (fechaIngresoDate >= lunesSemana && fechaIngresoDate <= viernesSemana) {
+          const diasHabilesRestantes = differenceInCalendarDays(viernesSemana, fechaIngresoDate) + 1;
+          if (diasHabilesRestantes < 3) return { value: 0, ausente: false, salida: false, preIngreso: true, ascenso: false };
+          // 3+ días hábiles restantes: se muestra la capacidad normal completa.
+        }
+      }
+
+      if (p.fecha_salida) {
+        const lunesSemana = sem;
+        if (p.fecha_salida < lunesSemana) return { value: 0, ausente: false, salida: true, preIngreso: false, ascenso: false };
+
+        const viernesSemana = new Date(sem + "T00:00:00");
+        viernesSemana.setDate(viernesSemana.getDate() + 4);
+        const fechaSalidaDate = new Date(p.fecha_salida + "T00:00:00");
+
+        if (fechaSalidaDate <= viernesSemana) {
+          const diasHabiles = differenceInCalendarDays(fechaSalidaDate, new Date(sem + "T00:00:00")) + 1;
+          if (diasHabiles < 3) return { value: 0, ausente: false, salida: true, preIngreso: false, ascenso: false };
+          // 3+ días hábiles: conserva la capacidad normal de esa semana, no se pierde.
+        }
+      }
+
+      return { value: getVal(valores, p.personaId, sem), ausente: false, salida: false, preIngreso: false, ascenso: false };
     },
-    [ausenciasMap, valores]
+    [ausenciasMap, valores, tiposAusenciaDinamicos]
   );
 
   const monthGroups = useMemo(() => {
@@ -429,7 +511,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     for (const [grupo, equipo] of grupos.entries()) {
       gt[grupo] = {};
       for (const sem of data.semanas) {
-        gt[grupo][sem] = equipo.reduce((acc, p) => acc + getValEfectivo(p.id, sem).value, 0);
+        gt[grupo][sem] = equipo.reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
       }
     }
     onStatsChange?.({ grupoTotales: gt, semanas: data.semanas });
@@ -443,7 +525,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
       let minVal = Infinity;
       let minGrupo = "";
       for (const g of GRUPOS_BOTTLENECK) {
-        const suma = (grupos.get(g) ?? []).reduce((acc, p) => acc + getValEfectivo(p.id, sem).value, 0);
+        const suma = (grupos.get(g) ?? []).reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
         if (suma < minVal) { minVal = suma; minGrupo = g; }
       }
       result[sem] = minGrupo;
@@ -457,7 +539,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     const result: Record<string, number> = {};
     for (const sem of data.semanas) {
       const vals = GRUPOS_BOTTLENECK.map(
-        g => (grupos.get(g) ?? []).reduce((acc, p) => acc + getValEfectivo(p.id, sem).value, 0)
+        g => (grupos.get(g) ?? []).reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0)
       );
       result[sem] = vals.length ? Math.min(...vals) : 0;
     }
@@ -476,25 +558,27 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     setCollapsedMonths(prev => prev.size >= monthGroups.size ? new Set() : new Set(monthGroups.keys()));
   }
 
-  // Edición individual con debounce
-  function handleChange(personaId: string, semana: string, raw: string) {
+  // Edición individual con debounce. `p.id` (clave de fila) para timers/flash
+  // — cosmético, por fila —; `p.personaId` (id real) para `valores`/DB.
+  function handleChange(p: PersonaCapacity, semana: string, raw: string) {
     const v = Math.max(0, Math.min(10, parseFloat(raw) || 0));
-    setValores(prev => ({ ...prev, [personaId]: { ...(prev[personaId] ?? {}), [semana]: v } }));
-    const key = `${personaId}:${semana}`;
+    setValores(prev => ({ ...prev, [p.personaId]: { ...(prev[p.personaId] ?? {}), [semana]: v } }));
+    const key = `${p.id}:${semana}`;
     clearTimeout(timers.current[key]);
-    timers.current[key] = setTimeout(() => { upsertCapacity(supabase, personaId, semana, v); }, 800);
+    timers.current[key] = setTimeout(() => { upsertCapacity(supabase, p.personaId, semana, v); }, 800);
   }
 
   // ── Edición masiva: grupo × todas las semanas ──────────────
   async function handleBulkCapacityUpdate(grupo: string, semanasFiltradas: string[], capacidad: number) {
     if (!data) return;
-    const equipo  = grupos.get(grupo) ?? [];
-    const ids     = equipo.map(p => p.id);
-    const semanas = semanasFiltradas;
+    const equipo     = grupos.get(grupo) ?? [];
+    const rowIds     = equipo.map(p => p.id);                                  // timers/flash — por fila
+    const personaIds = Array.from(new Set(equipo.map(p => p.personaId)));      // valores/DB — id real, sin duplicar
+    const semanas    = semanasFiltradas;
 
     // 0. Cancelar todos los debounces pendientes de las celdas afectadas
     //    (evita race condition: timer antiguo sobreescribiendo el bulk update)
-    for (const pid of ids) {
+    for (const pid of rowIds) {
       for (const sem of semanas) {
         const key = `${pid}:${sem}`;
         if (timers.current[key]) {
@@ -507,7 +591,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     // 1. Actualizar estado local inmediatamente
     setValores(prev => {
       const next = { ...prev };
-      for (const pid of ids) {
+      for (const pid of personaIds) {
         next[pid] = { ...(next[pid] ?? {}) };
         for (const sem of semanas) next[pid][sem] = capacidad;
       }
@@ -515,12 +599,12 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     });
 
     // 2. Flash verde en todas las celdas del grupo
-    const keys = new Set(ids.flatMap(pid => semanas.map(sem => `${pid}:${sem}`)));
+    const keys = new Set(rowIds.flatMap(pid => semanas.map(sem => `${pid}:${sem}`)));
     setFlashCells(keys);
     setTimeout(() => setFlashCells(new Set()), 1200);
 
     // 3. Persistir en Supabase (secuencial, una persona a la vez)
-    const err = await upsertCapacityBulkAll(supabase, ids, semanas, capacidad);
+    const err = await upsertCapacityBulkAll(supabase, personaIds, semanas, capacidad);
     if (err) console.error("[bulk capacity] Errores al persistir:", err);
 
     // 4. Recargar desde DB para confirmar estado real (elimina discrepancias optimistas)
@@ -544,20 +628,20 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
 
     setLoadingPersona(persona.id);
 
-    // 1. Actualizar estado local
+    // 1. Actualizar estado local (clave real, no la de fila)
     setValores(prev => {
-      const next = { ...prev, [persona.id]: { ...(prev[persona.id] ?? {}) } };
-      for (const sem of semanasFiltradas) next[persona.id][sem] = capacidad;
+      const next = { ...prev, [persona.personaId]: { ...(prev[persona.personaId] ?? {}) } };
+      for (const sem of semanasFiltradas) next[persona.personaId][sem] = capacidad;
       return next;
     });
 
-    // 2. Flash en celdas afectadas
+    // 2. Flash en celdas afectadas (por fila)
     const keys = new Set(semanasFiltradas.map(sem => `${persona.id}:${sem}`));
     setFlashCells(keys);
     setTimeout(() => setFlashCells(new Set()), 1200);
 
-    // 3. Persistir — reutiliza upsertCapacityBulkAll con un solo personaId
-    const err = await upsertCapacityBulkAll(supabase, [persona.id], semanasFiltradas, capacidad);
+    // 3. Persistir — reutiliza upsertCapacityBulkAll con el id real de la persona
+    const err = await upsertCapacityBulkAll(supabase, [persona.personaId], semanasFiltradas, capacidad);
     if (err) console.error("[persona capacity] Error al persistir:", err);
 
     // 4. Recargar desde DB para confirmar estado real (igual que el bulk)
@@ -703,7 +787,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                       const isCollapsedMonth = collapsedMonths.has(mk);
                       if (isCollapsedMonth) {
                         if (colapsado) {
-                          const avgSum = ms.reduce((acc, s) => acc + equipo.reduce((a, p) => a + getValEfectivo(p.id, s).value, 0), 0) / ms.length;
+                          const avgSum = ms.reduce((acc, s) => acc + equipo.reduce((a, p) => a + getValEfectivo(p, s).value, 0), 0) / ms.length;
                           const esBottle = GRUPOS_BOTTLENECK.includes(cargo) && ms.some(s => bottleneckPorSemana[s] === cargo);
                           return [
                             <td key={`chead-${mk}`}
@@ -728,7 +812,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                       }
                       if (colapsado) {
                         return ms.map((sem, i) => {
-                          const suma = equipo.reduce((acc, p) => acc + getValEfectivo(p.id, sem).value, 0);
+                          const suma = equipo.reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
                           const esBottle = GRUPOS_BOTTLENECK.includes(cargo) && bottleneckPorSemana[sem] === cargo;
                           return (
                             <td key={sem}
@@ -757,8 +841,15 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                   {/* ── Filas de personas ── */}
                   {!colapsado && equipo.map((p, idx) => {
                     const isLoadingRow = loadingPersona === p.id;
+                    const todayISO = new Date().toISOString().split("T")[0];
+                    const yaSalio = !!p.fecha_salida && p.fecha_salida <= todayISO;
+                    // Periodo visualizado entero anterior a su contratación (aún no ingresó en este rango)
+                    const ultimaSemana = data!.semanas[data!.semanas.length - 1];
+                    const finPeriodo = new Date(ultimaSemana + "T00:00:00");
+                    finPeriodo.setDate(finPeriodo.getDate() + 4);
+                    const aunNoIngresa = !!p.fecha_ingreso && finPeriodo < new Date(p.fecha_ingreso + "T00:00:00");
                     return (
-                      <tr key={p.id} className={`${idx % 2 === 0 ? "bg-white" : "bg-[#fafafa]"} ${isLoadingRow ? "opacity-60" : ""} transition-opacity`}>
+                      <tr key={p.id} className={`${idx % 2 === 0 ? "bg-white" : "bg-[#fafafa]"} ${isLoadingRow ? "opacity-60" : ""} ${(yaSalio || aunNoIngresa) ? "opacity-50 select-none" : ""} transition-opacity`}>
                         <td className="sticky left-0 z-10 bg-inherit border-r border-[#ebebeb] px-3 py-1" style={{ minWidth: 220, width: 220 }}>
                           <div className="flex items-center gap-1.5">
                             {isLoadingRow
@@ -776,14 +867,29 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                             <span className="text-[12px] font-medium text-[#1a1a1a] truncate">
                               {p.nombre} {p.apellido}
                             </span>
+                            {yaSalio && (
+                              <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0">
+                                Ex-Houser
+                              </span>
+                            )}
+                            {aunNoIngresa && p.fecha_ingreso && (
+                              <span className="bg-slate-100 text-slate-500 text-[10px] font-bold px-1.5 py-0.5 rounded flex-shrink-0">
+                                Ingresa en {MESES_LABELS[new Date(p.fecha_ingreso + "T00:00:00").getMonth()]}
+                              </span>
+                            )}
+                            {p.fecha_salida && (
+                              <span className="text-[9px] text-[#bbb] italic flex-shrink-0" title="Ex-houser — contexto histórico">
+                                (Salida: {formatSalida(p.fecha_salida)})
+                              </span>
+                            )}
                           </div>
                         </td>
                         {Array.from(monthGroups.entries()).flatMap(([mk, { semanas: ms }]) => {
                           const isCollapsed = collapsedMonths.has(mk);
                           if (isCollapsed) {
-                            const avgV = ms.reduce((acc, s) => acc + getValEfectivo(p.id, s).value, 0) / ms.length;
+                            const avgV = ms.reduce((acc, s) => acc + getValEfectivo(p, s).value, 0) / ms.length;
                             const anyFlash = ms.some(s => flashCells.has(`${p.id}:${s}`));
-                            const anyAusente = ms.some(s => getValEfectivo(p.id, s).ausente);
+                            const anyAusente = ms.some(s => { const r = getValEfectivo(p, s); return r.ausente || r.salida || r.preIngreso || r.ascenso; });
                             return [
                               <td key={`cell-${p.id}-${mk}`}
                                 className="py-1 px-1 text-center border-b border-[#f5f5f5] border-l-2 border-l-[#d1d5db]"
@@ -796,25 +902,36 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                             ];
                           }
                           return ms.map((sem, i) => {
-                            const { value: v, ausente } = getValEfectivo(p.id, sem);
+                            const { value: v, ausente, salida, preIngreso, ascenso, fondoAusencia } = getValEfectivo(p, sem);
+                            const inactivo = ausente || salida;
                             const flash = flashCells.has(`${p.id}:${sem}`);
                             return (
                               <td key={sem}
-                                className={`py-1 px-1 text-center border-b border-[#f5f5f5] ${i === 0 ? "border-l-2 border-l-[#d1d5db]" : ""}`}
-                                style={{ minWidth: CELL_W, width: CELL_W, background: ausente ? "#f3f4f6" : undefined }}
-                                title={ausente ? "Ausencia registrada" : undefined}
+                                className={`py-1 px-1 text-center border-b border-[#f5f5f5] ${i === 0 ? "border-l-2 border-l-[#d1d5db]" : ""} ${(preIngreso || ascenso) ? "bg-slate-100/50" : ""}`}
+                                style={{ minWidth: CELL_W, width: CELL_W, background: ausente ? fondoAusencia : salida ? "#f3f4f6" : undefined }}
+                                title={ausente ? "Ausencia registrada" : salida ? "Ex-houser — sin capacidad activa esta semana" : preIngreso ? "Pre-ingreso" : ascenso ? "Ascenso" : undefined}
                               >
-                                {ausente ? (
+                                {inactivo ? (
                                   <div className="flex flex-col items-center justify-center gap-px">
                                     <span className="text-[10px] font-bold text-[#9ca3af]">0</span>
-                                    <span className="text-[8px] font-semibold text-[#d1d5db] uppercase tracking-wide leading-none">Aus.</span>
+                                    <span className="text-[8px] font-semibold text-[#d1d5db] uppercase tracking-wide leading-none">{ausente ? "Aus." : "Ex."}</span>
+                                  </div>
+                                ) : ascenso ? (
+                                  <div className="flex flex-col items-center justify-center gap-px">
+                                    <span className="text-[10px] font-bold text-slate-300">0</span>
+                                    <span className="text-[8px] font-semibold text-slate-300 uppercase tracking-wide leading-none">Asc.</span>
+                                  </div>
+                                ) : preIngreso ? (
+                                  <div className="flex flex-col items-center justify-center gap-px">
+                                    <span className="text-[10px] font-bold text-slate-300">0</span>
+                                    <span className="text-[8px] font-semibold text-slate-300 uppercase tracking-wide leading-none">Pre-ing.</span>
                                   </div>
                                 ) : (
                                   <input
                                     type="number"
                                     min={0} max={10} step={0.5}
                                     value={v}
-                                    onChange={(e) => handleChange(p.id, sem, e.target.value)}
+                                    onChange={(e) => handleChange(p, sem, e.target.value)}
                                     onFocus={(e) => e.target.select()}
                                     className="w-9 text-center text-[11px] font-bold rounded border py-0.5 focus:outline-none focus:ring-1 focus:ring-[#2563eb] focus:border-[#2563eb] transition-all duration-300"
                                     style={{
@@ -841,7 +958,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                       {Array.from(monthGroups.entries()).flatMap(([mk, { semanas: ms }]) => {
                         const isCollapsed = collapsedMonths.has(mk);
                         if (isCollapsed) {
-                          const avgSum = ms.reduce((acc, s) => acc + equipo.reduce((a, p) => a + getValEfectivo(p.id, s).value, 0), 0) / ms.length;
+                          const avgSum = ms.reduce((acc, s) => acc + equipo.reduce((a, p) => a + getValEfectivo(p, s).value, 0), 0) / ms.length;
                           return [
                             <td key={`total-${cargo}-${mk}`}
                               className="py-1 text-center border-l-2 border-l-[#d1d5db]"
@@ -854,7 +971,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                           ];
                         }
                         return ms.map((sem, i) => {
-                          const suma = equipo.reduce((acc, p) => acc + getValEfectivo(p.id, sem).value, 0);
+                          const suma = equipo.reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
                           const esBottle = GRUPOS_BOTTLENECK.includes(cargo) && bottleneckPorSemana[sem] === cargo;
                           return (
                             <td key={sem}

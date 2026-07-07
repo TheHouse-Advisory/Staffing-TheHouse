@@ -479,6 +479,9 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
                       className="w-full border border-[#e0e0e0] rounded-lg px-2.5 py-2 text-[12px] text-[#1a1a1a] bg-white focus:outline-none focus:border-[#4a90e2] transition-colors"
                     >
                       <option value="">Seleccionar cargo…</option>
+                      {p.cargo && !(ESCALONES_FORM as readonly string[]).includes(p.cargo) && (
+                        <option value={p.cargo}>{p.cargo}</option>
+                      )}
                       {ESCALONES_FORM.map((c) => (
                         <option key={c} value={c}>{c}</option>
                       ))}

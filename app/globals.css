@@ -38,3 +38,11 @@
     border-radius: 3px;
   }
 }
+
+/* Zoom real: escala geometría (px, rem, layout) sin depender de unidades relativas.
+   La mayoría de las vistas usan clases con px fijos (ej. text-[10px]), por lo que
+   ninguna técnica basada en font-size en cascada (em/rem) las afecta. */
+.layout-zoom {
+  zoom: 1.15;
+  transition: zoom 0.2s ease-in-out;
+}

@@ -7,10 +7,13 @@ import {
   ChevronRight, ChevronDown, TrendingUp,
 } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
+import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
 import {
   fetchCapacityData,
   labelSemana,
   cargoAGrupo,
+  diasPorTipoEnSemana,
+  estiloFondoAusencia,
   CAPACITY_GRUPO_ORDER,
   type CapacityData,
   type AusenciaCapacity,
@@ -64,13 +67,6 @@ function cellStyle(v: number): { background: string; color: string } {
   return        { background: "#bfdbfe", color: "#1d4ed8" };
 }
 
-function semanaTieneAusencia(semana: string, ausencias: AusenciaCapacity[]): boolean {
-  const d = new Date(semana + "T00:00:00");
-  d.setDate(d.getDate() + 6);
-  const domingo = d.toISOString().split("T")[0];
-  return ausencias.some(a => a.fecha_inicio <= domingo && a.fecha_fin >= semana);
-}
-
 function esDesarrollo(cargo: string | null): boolean {
   return (cargo ?? "").toLowerCase().includes("desarrollo");
 }
@@ -85,6 +81,7 @@ export default function CapacityProyectosPage() {
   const [loading, setLoading] = useState(true);
   const [colapsados, setColapsados]           = useState<Set<string>>(new Set());
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
+  const { tipos: tiposAusenciaDinamicos } = useTiposAusencia();
 
   // ── Fetch ──────────────────────────────────────────────────
   useEffect(() => {
@@ -135,15 +132,19 @@ export default function CapacityProyectosPage() {
     return map;
   }, [data]);
 
-  /** Valor efectivo de una persona en una semana (0 si ausente) */
+  /** Valor efectivo de una persona en una semana (0 si ausente, con fondo por tipo predominante) */
   const getValEfectivo = useCallback(
-    (pid: string, sem: string): { value: number; ausente: boolean } => {
+    (p: PersonaCapacity, sem: string): { value: number; ausente: boolean; fondoAusencia?: string } => {
       if (!data) return { value: 0, ausente: false };
-      const ausencias = ausenciasMap.get(pid) ?? [];
-      if (semanaTieneAusencia(sem, ausencias)) return { value: 0, ausente: true };
-      return { value: getVal(data.valores, pid, sem), ausente: false };
+      const ausencias = ausenciasMap.get(p.personaId) ?? [];
+      const diasPorTipo = diasPorTipoEnSemana(sem, ausencias);
+      const totalDias = Array.from(diasPorTipo.values()).reduce((a, b) => a + b, 0);
+      if (totalDias >= 3) {
+        return { value: 0, ausente: true, fondoAusencia: estiloFondoAusencia(diasPorTipo, tiposAusenciaDinamicos) };
+      }
+      return { value: getVal(data.valores, p.personaId, sem), ausente: false };
     },
-    [ausenciasMap, data],
+    [ausenciasMap, data, tiposAusenciaDinamicos],
   );
 
   // ── Agrupación mes → semanas ───────────────────────────────
@@ -166,7 +167,7 @@ export default function CapacityProyectosPage() {
     for (const sem of data.semanas) {
       let minVal = Infinity, minGrupo = "";
       for (const g of GRUPOS_BOTTLENECK) {
-        const suma = (grupos.get(g) ?? []).reduce((acc, p) => acc + getValEfectivo(p.id, sem).value, 0);
+        const suma = (grupos.get(g) ?? []).reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
         if (suma < minVal) { minVal = suma; minGrupo = g; }
       }
       result[sem] = minGrupo;
@@ -180,7 +181,7 @@ export default function CapacityProyectosPage() {
     const result: Record<string, number> = {};
     for (const sem of data.semanas) {
       const vals = GRUPOS_BOTTLENECK.map(
-        g => (grupos.get(g) ?? []).reduce((acc, p) => acc + getValEfectivo(p.id, sem).value, 0),
+        g => (grupos.get(g) ?? []).reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0),
       );
       result[sem] = vals.length ? Math.min(...vals) : 0;
     }
@@ -381,7 +382,7 @@ export default function CapacityProyectosPage() {
                         const isCollapsedMonth = collapsedMonths.has(mk);
                         if (isCollapsedMonth) {
                           if (colapsado) {
-                            const avgSum = ms.reduce((acc, s) => acc + equipo.reduce((a, p) => a + getValEfectivo(p.id, s).value, 0), 0) / ms.length;
+                            const avgSum = ms.reduce((acc, s) => acc + equipo.reduce((a, p) => a + getValEfectivo(p, s).value, 0), 0) / ms.length;
                             const esBottle = GRUPOS_BOTTLENECK.includes(cargo) && ms.some(s => bottleneckPorSemana[s] === cargo);
                             return [
                               <td key={`chead-${mk}`}
@@ -406,7 +407,7 @@ export default function CapacityProyectosPage() {
                         }
                         if (colapsado) {
                           return ms.map((sem, i) => {
-                            const suma = equipo.reduce((acc, p) => acc + getValEfectivo(p.id, sem).value, 0);
+                            const suma = equipo.reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
                             const esBottle = GRUPOS_BOTTLENECK.includes(cargo) && bottleneckPorSemana[sem] === cargo;
                             return (
                               <td key={sem}
@@ -446,7 +447,7 @@ export default function CapacityProyectosPage() {
                         {Array.from(monthGroups.entries()).flatMap(([mk, { semanas: ms }]) => {
                           const isCollapsed = collapsedMonths.has(mk);
                           if (isCollapsed) {
-                            const vals    = ms.map(s => getValEfectivo(p.id, s));
+                            const vals    = ms.map(s => getValEfectivo(p, s));
                             const avgV    = vals.reduce((acc, { value }) => acc + value, 0) / ms.length;
                             const anyAus  = vals.some(v => v.ausente);
                             return [
@@ -464,12 +465,12 @@ export default function CapacityProyectosPage() {
                             ];
                           }
                           return ms.map((sem, i) => {
-                            const { value: v, ausente } = getValEfectivo(p.id, sem);
+                            const { value: v, ausente, fondoAusencia } = getValEfectivo(p, sem);
                             const cs = cellStyle(v);
                             return (
                               <td key={sem}
                                 className={`py-1 px-1 text-center border-b border-[#f5f5f5] ${i === 0 ? "border-l-2 border-l-[#d1d5db]" : ""}`}
-                                style={{ minWidth: CELL_W, width: CELL_W, background: ausente ? "#f3f4f6" : undefined }}
+                                style={{ minWidth: CELL_W, width: CELL_W, background: ausente ? fondoAusencia : undefined }}
                                 title={ausente ? "Ausencia registrada" : undefined}
                               >
                                 {ausente ? (
@@ -506,7 +507,7 @@ export default function CapacityProyectosPage() {
                         {Array.from(monthGroups.entries()).flatMap(([mk, { semanas: ms }]) => {
                           const isCollapsed = collapsedMonths.has(mk);
                           if (isCollapsed) {
-                            const avgSum = ms.reduce((acc, s) => acc + equipo.reduce((a, p) => a + getValEfectivo(p.id, s).value, 0), 0) / ms.length;
+                            const avgSum = ms.reduce((acc, s) => acc + equipo.reduce((a, p) => a + getValEfectivo(p, s).value, 0), 0) / ms.length;
                             return [
                               <td key={`total-${cargo}-${mk}`}
                                 className="py-1 text-center border-l-2 border-l-[#d1d5db]"
@@ -519,7 +520,7 @@ export default function CapacityProyectosPage() {
                             ];
                           }
                           return ms.map((sem, i) => {
-                            const suma     = equipo.reduce((acc, p) => acc + getValEfectivo(p.id, sem).value, 0);
+                            const suma     = equipo.reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
                             const esBottle = GRUPOS_BOTTLENECK.includes(cargo) && bottleneckPorSemana[sem] === cargo;
                             return (
                               <td key={sem}

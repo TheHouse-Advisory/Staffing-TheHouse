@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BarChart2, Grid2X2, Layers } from "lucide-react";
+import { BarChart2, Grid2X2, Layers, CalendarClock } from "lucide-react";
 import { ReportCard } from "@/components/reportes/ReportCard";
 import { TalentMatrixPreview } from "@/components/reportes/TalentMatrixPreview";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
@@ -36,6 +36,15 @@ const REPORTES = [
     iconColor: "#0ea5e9",
     iconBg: "bg-[#f0fbff]",
     href: "/reportes/capacity-proyectos",
+  },
+  {
+    id: "capacity-snapshot",
+    titulo: "Dotación por Mes (Snapshot)",
+    categoria: "Recursos",
+    icon: CalendarClock,
+    iconColor: "#0ea5e9",
+    iconBg: "bg-[#f0fbff]",
+    href: "/reportes/capacity-snapshot",
   },
 ];
 

@@ -197,9 +197,44 @@ export function PersonasList({ rolActual }: PersonasListProps) {
     load(); // recarga lista de activos
   }
 
-  async function marcarExHouser(id: string) {
+  async function marcarExHouser(id: string, fechaSalida: string) {
     setAccionando(true);
-    await sb.from("persona").update({ activo: false, is_ex_houser: true }).eq("id", id);
+    await sb.from("persona").update({ activo: false, is_ex_houser: true, fecha_salida: fechaSalida }).eq("id", id);
+
+    // PASO 1: cierra el último período de carrera previo (si existe y no es ya el hito Ex-Houser)
+    const { data: ultimoCargo } = await sb
+      .from("historial_cargos")
+      .select("id, cargo")
+      .eq("persona_id", id)
+      .order("fecha_inicio", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (ultimoCargo && ultimoCargo.cargo !== "Ex-Houser") {
+      await sb.from("historial_cargos").update({ fecha_fin: fechaSalida }).eq("id", ultimoCargo.id);
+    }
+
+    // PASO 2: hito Ex-Houser único para todos (idempotente: actualiza si ya existe)
+    const { data: hitoExistente } = await sb
+      .from("historial_cargos")
+      .select("id")
+      .eq("persona_id", id)
+      .eq("cargo", "Ex-Houser")
+      .order("fecha_inicio", { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (hitoExistente) {
+      await sb.from("historial_cargos")
+        .update({ fecha_inicio: fechaSalida, fecha_fin: fechaSalida })
+        .eq("id", hitoExistente.id);
+    } else {
+      await sb.from("historial_cargos").insert({
+        persona_id: id,
+        cargo: "Ex-Houser",
+        fecha_inicio: fechaSalida,
+        fecha_fin: fechaSalida,
+      });
+    }
+
     setAccionando(false);
     setDesactivando(null);
     setPersonas((prev) => prev.filter((p) => p.id !== id));
@@ -509,7 +544,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
         persona={desactivando}
         accionando={accionando}
         onClose={() => setDesactivando(null)}
-        onExHouser={(id) => marcarExHouser(id)}
+        onExHouser={(id, fechaSalida) => marcarExHouser(id, fechaSalida)}
         onPapelera={(id) => moverAPapelera(id)}
         modoExHouser={false}
       />
@@ -530,11 +565,13 @@ function DesactivarModal({
   persona: Persona | null;
   accionando: boolean;
   onClose: () => void;
-  onExHouser: ((id: string) => void) | null;
+  onExHouser: ((id: string, fechaSalida: string) => void) | null;
   onReactivar?: ((id: string) => void) | null;
   onPapelera: (id: string) => void;
   modoExHouser: boolean;
 }) {
+  const [fechaSalida, setFechaSalida] = useState(() => new Date().toISOString().split("T")[0]);
+
   if (!persona) return null;
   const nombre = `${persona.nombre} ${persona.apellido}`;
 
@@ -573,21 +610,32 @@ function DesactivarModal({
 
         {/* Marcar Ex-Houser (solo desde vista principal) */}
         {!modoExHouser && onExHouser && (
-          <button
-            onClick={() => onExHouser(persona.id)}
-            disabled={accionando}
-            className="w-full text-left p-4 rounded-xl border-2 border-[#e8e8e8] hover:border-[#4a90e2] hover:bg-[#f5f9ff] transition-all group disabled:opacity-50"
-          >
+          <div className="p-4 rounded-xl border-2 border-[#e8e8e8] hover:border-[#4a90e2] transition-all">
             <div className="flex items-start gap-3">
               <Archive className="w-4 h-4 text-[#4a90e2] mt-0.5 flex-shrink-0" />
-              <div>
-                <p className="text-sm font-semibold text-[#1a1a1a] group-hover:text-[#4a90e2]">Marcar como Ex-Houser</p>
-                <p className="text-xs text-[#888] mt-0.5">
+              <div className="flex-1">
+                <p className="text-sm font-semibold text-[#1a1a1a]">Marcar como Ex-Houser</p>
+                <p className="text-xs text-[#888] mt-0.5 mb-2">
                   Su perfil se archiva históricamente. Seguirá apareciendo en proyectos y asignaciones pasadas.
                 </p>
+                <label className="block text-xs font-medium text-[#555] mb-1">Fecha de salida *</label>
+                <input
+                  type="date"
+                  required
+                  value={fechaSalida}
+                  onChange={(e) => setFechaSalida(e.target.value)}
+                  className="w-full text-sm border border-[#e0e0e0] rounded-md px-2 py-1.5 mb-2"
+                />
+                <button
+                  onClick={() => onExHouser(persona.id, fechaSalida)}
+                  disabled={accionando || !fechaSalida}
+                  className="text-sm font-semibold text-[#4a90e2] hover:text-[#2f6fc4] disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  Confirmar
+                </button>
               </div>
             </div>
-          </button>
+          </div>
         )}
 
         {/* Papelera (siempre visible) */}
