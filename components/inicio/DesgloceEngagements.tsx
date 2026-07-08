@@ -6,7 +6,7 @@ import {
   subWeeks, subMonths, format, startOfMonth, endOfMonth,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, ChevronDown, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2, GripVertical, RotateCcw, Diamond, Plane, BarChart2, Search, AlertTriangle } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2, GripVertical, RotateCcw, Diamond, Plane, BarChart2, Search, AlertTriangle } from "lucide-react";
 import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
@@ -1728,11 +1728,17 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                   </button>
                 ))}
               </div>
-              <button onClick={navAnterior} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+              <button onClick={navAnterior} title="Retroceder" className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                <ChevronsLeft className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={() => setBaseInterna((b) => addDays(b, -7))} title="Retroceder 1 semana" className="p-1 rounded hover:bg-gray-100 text-gray-400">
                 <ChevronLeft className="w-3.5 h-3.5" />
               </button>
-              <button onClick={navSiguiente} className="p-1 rounded hover:bg-gray-100 text-gray-400">
+              <button onClick={() => setBaseInterna((b) => addDays(b, 7))} title="Avanzar 1 semana" className="p-1 rounded hover:bg-gray-100 text-gray-400">
                 <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={navSiguiente} title="Avanzar" className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                <ChevronsRight className="w-3.5 h-3.5" />
               </button>
             </div>
           )}

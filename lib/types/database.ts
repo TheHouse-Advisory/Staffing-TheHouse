@@ -102,6 +102,7 @@ export interface Persona {
   fecha_nacimiento: string | null;
   is_leverager: boolean;
   is_ex_houser: boolean;
+  fecha_salida: string | null;
   is_deleted: boolean;
   deleted_at: string | null;
   created_at: string;

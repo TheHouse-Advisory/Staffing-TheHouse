@@ -4,12 +4,13 @@ import { Suspense, useState, useEffect } from "react";
 import { useSearchParams } from "next/navigation";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
 import type { RolSistema } from "@/lib/types/database";
-import { startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths, addDays, format } from "date-fns";
+import { startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths, addDays, subDays, format } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft } from "lucide-react";
 import { DesgloceEngagements, type PanelInfo } from "@/components/inicio/DesgloceEngagements";
 import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTablero";
 import { PanelFitAsignacion } from "@/components/engagements/PanelFitAsignacion";
+import { NavegadorFechas } from "@/components/ui/NavegadorFechas";
 import { cn } from "@/lib/utils";
 
 type VistaPrincipal = "proyectos" | "perfil";
@@ -104,19 +105,14 @@ function TableroContent() {
         </div>
 
         {/* Navegador de fechas — siempre visible */}
-        <div className="flex items-center gap-2">
-          <button onClick={navPrev} className="w-7 h-7 rounded-md border border-[#e0e0e0] bg-white flex items-center justify-center hover:bg-[#f5f5f5] transition-colors">
-            <ChevronLeft className="w-3.5 h-3.5" />
-          </button>
-          <span className="font-semibold text-[#1a1a1a] min-w-[220px] text-center text-xs">{rangoLabel}</span>
-          <button onClick={navNext} className="w-7 h-7 rounded-md border border-[#e0e0e0] bg-white flex items-center justify-center hover:bg-[#f5f5f5] transition-colors">
-            <ChevronRight className="w-3.5 h-3.5" />
-          </button>
-          <button
-            onClick={() => setBase(startOfISOWeek(new Date()))}
-            className="ml-1 text-xs px-2.5 py-1 rounded-md border border-[#e0e0e0] hover:bg-[#f5f5f5] transition-colors text-[#555]"
-          >Hoy</button>
-        </div>
+        <NavegadorFechas
+          label={rangoLabel}
+          onPrev={navPrev}
+          onNext={navNext}
+          onPrevWeek={() => setBase((b) => subDays(b, 7))}
+          onNextWeek={() => setBase((b) => addDays(b, 7))}
+          onHoy={() => setBase(startOfISOWeek(new Date()))}
+        />
       </header>
 
       {/* ── Contenido — p-6 uniforme en ambas vistas ── */}

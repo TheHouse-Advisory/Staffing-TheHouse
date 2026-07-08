@@ -14,6 +14,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
   const router = useRouter();
   const pathname = usePathname();
   const [persona, setPersona] = useState<Persona | null>(null);
+  const [isCollapsed, setIsCollapsed] = useState(false);
 
   const loadUser = useCallback(async () => {
     const supabase = createClient();
@@ -68,8 +69,10 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         cargo={persona?.cargo_actual ?? null}
         rol={persona?.rol_sistema as RolSistema | null}
         onSignOut={handleSignOut}
+        isCollapsed={isCollapsed}
+        setIsCollapsed={setIsCollapsed}
       />
-      <main className="flex-1 flex flex-col overflow-hidden">{children}</main>
+      <main className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${isCollapsed ? "layout-zoom" : ""}`}>{children}</main>
     </div>
   );
 }

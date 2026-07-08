@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths,
-  format, isSameDay, parseISO, addDays,
+  format, isSameDay, parseISO, addDays, subDays,
 } from "date-fns";
 import { es } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell, BarChart2 } from "lucide-react";
@@ -16,6 +16,7 @@ import { DesgloceEngagements, type PanelInfo } from "@/components/inicio/Desgloc
 import { DisponiblesTablero, type AsigDetalle } from "@/components/inicio/DisponiblesTablero";
 import { PanelFitAsignacion } from "@/components/engagements/PanelFitAsignacion";
 import { PersonaResumenModal } from "@/components/personas/PersonaResumenModal";
+import { NavegadorFechas } from "@/components/ui/NavegadorFechas";
 import type { Persona } from "@/lib/types/database";
 
 const JERARQUIA_CARGOS = [
@@ -224,7 +225,7 @@ export default function InicioPage() {
   }, [personas]);
 
   return (
-    <div className="flex flex-col h-full p-6 gap-4">
+    <div className="flex flex-col h-full pt-3 px-6 pb-6 gap-3">
       {/* Top bar */}
       <div className="flex items-start justify-between flex-shrink-0">
         <div>
@@ -498,13 +499,14 @@ export default function InicioPage() {
                       </button>
                     ))}
                   </div>
-                  <button onClick={navResumenPrev} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-                    <ChevronLeft className="w-3.5 h-3.5" />
-                  </button>
-                  <span className="text-[11px] text-gray-400 whitespace-nowrap">{periodoLabel}</span>
-                  <button onClick={navResumenNext} className="p-1 rounded hover:bg-gray-100 text-gray-400">
-                    <ChevronRight className="w-3.5 h-3.5" />
-                  </button>
+                  <NavegadorFechas
+                    compact
+                    label={periodoLabel}
+                    onPrev={navResumenPrev}
+                    onNext={navResumenNext}
+                    onPrevWeek={() => setSemanaResumen((s) => subDays(s, 7))}
+                    onNextWeek={() => setSemanaResumen((s) => addDays(s, 7))}
+                  />
                 </div>
               )}
 
