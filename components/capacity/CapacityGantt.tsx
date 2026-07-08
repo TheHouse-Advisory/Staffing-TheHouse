@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import { ChevronDown, ChevronRight, Loader2, Pencil, X, Check, TrendingUp } from "lucide-react";
+import { ChevronDown, ChevronRight, Loader2, Pencil, X, Check, TrendingUp, Eye } from "lucide-react";
 import { differenceInCalendarDays } from "date-fns";
 import { createClient } from "@/lib/supabase/client";
 import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
@@ -337,6 +337,26 @@ function esDesarrollo(cargo: string | null): boolean {
   return (cargo ?? "").toLowerCase().includes("desarrollo");
 }
 
+/** Día 15 del mes evaluado (fecha de referencia estable para ubicar vigencia de cargo) */
+function fechaRefDelMes(year: number, mesIdx: number): string {
+  return `${year}-${String(mesIdx + 1).padStart(2, "0")}-15`;
+}
+
+/** De las filas partidas por ascenso de una misma persona, elige la vigente en el mes evaluado */
+function personaParaMes(filas: PersonaCapacity[], year: number, mesIdx: number): PersonaCapacity {
+  if (filas.length === 1) return filas[0];
+  const ordenadas = [...filas].sort((a, b) =>
+    (a.vigenciaInicio ?? "0000-00-00").localeCompare(b.vigenciaInicio ?? "0000-00-00")
+  );
+  const fechaRef = fechaRefDelMes(year, mesIdx);
+  const match = ordenadas.find(f => {
+    const okInicio = !f.vigenciaInicio || f.vigenciaInicio <= fechaRef;
+    const okFin = !f.vigenciaFin || f.vigenciaFin >= fechaRef;
+    return okInicio && okFin;
+  });
+  return match ?? ordenadas[ordenadas.length - 1];
+}
+
 export interface CapacityStats {
   /** grupo → semana → suma de capacidades */
   grupoTotales: Record<string, Record<string, number>>;
@@ -354,6 +374,8 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
   const [valores, setValores] = useState<Record<string, Record<string, number>>>({});
   const [colapsados, setColapsados] = useState<Set<string>>(new Set());
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
+  // mes (0=Ene) usado para decidir en qué cargo/grupo se ubica a cada persona con historial de ascenso
+  const [selectedVisualMonth, setSelectedVisualMonth] = useState(0);
   // grupo activo para el modal bulk
   const [bulkGrupo, setBulkGrupo] = useState<string | null>(null);
   // persona activa para el modal individual
@@ -377,8 +399,54 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
 
   useEffect(() => { cargar(); }, [cargar]);
 
+  // Todas las filas (incluidas las partidas por ascenso), indexadas por persona real.
+  // Sirve tanto para elegir qué fila mostrar (grupos) como para reconstruir el
+  // valor histórico de un cargo anterior en una celda atenuada (ver filaOrigenAscenso).
+  const filasPorPersona = useMemo(() => {
+    const map = new Map<string, PersonaCapacity[]>();
+    if (!data) return map;
+    for (const p of data.personas) {
+      if (!map.has(p.personaId)) map.set(p.personaId, []);
+      map.get(p.personaId)!.push(p);
+    }
+    return map;
+  }, [data]);
+
   // Debe declararse ANTES que los hooks que lo usan
+  // SOLO decide qué fila física se muestra por persona (una por mes, sin duplicar).
+  // Los totales/sumatorias NO deben usar este mapa — ver `gruposTotal`.
   const grupos = useMemo(() => {
+    if (!data) return new Map<string, PersonaCapacity[]>();
+
+    const map = new Map<string, PersonaCapacity[]>();
+    for (const filas of filasPorPersona.values()) {
+      const fila = personaParaMes(filas, year, selectedVisualMonth);
+      if (esDesarrollo(fila.cargo_actual)) continue;
+      const g = cargoAGrupo(fila.cargo_actual);
+      if (!map.has(g)) map.set(g, []);
+      map.get(g)!.push(fila);
+    }
+    // Orden por antigüedad en el cargo (más antiguo arriba) — estable entre meses,
+    // no depende del orden de carga de `data.personas`.
+    for (const filas of map.values()) {
+      filas.sort((a, b) => {
+        if (!a.cargoDesde && !b.cargoDesde) return a.apellido.localeCompare(b.apellido, "es");
+        if (!a.cargoDesde) return 1;
+        if (!b.cargoDesde) return -1;
+        return a.cargoDesde.localeCompare(b.cargoDesde) || a.apellido.localeCompare(b.apellido, "es");
+      });
+    }
+    const ordered = new Map<string, PersonaCapacity[]>();
+    for (const g of CAPACITY_GRUPO_ORDER) { if (map.has(g)) ordered.set(g, map.get(g)!); }
+    for (const [g, ps] of map) { if (!ordered.has(g)) ordered.set(g, ps); }
+    return ordered;
+  }, [data, filasPorPersona, year, selectedVisualMonth]);
+
+  // Totales por grupo EXACTOS: usa TODAS las filas partidas por ascenso, cada una
+  // sumando a su propio cargo de origen — independiente de qué fila esté mostrada
+  // visualmente en `grupos`. Así "Total · Seniors"/"Total · Consultores" nunca
+  // pierden ni duplican la capacidad histórica de alguien con un ascenso en el año.
+  const gruposTotal = useMemo(() => {
     if (!data) return new Map<string, PersonaCapacity[]>();
     const map = new Map<string, PersonaCapacity[]>();
     for (const p of data.personas) {
@@ -387,11 +455,12 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
       if (!map.has(g)) map.set(g, []);
       map.get(g)!.push(p);
     }
-    const ordered = new Map<string, PersonaCapacity[]>();
-    for (const g of CAPACITY_GRUPO_ORDER) { if (map.has(g)) ordered.set(g, map.get(g)!); }
-    for (const [g, ps] of map) { if (!ordered.has(g)) ordered.set(g, ps); }
-    return ordered;
+    return map;
   }, [data]);
+
+  function toggleVisualMonth(mesIdx: number) {
+    setSelectedVisualMonth(prev => (prev === mesIdx ? 0 : mesIdx));
+  }
 
   // persona_id → lista de ausencias del año (para lookup O(n) por semana)
   const ausenciasMap = useMemo((): Map<string, AusenciaCapacity[]> => {
@@ -492,6 +561,20 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     [ausenciasMap, valores, tiposAusenciaDinamicos]
   );
 
+  /**
+   * Para una celda "ascenso" (fuera de la vigencia de la fila mostrada), busca la
+   * OTRA fila de la misma persona vigente esa semana — su cargo de origen/destino —
+   * para poder renderizar la capacidad real que tuvo ahí, atenuada, en vez de un 0 plano.
+   */
+  function filaOrigenAscenso(personaId: string, sem: string, filaActualId: string): PersonaCapacity | null {
+    const filas = filasPorPersona.get(personaId) ?? [];
+    return filas.find(f =>
+      f.id !== filaActualId &&
+      (!f.vigenciaInicio || f.vigenciaInicio <= sem) &&
+      (!f.vigenciaFin || f.vigenciaFin >= sem)
+    ) ?? null;
+  }
+
   const monthGroups = useMemo(() => {
     if (!data) return new Map<string, { label: string; semanas: string[] }>();
     const map = new Map<string, { label: string; semanas: string[] }>();
@@ -508,14 +591,14 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
   useEffect(() => {
     if (!data) return;
     const gt: Record<string, Record<string, number>> = {};
-    for (const [grupo, equipo] of grupos.entries()) {
+    for (const [grupo, equipo] of gruposTotal.entries()) {
       gt[grupo] = {};
       for (const sem of data.semanas) {
         gt[grupo][sem] = equipo.reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
       }
     }
     onStatsChange?.({ grupoTotales: gt, semanas: data.semanas });
-  }, [valores, data, grupos, getValEfectivo]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [valores, data, gruposTotal, getValEfectivo]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // bottleneck por semana: cuál de los grupos limitantes tiene el mínimo
   const bottleneckPorSemana = useMemo((): Record<string, string> => {
@@ -525,13 +608,13 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
       let minVal = Infinity;
       let minGrupo = "";
       for (const g of GRUPOS_BOTTLENECK) {
-        const suma = (grupos.get(g) ?? []).reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
+        const suma = (gruposTotal.get(g) ?? []).reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
         if (suma < minVal) { minVal = suma; minGrupo = g; }
       }
       result[sem] = minGrupo;
     }
     return result;
-  }, [valores, data, grupos, getValEfectivo]);
+  }, [valores, data, gruposTotal, getValEfectivo]);
 
   // capacidad real por semana = min de los grupos bottleneck
   const capacidadRealPorSemana = useMemo((): Record<string, number> => {
@@ -539,12 +622,12 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     const result: Record<string, number> = {};
     for (const sem of data.semanas) {
       const vals = GRUPOS_BOTTLENECK.map(
-        g => (grupos.get(g) ?? []).reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0)
+        g => (gruposTotal.get(g) ?? []).reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0)
       );
       result[sem] = vals.length ? Math.min(...vals) : 0;
     }
     return result;
-  }, [valores, data, grupos, getValEfectivo]);
+  }, [valores, data, gruposTotal, getValEfectivo]);
 
   function toggleCargo(cargo: string) {
     setColapsados(prev => { const s = new Set(prev); s.has(cargo) ? s.delete(cargo) : s.add(cargo); return s; });
@@ -692,16 +775,27 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
               <th className="sticky left-0 z-30 bg-[#fafafa] border-b border-r border-[#ebebeb]" style={{ minWidth: 220, width: 220 }} />
               {Array.from(monthGroups.entries()).flatMap(([mk, { label, semanas: ms }]) => {
                 const isCollapsed = collapsedMonths.has(mk);
+                const mesIdx = parseInt(mk.split("-")[1], 10) - 1;
+                const esMesSeleccionado = selectedVisualMonth === mesIdx;
                 if (isCollapsed) {
                   return [
                     <th key={`mes-${mk}`}
                       className="bg-[#fafafa] border-b border-l-2 border-l-[#d1d5db] border-[#ebebeb] px-1 py-1 text-center"
                       style={{ minWidth: COLLAPSED_W, width: COLLAPSED_W }}
                     >
-                      <button onClick={() => toggleMonth(mk)} className="flex items-center justify-center gap-0.5 w-full">
-                        <ChevronRight className="w-3 h-3 text-[#6b7280]" />
-                        <span className="text-[9px] font-bold text-[#6b7280] uppercase tracking-wide">{label}</span>
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => toggleMonth(mk)} className="flex items-center gap-0.5">
+                          <ChevronRight className="w-3 h-3 text-[#6b7280]" />
+                          <span className="text-[9px] font-bold text-[#6b7280] uppercase tracking-wide">{label}</span>
+                        </button>
+                        <button
+                          onClick={() => toggleVisualMonth(mesIdx)}
+                          title={`Ver dotación por cargo vigente en ${label}`}
+                          className={`p-0.5 rounded transition-colors ${esMesSeleccionado ? "text-[#2563eb]" : "text-[#c7cbd1] hover:text-[#6b7280]"}`}
+                        >
+                          <Eye className="w-3 h-3" />
+                        </button>
+                      </div>
                     </th>
                   ];
                 }
@@ -711,10 +805,19 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                     style={{ minWidth: CELL_W, width: CELL_W }}
                   >
                     {i === 0 && (
-                      <button onClick={() => toggleMonth(mk)} className="flex items-center justify-center gap-0.5 w-full">
-                        <ChevronDown className="w-3 h-3 text-[#6b7280]" />
-                        <span className="text-[9px] font-bold text-[#6b7280] uppercase tracking-wide">{label}</span>
-                      </button>
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => toggleMonth(mk)} className="flex items-center gap-0.5">
+                          <ChevronDown className="w-3 h-3 text-[#6b7280]" />
+                          <span className="text-[9px] font-bold text-[#6b7280] uppercase tracking-wide">{label}</span>
+                        </button>
+                        <button
+                          onClick={() => toggleVisualMonth(mesIdx)}
+                          title={`Ver dotación por cargo vigente en ${label}`}
+                          className={`p-0.5 rounded transition-colors ${esMesSeleccionado ? "text-[#2563eb]" : "text-[#c7cbd1] hover:text-[#6b7280]"}`}
+                        >
+                          <Eye className="w-3 h-3" />
+                        </button>
+                      </div>
                     )}
                   </th>
                 ));
@@ -754,6 +857,9 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
           <tbody>
             {Array.from(grupos.entries()).map(([cargo, equipo]) => {
               const colapsado = colapsados.has(cargo);
+              // Sumatoria exacta del cargo (incluye a quienes tuvieron un ascenso en el año,
+              // cada uno aportando solo en su cargo de origen) — NO usar `equipo` para totales.
+              const equipoTotal = gruposTotal.get(cargo) ?? equipo;
               return (
                 <React.Fragment key={cargo}>
 
@@ -787,7 +893,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                       const isCollapsedMonth = collapsedMonths.has(mk);
                       if (isCollapsedMonth) {
                         if (colapsado) {
-                          const avgSum = ms.reduce((acc, s) => acc + equipo.reduce((a, p) => a + getValEfectivo(p, s).value, 0), 0) / ms.length;
+                          const avgSum = ms.reduce((acc, s) => acc + equipoTotal.reduce((a, p) => a + getValEfectivo(p, s).value, 0), 0) / ms.length;
                           const esBottle = GRUPOS_BOTTLENECK.includes(cargo) && ms.some(s => bottleneckPorSemana[s] === cargo);
                           return [
                             <td key={`chead-${mk}`}
@@ -812,7 +918,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                       }
                       if (colapsado) {
                         return ms.map((sem, i) => {
-                          const suma = equipo.reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
+                          const suma = equipoTotal.reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
                           const esBottle = GRUPOS_BOTTLENECK.includes(cargo) && bottleneckPorSemana[sem] === cargo;
                           return (
                             <td key={sem}
@@ -905,11 +1011,24 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                             const { value: v, ausente, salida, preIngreso, ascenso, fondoAusencia } = getValEfectivo(p, sem);
                             const inactivo = ausente || salida;
                             const flash = flashCells.has(`${p.id}:${sem}`);
+                            const filaOrigen = ascenso ? filaOrigenAscenso(p.personaId, sem, p.id) : null;
+                            const grupoOrigen = filaOrigen ? cargoAGrupo(filaOrigen.cargo_actual) : null;
+                            const vOrigen = filaOrigen ? getValEfectivo(filaOrigen, sem).value : 0;
+                            // Dirección temporal respecto a la vigencia de ESTA fila: si `sem` cae antes de que
+                            // empezara, es semana previa al ascenso; si cae después de que terminó, es posterior.
+                            const esAntesDeVigencia = !!p.vigenciaInicio && sem < p.vigenciaInicio;
+                            const etiquetaAsc = esAntesDeVigencia ? "pre-asc." : "post-asc.";
                             return (
                               <td key={sem}
                                 className={`py-1 px-1 text-center border-b border-[#f5f5f5] ${i === 0 ? "border-l-2 border-l-[#d1d5db]" : ""} ${(preIngreso || ascenso) ? "bg-slate-100/50" : ""}`}
                                 style={{ minWidth: CELL_W, width: CELL_W, background: ausente ? fondoAusencia : salida ? "#f3f4f6" : undefined }}
-                                title={ausente ? "Ausencia registrada" : salida ? "Ex-houser — sin capacidad activa esta semana" : preIngreso ? "Pre-ingreso" : ascenso ? "Ascenso" : undefined}
+                                title={
+                                  ausente ? "Ausencia registrada"
+                                  : salida ? "Ex-houser — sin capacidad activa esta semana"
+                                  : preIngreso ? "Pre-ingreso"
+                                  : ascenso ? (grupoOrigen ? `Este valor está sumando al total de ${grupoOrigen} en esta semana debido a su capacidad previa al ascenso` : "Ascenso")
+                                  : undefined
+                                }
                               >
                                 {inactivo ? (
                                   <div className="flex flex-col items-center justify-center gap-px">
@@ -917,10 +1036,18 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                                     <span className="text-[8px] font-semibold text-[#d1d5db] uppercase tracking-wide leading-none">{ausente ? "Aus." : "Ex."}</span>
                                   </div>
                                 ) : ascenso ? (
-                                  <div className="flex flex-col items-center justify-center gap-px">
-                                    <span className="text-[10px] font-bold text-slate-300">0</span>
-                                    <span className="text-[8px] font-semibold text-slate-300 uppercase tracking-wide leading-none">Asc.</span>
-                                  </div>
+                                  filaOrigen ? (
+                                    <div className="flex items-center justify-center bg-slate-100 opacity-60 rounded px-0.5 py-0.5">
+                                      <span className="text-[9px] font-bold text-orange-500 whitespace-nowrap">
+                                        *({vOrigen}) {etiquetaAsc}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div className="flex flex-col items-center justify-center gap-px">
+                                      <span className="text-[10px] font-bold text-slate-300">0</span>
+                                      <span className="text-[8px] font-semibold text-slate-300 uppercase tracking-wide leading-none">Asc.</span>
+                                    </div>
+                                  )
                                 ) : preIngreso ? (
                                   <div className="flex flex-col items-center justify-center gap-px">
                                     <span className="text-[10px] font-bold text-slate-300">0</span>
@@ -958,7 +1085,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                       {Array.from(monthGroups.entries()).flatMap(([mk, { semanas: ms }]) => {
                         const isCollapsed = collapsedMonths.has(mk);
                         if (isCollapsed) {
-                          const avgSum = ms.reduce((acc, s) => acc + equipo.reduce((a, p) => a + getValEfectivo(p, s).value, 0), 0) / ms.length;
+                          const avgSum = ms.reduce((acc, s) => acc + equipoTotal.reduce((a, p) => a + getValEfectivo(p, s).value, 0), 0) / ms.length;
                           return [
                             <td key={`total-${cargo}-${mk}`}
                               className="py-1 text-center border-l-2 border-l-[#d1d5db]"
@@ -971,7 +1098,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                           ];
                         }
                         return ms.map((sem, i) => {
-                          const suma = equipo.reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
+                          const suma = equipoTotal.reduce((acc, p) => acc + getValEfectivo(p, sem).value, 0);
                           const esBottle = GRUPOS_BOTTLENECK.includes(cargo) && bottleneckPorSemana[sem] === cargo;
                           return (
                             <td key={sem}

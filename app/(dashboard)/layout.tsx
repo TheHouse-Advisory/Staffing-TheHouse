@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { Sidebar } from "@/components/layout/Sidebar";
+import { CommandPalette } from "@/components/layout/CommandPalette";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
 import type { Persona, RolSistema } from "@/lib/types/database";
 
@@ -73,6 +74,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         setIsCollapsed={setIsCollapsed}
       />
       <main className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${isCollapsed ? "layout-zoom" : ""}`}>{children}</main>
+      <CommandPalette />
     </div>
   );
 }

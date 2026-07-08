@@ -64,6 +64,8 @@ export interface PersonaCapacity {
   /** Solo en filas partidas por ascenso: rango de vigencia de este cargo (clipeado al año). null = sin restricción */
   vigenciaInicio: string | null;
   vigenciaFin: string | null;
+  /** Fecha real (sin recortar al año) desde que ocupa ESTE cargo — historial_cargos.fecha_inicio, o fecha_ingreso si no hay historial */
+  cargoDesde: string | null;
 }
 
 export interface AusenciaCapacity {
@@ -209,7 +211,7 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
   const [persRes, ausRes] = await Promise.all([
     supabase
       .from("persona")
-      .select("id, nombre, apellido, cargo_actual, iniciales, fecha_salida, fecha_ingreso")
+      .select("id, nombre, apellido, cargo_actual, iniciales, fecha_salida, fecha_ingreso, created_at")
       .eq("is_deleted", false)
       .or(`is_ex_houser.eq.false,fecha_salida.gte.${inicioAnio},fecha_salida.is.null`)
       .order("apellido"),
@@ -267,6 +269,9 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
       fecha_salida: (p as any).fecha_salida ?? null,
       fecha_ingreso: (p as any).fecha_ingreso ?? null,
     };
+    // Último recurso para ordenar por antigüedad cuando no hay fecha_ingreso ni historial_cargos:
+    // created_at siempre existe (lo pone Supabase al crear la fila).
+    const creadoEn: string | null = (p as any).created_at ? String((p as any).created_at).split("T")[0] : null;
     const periodos = historialPorPersona.get(p.id) ?? [];
 
     if (periodos.length >= 2) {
@@ -281,9 +286,12 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
           seniority_order: seniorityIdx(per.cargo),
           vigenciaInicio,
           vigenciaFin,
+          cargoDesde: per.fecha_inicio ?? base.fecha_ingreso ?? creadoEn, // fecha real (sin recortar) de inicio de ESTE periodo
         });
       });
     } else {
+      // Sin ascenso este año: antigüedad en el cargo = inicio del único periodo en historial_cargos,
+      // o fecha_ingreso si la persona no tiene historial registrado.
       personas.push({
         id: p.id,
         ...base,
@@ -291,6 +299,7 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
         seniority_order: seniorityIdx(p.cargo_actual),
         vigenciaInicio: null,
         vigenciaFin: null,
+        cargoDesde: periodos[0]?.fecha_inicio ?? base.fecha_ingreso ?? creadoEn,
       });
     }
   }

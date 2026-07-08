@@ -71,7 +71,8 @@ export default function CapacityPage() {
 
     return Array.from(meses.entries()).map(([key, { semanas: sems, mes }]) => {
       const vals       = sems.map(s => capacidadRealPorSemana[s] ?? 0);
-      const promedio   = Math.floor(vals.reduce((a, b) => a + b, 0) / vals.length);
+      // Redondeo a 1 decimal (no truncar): un promedio de 5.5 debe verse "5.5", no "5".
+      const promedio   = Math.round((vals.reduce((a, b) => a + b, 0) / vals.length) * 10) / 10;
       // bottleneck más frecuente del mes
       const btCount: Record<string, number> = {};
       for (const s of sems) { const g = bottleneckPorSemana[s]; if (g) btCount[g] = (btCount[g] ?? 0) + 1; }
@@ -116,7 +117,7 @@ export default function CapacityPage() {
               <div className="flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-[#2563eb]" />
                 <div>
-                  <p className="text-[10px] text-[#6b7280] leading-none">Capacidad real de venta mensual</p>
+                  <p className="text-[10px] text-[#6b7280] leading-none">Capacity de proyectos / mensual</p>
                   <p className="text-[18px] font-black text-[#1d4ed8] leading-tight">{capReal} proyectos</p>
                 </div>
               </div>
