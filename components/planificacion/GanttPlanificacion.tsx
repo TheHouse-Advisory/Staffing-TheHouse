@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { format, startOfISOWeek, addWeeks, addDays } from "date-fns";
+import { format, addDays } from "date-fns";
 import { es } from "date-fns/locale";
 import { Plus, X, Loader2, FlaskConical, Save, AlertTriangle, RotateCcw, RefreshCw, Trash2, MessageSquare, Pencil, FolderX, ChevronDown, ChevronRight } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
@@ -308,11 +308,6 @@ export function GanttPlanificacion() {
   const [drawerAnotacionesId, setDrawerAnotacionesId] = useState<string | null>(null);
   const [modalConfirmarRechazo, setModalConfirmarRechazo] = useState<{ id: string; nombre: string } | null>(null);
   const [verArchivados, setVerArchivados] = useState(false);
-
-  // Semana de navegación para la grilla
-  const [semana, setSemana] = useState(() => startOfISOWeek(new Date()));
-  const COLS = 6; // semanas visibles
-  const columnas = Array.from({ length: COLS }, (_, i) => addWeeks(semana, i));
 
   // Carga inicial: usuario actual + planes
   useEffect(() => {
@@ -831,6 +826,28 @@ export function GanttPlanificacion() {
         (e.personas ?? []).forEach(p => console.log(`      persona: ${p.nombre} ${p.apellido} | cargo: ${p.cargo} | ${p.fecha_inicio} → ${p.fecha_fin}`));
       });
 
+      // 0c. Validar fechas ANTES de tocar la BD real (evita dejar el tablero sin asignaciones
+      //     si el insert falla a mitad de camino). Si a la persona le falta una de sus dos fechas
+      //     propias, se usan AMBAS del engagement — nunca se mezcla una fecha de la persona con
+      //     una del engagement, que es lo que produce fecha_fin < fecha_inicio.
+      const fechasInvalidas = snapshotConfirmado.flatMap((eng) =>
+        (eng.personas ?? []).map((p) => {
+          const tieneFechasPropias = Boolean(p.fecha_inicio && p.fecha_fin);
+          const fecha_inicio = tieneFechasPropias ? p.fecha_inicio : eng.fecha_inicio;
+          const fecha_fin    = tieneFechasPropias ? p.fecha_fin    : eng.fecha_fin;
+          return { eng, p, fecha_inicio, fecha_fin };
+        })
+      ).filter((x) => !x.fecha_inicio || !x.fecha_fin || x.fecha_fin < x.fecha_inicio);
+
+      if (fechasInvalidas.length > 0) {
+        const detalle = fechasInvalidas
+          .map((x) => `${x.p.nombre} ${x.p.apellido} en "${x.eng.nombre}" (${x.fecha_inicio ?? "sin inicio"} → ${x.fecha_fin ?? "sin fin"})`)
+          .join("; ");
+        throw new Error(
+          `No se puede publicar: ${fechasInvalidas.length} asignación(es) con fechas faltantes o fecha de fin anterior a la de inicio. Corrige en el Gantt antes de republicar: ${detalle}`
+        );
+      }
+
       // A. Snapshot de asignaciones reales actuales → data_real_previa
       const { data: asigActuales, error: fetchErr } = await sb
         .from("asignacion")
@@ -931,16 +948,19 @@ export function GanttPlanificacion() {
             ? (eng.reqs ?? []).find((r) => r.id === p.requerimiento_id)
             : null;
           const cargoFinal = reqSnap?.cargo_requerido || p.cargo || null;
+          // Par de fechas coherente: si falta una fecha propia de la persona, se usan AMBAS del
+          // engagement (nunca se mezcla una fecha de la persona con una del engagement).
+          const tieneFechasPropias = Boolean(p.fecha_inicio && p.fecha_fin);
           return {
             engagement_id:    idMap.get(eng.id) ?? eng.id,
             persona_id:       p.id,
             cargo_al_momento: cargoFinal,
             pct_dedicacion:   p.pct ?? 100,
-            fecha_inicio:     (p.fecha_inicio || eng.fecha_inicio) || null,
-            fecha_fin:        (p.fecha_fin    || eng.fecha_fin)    || null,
+            fecha_inicio:     (tieneFechasPropias ? p.fecha_inicio : eng.fecha_inicio) || null,
+            fecha_fin:        (tieneFechasPropias ? p.fecha_fin    : eng.fecha_fin)    || null,
             estado:           "activa",
             estado_staffing:  "CONFIRMADO",
-            requerimiento_id: null, // los IDs simulados no existen en DB real
+            requerimiento_id: p.requerimiento_id ?? null, // requerimiento real (no hay IDs simulados de requerimiento)
           };
         })
       ).filter((a) => a.persona_id && a.engagement_id && a.fecha_inicio && a.fecha_fin);
@@ -1026,6 +1046,7 @@ export function GanttPlanificacion() {
       // planAprobado → fuerza re-fetch completo del Tablero en Inicio
       window.dispatchEvent(new CustomEvent("planAprobado"));
       window.dispatchEvent(new CustomEvent("asignacionChanged"));
+      window.dispatchEvent(new CustomEvent("engagementChanged")); // DesgloceEngagements (Tablero/Inicio) solo escucha este evento
       router.refresh();
       setModalAprobar(false);
       setExitoMsg(`✅ Escenario "${plan.nombre}" publicado. ${nuevasAsig.length} asignaciones aplicadas. Ve a Inicio > Tablero para ver los cambios.`);
@@ -1097,6 +1118,7 @@ export function GanttPlanificacion() {
       setSandboxKey((k) => k + 1);
       window.dispatchEvent(new CustomEvent("planAprobado"));
       window.dispatchEvent(new CustomEvent("asignacionChanged"));
+      window.dispatchEvent(new CustomEvent("engagementChanged")); // DesgloceEngagements (Tablero/Inicio) solo escucha este evento
       router.refresh(); // invalida caché → re-fetch al navegar a Inicio
       setModalDeshacer(false);
       setExitoMsg(`↩ Aprobación revertida. ${realPrevia.length} asignaciones originales restauradas.`);
@@ -1499,6 +1521,7 @@ export function GanttPlanificacion() {
                   pct: p.pct ?? 100,
                   fecha_inicio: p.fecha_inicio,
                   fecha_fin: p.fecha_fin,
+                  asignacionId: p.asignacionId ?? null,
                 })),
                 reqs: (eg.reqs ?? []).map((r: any) => ({
                   id: r.id,
