@@ -301,6 +301,37 @@ export interface Ausencia {
   created_at: string;
 }
 
+export type EstadoPlanSimulacion = "Borrador" | "Aceptado" | "Rechazado";
+
+/**
+ * plan_simulacion: escenarios de la vista Planificación (create_plan_simulacion.sql +
+ * plan_simulacion_approval.sql). `id` es TEXT (no UUID) — se genera en el frontend
+ * como "plan_<timestamp>". Los campos `data_*` son snapshots JSON del Gantt
+ * (ver tipo EngSnap en components/planificacion/GanttPlanificacion.tsx), no se tipan en detalle aquí.
+ */
+export interface PlanSimulacion {
+  id: string;
+  nombre: string;
+  estado: EstadoPlanSimulacion;
+  creado_en: string;
+  creado_por: string | null;
+  data_simulada: unknown;
+  data_real_previa: unknown | null;
+  data_real_original: unknown | null;
+}
+
+/**
+ * anotacion_escenario: comentarios sobre un plan_simulacion (AnotacionesDrawer.tsx).
+ * No hay script de creación en supabase/ — columnas inferidas del código, no confirmadas contra el schema real.
+ */
+export interface AnotacionEscenario {
+  id: string;
+  escenario_id: string;
+  user_id: string;
+  texto: string;
+  creado_en: string;
+}
+
 // ─────────────────────────────────────────────────────────────
 //  VISTAS — columnas exactas según el schema
 // ─────────────────────────────────────────────────────────────
@@ -444,6 +475,24 @@ export type Database = {
         Row: Ausencia;
         Insert: Omit<Ausencia, "id" | "created_at" | "fuente"> & { fuente?: "manual" | "importacion_buk" };
         Update: Partial<Omit<Ausencia, "id" | "created_at">>;
+        Relationships: [];
+      };
+      plan_simulacion: {
+        Row: PlanSimulacion;
+        Insert: Omit<PlanSimulacion, "estado" | "creado_en" | "data_simulada" | "data_real_previa" | "data_real_original"> & {
+          estado?: EstadoPlanSimulacion;
+          creado_en?: string;
+          data_simulada?: unknown;
+          data_real_previa?: unknown | null;
+          data_real_original?: unknown | null;
+        };
+        Update: Partial<Omit<PlanSimulacion, "id">>;
+        Relationships: [];
+      };
+      anotacion_escenario: {
+        Row: AnotacionEscenario;
+        Insert: Omit<AnotacionEscenario, "id" | "creado_en">;
+        Update: never; // el código actual solo hace INSERT/SELECT/DELETE, nunca UPDATE
         Relationships: [];
       };
     };

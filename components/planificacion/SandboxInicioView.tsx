@@ -156,7 +156,7 @@ function snapToEngRows(snapshot: EngSnap[]): any[] {
           cargo_requerido: r.cargo_requerido ?? null,
           pct_dedicacion: r.pct_dedicacion ?? 100,
           fecha_inicio: r.fecha_inicio,
-          fecha_fin: r.fecha_fin ?? e.fecha_fin,
+          fecha_fin: r.fecha_fin ?? r.fecha_inicio,
           fase_nombre: r.fase_nombre ?? null,
           persona_nombre: personaAsig
             ? `${personaAsig.nombre} ${personaAsig.apellido}`.trim()
