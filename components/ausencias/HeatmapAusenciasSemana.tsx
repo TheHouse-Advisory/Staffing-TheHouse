@@ -542,6 +542,9 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                           {fila.persona.is_leverager && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
                             <span className="w-4 h-4 rounded-full bg-[#3b5bdb] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>A</span>
                           )}
+                          {rolActual === "admin" && fila.persona.referente && (
+                            <span className="w-4 h-4 rounded-full bg-[#e2884a] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>R</span>
+                          )}
                           <div className="min-w-0 flex-1 overflow-hidden">
                             <button
                               type="button"

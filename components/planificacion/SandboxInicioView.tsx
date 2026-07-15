@@ -215,6 +215,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
   const [ausenciasActivas, setAusenciasActivas] = useState<{ persona_id: string; fecha_inicio: string; fecha_fin: string }[]>([]);
   const [loading, setLoading]         = useState(true);
   const [seleccionada, setSeleccionada] = useState<Persona | null>(null);
+  const [isAdmin, setIsAdmin]         = useState(false);
 
   // Panel recomendaciones (simulación)
   const [panelReq, setPanelReq]           = useState<PanelInfo | null>(null);
@@ -384,9 +385,16 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
       const hoy = format(new Date(), "yyyy-MM-dd");
       const en7dias = format(addDays(new Date(), 7), "yyyy-MM-dd");
 
+      // Rol del usuario actual — solo para mostrar el badge "Referente" a admins
+      const { data: { user } } = await sb.auth.getUser();
+      if (user) {
+        const { data: personaData } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
+        setIsAdmin((personaData as any)?.rol_sistema === "admin");
+      }
+
       const [persRes, asigDetalleRes, ausRes] = await Promise.all([
         sb.from("persona")
-          .select("id, nombre, apellido, iniciales, cargo_actual, is_leverager, fecha_ingreso")
+          .select("id, nombre, apellido, iniciales, cargo_actual, is_leverager, referente, fecha_ingreso")
           .eq("activo", true).order("cargo_actual").order("apellido"),
         (sb as any).from("asignacion")
           .select("persona_id, fecha_fin, engagement:engagement_id(tipo)")
@@ -525,6 +533,9 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
                                     {p.is_leverager && (
                                       <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#3b5bdb] border-2 border-white flex items-center justify-center text-white font-bold leading-none" style={{ fontSize: 7 }}>A</span>
                                     )}
+                                    {isAdmin && p.referente && (
+                                      <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#e2884a] border-2 border-white flex items-center justify-center text-white font-bold leading-none" style={{ fontSize: 7 }}>R</span>
+                                    )}
                                   </div>
                                   <span className="text-[9px] font-bold px-1 py-0.5 rounded-full leading-none"
                                     style={{ background: oc.bg, color: oc.text }}>
@@ -541,7 +552,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
                 )}
 
                 {seleccionada && (
-                  <PersonaResumenModal personaId={seleccionada.id} onClose={() => setSeleccionada(null)} simulationSnapshot={snapshot as any} ocultarMatriz={readOnly} />
+                  <PersonaResumenModal personaId={seleccionada.id} onClose={() => setSeleccionada(null)} simulationSnapshot={snapshot as any} ocultarMatriz={readOnly} isAdmin={isAdmin} />
                 )}
               </div>
             )}

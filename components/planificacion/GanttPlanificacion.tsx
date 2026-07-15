@@ -12,6 +12,14 @@ import { AnotacionesDrawer } from "@/components/planificacion/AnotacionesDrawer"
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 
+// Etiqueta corta de tipo de engagement para el log de cambios
+function tipoLabelCorto(tipo: string): string {
+  if (tipo === "ayuda_interna") return "Desarrollo Interno";
+  if (tipo === "propuesta") return "Propuesta";
+  if (tipo === "posibles_proyectos") return "Posible Proyecto";
+  return "Proyecto";
+}
+
 // ─── Tipos ────────────────────────────────────────────────────
 
 interface PersonaAsig {
@@ -1154,7 +1162,7 @@ export function GanttPlanificacion() {
           if (e.id.startsWith("sim_eng_") || !prodSet.has(e.id)) {
             changes.push({
               etiqueta: "Nuevo",
-              descripcion: `"${e.nombre}"${e.cliente ? ` — ${e.cliente}` : ""} (${e.tipo === "ayuda_interna" ? "Desarrollo Interno" : e.tipo === "propuesta" ? "Propuesta" : "Proyecto"})`,
+              descripcion: `"${e.nombre}"${e.cliente ? ` — ${e.cliente}` : ""} (${tipoLabelCorto(e.tipo)})`,
               color: "green",
             });
           }
@@ -1166,7 +1174,7 @@ export function GanttPlanificacion() {
           if (!snapIds.has(e.id)) {
             changes.push({
               etiqueta: "Eliminado",
-              descripcion: `"${e.nombre}"${e.cliente ? ` — ${e.cliente}` : ""} (${e.tipo === "ayuda_interna" ? "Desarrollo Interno" : e.tipo === "propuesta" ? "Propuesta" : "Proyecto"})`,
+              descripcion: `"${e.nombre}"${e.cliente ? ` — ${e.cliente}` : ""} (${tipoLabelCorto(e.tipo)})`,
               color: "red",
             });
           }

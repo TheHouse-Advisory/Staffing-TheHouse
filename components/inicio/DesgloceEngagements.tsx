@@ -6,15 +6,17 @@ import {
   subWeeks, subMonths, format, startOfMonth, endOfMonth,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2, GripVertical, RotateCcw, Diamond, Plane, BarChart2, Search, AlertTriangle } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2, GripVertical, RotateCcw, Diamond, Plane, BarChart2, Search, AlertTriangle, CheckCircle, Undo2 } from "lucide-react";
 import Link from "next/link";
 import { createAnyClient } from "@/lib/supabase/client";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
 import { ColaboradorModal } from "@/components/engagements/ColaboradorModal";
+import { ArchivarEliminarModal } from "@/components/engagements/ArchivarEliminarModal";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import type { Engagement } from "@/lib/types/database";
 import { COLOR_AUSENCIA } from "@/lib/queries/ausencias";
+import { cambiarEstadoEngagement, cambiarTipoEngagement } from "@/lib/queries/engagements";
 
 // ── Cargos Asociado y Consultor Senior son la misma categoría visual ──
 const GRUPO_SENIOR = ["Asociado", "Consultor Senior", "Asociado / Consultor Senior"];
@@ -55,6 +57,14 @@ const COLORES: Record<string, string> = {
 };
 const COLOR_DEFAULT = "#94a3b8";
 const DIAS_SEMANA_LABELS = ["L", "M", "X", "J", "V"];
+
+// Badge de tipo en el modal de detalle del engagement
+const TIPO_BADGE: Record<string, { bg: string; text: string; label: string }> = {
+  proyecto:           { bg: "#eaf4ff", text: "#1a5276", label: "Proyecto" },
+  propuesta:          { bg: "#f5f0ff", text: "#6b21a8", label: "Propuesta" },
+  ayuda_interna:      { bg: "#f0fdf4", text: "#15803d", label: "Desarrollo interno" },
+  posibles_proyectos: { bg: "#fef3e2", text: "#b45309", label: "Posibles proyectos" },
+};
 
 type Vista = "dia" | "semana" | "mes";
 interface Columna { label: string; sublabel: string; inicio: Date; fin: Date; }
@@ -302,6 +312,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     cargoRequerido: string | null;
   } | null>(null);
   const [pendingDropFechas, setPendingDropFechas] = useState<{ inicio: string; fin: string }>({ inicio: "", fin: "" });
+  const [pendingDropPct, setPendingDropPct] = useState(100);
 
   // Modal truncar desasignación
   const [pendingDesasignar, setPendingDesasignar] = useState<{
@@ -542,8 +553,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const [dragOverGhostKey, setDragOverGhostKey] = useState<string | null>(null);
   const [ghostLoading, setGhostLoading] = useState<string | null>(null);
 
-  // Papelera
-  const [confirmPapeleraDesg, setConfirmPapeleraDesg] = useState<{ id: string; nombre: string } | null>(null);
+  // Papelera / archivo — modal de decisión al presionar el basurero de un engagement
+  const [confirmAccionEng, setConfirmAccionEng] = useState<{ id: string; nombre: string } | null>(null);
+  const [accionandoEng, setAccionandoEng] = useState(false);
 
   // Popup resumen persona (mantenido como estado legacy, ya no se usa directamente)
   const [avatarPopup, setAvatarPopup] = useState<{ personaId: string; x: number; y: number } | null>(null);
@@ -994,6 +1006,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     // Abre modal de confirmación — el insert real ocurre en confirmDrop
     setPendingDrop({ eng, personaId: data.personaId, nombre: data.nombre, apellido: data.apellido, cargo_actual: data.cargo_actual, fechaInicio, fechaFin, reqMatch, cargoRequerido });
     setPendingDropFechas({ inicio: fechaInicio, fin: fechaFin });
+    setPendingDropPct(100);
   }
 
   /** Ejecuta el insert real tras confirmar en el modal D&D.
@@ -1008,15 +1021,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
     const sb = createAnyClient();
     let reqId: string;
-    let pctReq = 100;
+    const pctReq = Math.min(100, Math.max(0, Number(pendingDropPct) || 0));
 
     if (reqMatch) {
       reqId = reqMatch.id;
-      pctReq = reqMatch.pct_dedicacion ?? 100;
     } else {
       const { data: newReq, error: reqErr } = await (sb as any)
         .from("requerimiento_engagement")
-        .insert({ engagement_id: eng.id, cargo_requerido: cargoRequerido, fase_nombre: null, pct_dedicacion: 100, fecha_inicio: fechaInicio, fecha_fin: fechaFin, descripcion: null })
+        .insert({ engagement_id: eng.id, cargo_requerido: cargoRequerido, fase_nombre: null, pct_dedicacion: pctReq, fecha_inicio: fechaInicio, fecha_fin: fechaFin, descripcion: null })
         .select("id").single();
       if (reqErr || !newReq) return;
       reqId = (newReq as any).id;
@@ -1314,18 +1326,69 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     refresh(engId);
   }
 
-  // Mover engagement a papelera
-  async function moverAPapelera(id: string) {
-    // ── SIMULACIÓN: quitar engagement del estado local ───────────────────
+  // Confirma un "Posible proyecto" como proyecto real (tipo → 'proyecto')
+  async function confirmarProyectoReal(eng: EngRow) {
     if (simulationMode) {
-      setEngs((prev) => prev.filter((eg) => eg.id !== id));
-      setConfirmPapeleraDesg(null);
+      setEngs((prev) => prev.map((eg) => (eg.id !== eng.id ? eg : { ...eg, tipo: "proyecto" })));
+      showToast("¡Proyecto confirmado de forma exitosa!");
       return;
     }
-    // ────────────────────────────────────────────────────────────────────
+    const sb2 = createAnyClient();
+    await cambiarTipoEngagement(sb2, eng.id, "proyecto");
+    showToast("¡Proyecto confirmado de forma exitosa!");
+    refresh();
+  }
+
+  // Degrada un "Proyecto" a "Posible proyecto" (tipo → 'posibles_proyectos')
+  async function moverAPosibleProyecto(eng: EngRow) {
+    if (simulationMode) {
+      setEngs((prev) => prev.map((eg) => (eg.id !== eng.id ? eg : { ...eg, tipo: "posibles_proyectos" })));
+      showToast("Proyecto movido a Posible de forma exitosa");
+      return;
+    }
+    const sb2 = createAnyClient();
+    await cambiarTipoEngagement(sb2, eng.id, "posibles_proyectos");
+    showToast("Proyecto movido a Posible de forma exitosa");
+    refresh();
+  }
+
+  // Mover engagement al Archivo Histórico (estado='terminado') — desaparece de vistas operativas
+  async function archivarEngagementDesg() {
+    if (!confirmAccionEng) return;
+    const { id, nombre } = confirmAccionEng;
+    setAccionandoEng(true);
+    if (simulationMode) {
+      setEngs((prev) => prev.filter((eg) => eg.id !== id));
+      setAccionandoEng(false);
+      setConfirmAccionEng(null);
+      showToast(`"${nombre}" movido al Archivo Histórico.`);
+      return;
+    }
+    const sb2 = createAnyClient();
+    await cambiarEstadoEngagement(sb2, id, "terminado");
+    setAccionandoEng(false);
+    setConfirmAccionEng(null);
+    showToast(`"${nombre}" movido al Archivo Histórico.`);
+    refresh();
+  }
+
+  // Mover engagement a papelera (soft-delete, recuperable 30 días)
+  async function eliminarEngagementDesg() {
+    if (!confirmAccionEng) return;
+    const { id, nombre } = confirmAccionEng;
+    setAccionandoEng(true);
+    if (simulationMode) {
+      setEngs((prev) => prev.filter((eg) => eg.id !== id));
+      setAccionandoEng(false);
+      setConfirmAccionEng(null);
+      showToast(`"${nombre}" eliminado.`);
+      return;
+    }
     const sb2 = createAnyClient();
     await sb2.from("engagement").update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq("id", id);
-    setConfirmPapeleraDesg(null);
+    setAccionandoEng(false);
+    setConfirmAccionEng(null);
+    showToast(`"${nombre}" movido a la papelera. Podrás recuperarlo durante 30 días.`);
     refresh();
   }
 
@@ -1660,69 +1723,62 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           </div>
         </div>
       )}
-      {/* Barra de controles — se oculta cuando la navegación es controlada externamente */}
-      <div className="flex flex-col gap-1.5 mb-3 flex-shrink-0">
-        {/* Fila 1: acciones principales + Resumen */}
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            {!readOnly && <button
-              onClick={() => { setEngToEdit(undefined); setFormOpen(true); }}
-              className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white transition-colors hover:opacity-90"
-              style={{ background: "#4a90e2" }}
-            >
-              <Plus className="w-3 h-3" />
-              Nuevo proyecto
-            </button>}
-            {engs.length > 0 && (
-              <button
-                onClick={colapsados.size === engs.length ? expandirTodos : colapsarTodos}
-                className="text-[11px] px-2.5 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
-              >
-                {colapsados.size === engs.length ? "Expandir todos" : "Colapsar todos"}
-              </button>
-            )}
-            {/* Botón Deshacer */}
-            {!ocultarPctEquipo && <button
-              onClick={handleUndo}
-              disabled={!undoStack.length || undoing}
-              title={undoStack.length ? `Deshacer: ${undoStack[undoStack.length - 1]?.label}` : "Sin acciones para deshacer"}
-              className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/30 hover:bg-blue-50 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400 disabled:hover:border-gray-100 transition-all"
-            >
-              {undoing
-                ? <Loader2 className="w-3 h-3 animate-spin" />
-                : <RotateCcw className="w-3 h-3" />}
-              <span>Deshacer{undoStack.length > 1 ? ` (${undoStack.length})` : ""}</span>
-            </button>}
-          </div>
-          {/* Resumen — oculto en readOnly */}
-          {!readOnly && <Link
-            href="/reportes/resumen-proyectos"
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-gray-200 text-[10px] text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/40 hover:bg-blue-50 transition-all"
-          >
-            <BarChart2 className="w-2.5 h-2.5" />
-            <span>Resumen</span>
-          </Link>}
-        </div>
-        {/* Fila 2: buscador + controles de vista */}
-        <div className="flex items-center justify-between">
-          {/* Buscador multi-criterio */}
-          <div className="relative flex items-center">
+      {/* Barra de controles — fila única ultra-compacta; se oculta cuando la navegación es controlada externamente */}
+      <div className="flex flex-row items-center justify-between gap-2 py-1 mb-2 flex-shrink-0">
+        {/* Bloque izquierdo: buscador + nuevo proyecto */}
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="relative flex items-center max-w-[240px] w-full">
             <Search className="absolute left-2 w-3 h-3 text-gray-400 pointer-events-none" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               placeholder="Buscar por proyecto, código, cliente o persona..."
-              className="pl-6 pr-2.5 py-1 text-[11px] rounded-lg border border-gray-200 bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#4a90e2] focus:ring-1 focus:ring-[#4a90e2]/30 w-64 transition-all"
+              className="pl-6 pr-2.5 py-1.5 text-[11px] rounded-lg border border-gray-200 bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#4a90e2] focus:ring-1 focus:ring-[#4a90e2]/30 w-full transition-all"
             />
           </div>
-          {/* Controles internos: solo visibles cuando no hay control externo */}
+          {!readOnly && <button
+            onClick={() => { setEngToEdit(undefined); setFormOpen(true); }}
+            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-semibold text-white transition-colors hover:opacity-90 whitespace-nowrap"
+            style={{ background: "#4a90e2" }}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            Nuevo proyecto
+          </button>}
+        </div>
+
+        {/* Bloque central: acciones secundarias (historial) */}
+        <div className="flex items-center gap-1.5 flex-shrink-0">
+          {engs.length > 0 && (
+            <button
+              onClick={colapsados.size === engs.length ? expandirTodos : colapsarTodos}
+              title={colapsados.size === engs.length ? "Expandir todos" : "Colapsar todos"}
+              className="text-xs px-2 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors whitespace-nowrap"
+            >
+              {colapsados.size === engs.length ? "Expandir todos" : "Colapsar todos"}
+            </button>
+          )}
+          {!ocultarPctEquipo && <button
+            onClick={handleUndo}
+            disabled={!undoStack.length || undoing}
+            title={undoStack.length ? `Deshacer: ${undoStack[undoStack.length - 1]?.label}` : "Sin acciones para deshacer"}
+            className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/30 hover:bg-blue-50 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400 disabled:hover:border-gray-100 transition-all whitespace-nowrap"
+          >
+            {undoing
+              ? <Loader2 className="w-3 h-3 animate-spin" />
+              : <RotateCcw className="w-3 h-3" />}
+            <span>Deshacer{undoStack.length > 1 ? ` (${undoStack.length})` : ""}</span>
+          </button>}
+        </div>
+
+        {/* Bloque derecho: vista, navegación y resumen */}
+        <div className="flex items-center gap-1 flex-shrink-0">
           {!vistaExterna && (
-            <div className="flex items-center gap-1">
-              <div className="flex rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold">
+            <>
+              <div className="flex rounded-md overflow-hidden border border-gray-100 text-xs font-semibold">
                 {(["dia", "semana", "mes"] as Vista[]).map((v) => (
                   <button key={v} onClick={() => setVistaInterna(v)}
-                    className="px-2.5 py-1 transition-colors"
+                    className="px-2 py-1 transition-colors"
                     style={vistaInterna === v ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
                     {v === "dia" ? "Día" : v === "semana" ? "Semana" : "Mes"}
                   </button>
@@ -1740,8 +1796,17 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               <button onClick={navSiguiente} title="Avanzar" className="p-1 rounded hover:bg-gray-100 text-gray-400">
                 <ChevronsRight className="w-3.5 h-3.5" />
               </button>
-            </div>
+            </>
           )}
+
+          {/* Resumen — oculto en readOnly */}
+          {!readOnly && <Link
+            href="/reportes/resumen-proyectos"
+            className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-gray-200 text-[10px] text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/40 hover:bg-blue-50 transition-all whitespace-nowrap"
+          >
+            <BarChart2 className="w-2.5 h-2.5" />
+            <span>Resumen</span>
+          </Link>}
         </div>
       </div>
 
@@ -1779,6 +1844,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               {[
                 { tipo: "proyecto",      label: "Proyectos",              color: "#4a90e2" },
                 { tipo: "propuesta",     label: "Propuestas comerciales", color: "#9b59b6" },
+                { tipo: "posibles_proyectos", label: "Posibles proyectos", color: "#f5a623" },
                 { tipo: "ayuda_interna", label: "Desarrollo interno",          color: "#27ae60" },
               ].flatMap(({ tipo, label, color: secColor }) => {
                 const q = searchTerm.toLowerCase().trim();
@@ -1916,6 +1982,22 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                           {/* Botones acción: ocultos en readOnly */}
                           {!readOnly && (
                           <div className="absolute right-0 top-0 bottom-0 flex items-center gap-0.5 bg-white pl-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                            {eng.tipo === "posibles_proyectos" && (
+                              <button
+                                onClick={() => confirmarProyectoReal(eng)}
+                                title="Confirmar Proyecto Real"
+                                className="p-0.5 rounded hover:bg-emerald-50 text-gray-300 hover:text-emerald-500">
+                                <CheckCircle className="w-3 h-3" />
+                              </button>
+                            )}
+                            {eng.tipo === "proyecto" && (
+                              <button
+                                onClick={() => moverAPosibleProyecto(eng)}
+                                title="Mover a Posible Proyecto"
+                                className="p-0.5 rounded hover:bg-amber-50 text-gray-300 hover:text-amber-500">
+                                <Undo2 className="w-3 h-3" />
+                              </button>
+                            )}
                             <button onClick={() => {
   prevReqsForUndoRef.current = eng.reqs ?? [];
   setEngToEdit(eng.raw);
@@ -1929,8 +2011,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               <Pencil className="w-3 h-3" />
                             </button>
                             <button
-                              onClick={() => setConfirmPapeleraDesg({ id: eng.id, nombre: eng.nombre })}
-                              title="Papelera"
+                              onClick={() => setConfirmAccionEng({ id: eng.id, nombre: eng.nombre })}
+                              title="Archivar o eliminar"
                               className="p-0.5 rounded hover:bg-red-50 text-gray-300 hover:text-red-400">
                               <Trash2 className="w-3 h-3" />
                             </button>
@@ -2576,10 +2658,10 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                   <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
                     <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
                       style={{
-                        background: engModal.tipo === "proyecto" ? "#eaf4ff" : engModal.tipo === "propuesta" ? "#f5f0ff" : "#f0fdf4",
-                        color:      engModal.tipo === "proyecto" ? "#1a5276"  : engModal.tipo === "propuesta" ? "#6b21a8"  : "#15803d",
+                        background: TIPO_BADGE[engModal.tipo]?.bg ?? "#f0fdf4",
+                        color:      TIPO_BADGE[engModal.tipo]?.text ?? "#15803d",
                       }}>
-                      {engModal.tipo === "proyecto" ? "Proyecto" : engModal.tipo === "propuesta" ? "Propuesta" : "Desarrollo interno"}
+                      {TIPO_BADGE[engModal.tipo]?.label ?? "Desarrollo interno"}
                     </span>
                   </div>
                   <h3 className="font-bold text-[#1a1a2e] text-sm leading-tight">{engModal.codigo ? `${engModal.codigo}: ${engModal.nombre}` : engModal.nombre}</h3>
@@ -2844,13 +2926,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         }}
       />
 
-      <ConfirmDialog
-        open={!!confirmPapeleraDesg}
-        onClose={() => setConfirmPapeleraDesg(null)}
-        onConfirm={() => confirmPapeleraDesg && moverAPapelera(confirmPapeleraDesg.id)}
-        title="Mover a la papelera"
-        message={`¿Estás seguro de que quieres mover "${confirmPapeleraDesg?.nombre}" a la papelera? Podrás recuperarlo durante los próximos 30 días.`}
-        confirmLabel="Mover a papelera"
+      <ArchivarEliminarModal
+        open={!!confirmAccionEng}
+        nombre={confirmAccionEng?.nombre ?? ""}
+        loading={accionandoEng}
+        onClose={() => setConfirmAccionEng(null)}
+        onArchivar={archivarEngagementDesg}
+        onEliminar={eliminarEngagementDesg}
       />
 
       {/* ── Modal: Ausencias parciales detectadas al staffear ── */}
@@ -2978,6 +3060,20 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                   onChange={(e) => setPendingDropFechas((f) => ({ ...f, fin: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
                 />
+              </div>
+              <div>
+                <label className="block text-[11px] font-medium text-slate-500 mb-1">Porcentaje de Carga Asignada (%)</label>
+                <div className="relative">
+                  <input
+                    type="number"
+                    min={0}
+                    max={100}
+                    value={pendingDropPct}
+                    onChange={(e) => setPendingDropPct(Math.min(100, Math.max(0, Number(e.target.value))))}
+                    className="w-full border border-gray-200 rounded-lg px-3 py-2 pr-8 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-[12px] text-slate-400">%</span>
+                </div>
               </div>
             </div>
             <div className="flex gap-2 justify-end">

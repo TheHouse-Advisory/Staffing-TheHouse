@@ -129,7 +129,7 @@ export default function InicioPage() {
       const en7dias = format(addDays(new Date(), 7), "yyyy-MM-dd");
       const [persRes, asigRes, asigDetalleRes, ausRes] = await Promise.all([
         sb.from("persona")
-          .select("id, nombre, apellido, iniciales, cargo_actual, is_leverager, fecha_ingreso")
+          .select("id, nombre, apellido, iniciales, cargo_actual, is_leverager, referente, fecha_ingreso")
           .eq("activo", true).order("cargo_actual").order("apellido"),
         sb.from("asignacion")
           .select("persona_id, pct_dedicacion")
@@ -368,6 +368,11 @@ export default function InicioPage() {
                                   A
                                 </span>
                               )}
+                              {rol === "admin" && p.referente && (
+                                <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#e2884a] border-2 border-white flex items-center justify-center text-white font-bold leading-none" style={{ fontSize: 7 }}>
+                                  R
+                                </span>
+                              )}
                             </div>
                             {rol !== "GyD" && rol !== "AySr" && (
                               <span
@@ -396,6 +401,7 @@ export default function InicioPage() {
               ocultarCarga={rol === "GyD" || rol === "AySr" || rol === "planificador"}
               ocultarApalancador={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
               ocultarInfoRestringida={rol === "planificador" || rol === "GyD" || rol === "AySr"}
+              isAdmin={rol === "admin"}
             />
           )}
         </div>

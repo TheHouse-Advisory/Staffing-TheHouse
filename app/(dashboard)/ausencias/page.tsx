@@ -89,7 +89,7 @@ export default function AusenciasPage() {
       const desde = new Date(yearAnio, startMonthQ - 1, 1 - 6).toISOString().split("T")[0];
       const hasta = new Date(yearAnio, startMonthQ + 2, 0 + 6).toISOString().split("T")[0];
       const [persRes, ausRes] = await Promise.all([
-        sb.from("persona").select("id, nombre, apellido, cargo_actual, is_leverager").eq("activo", true),
+        sb.from("persona").select("id, nombre, apellido, cargo_actual, is_leverager, referente").eq("activo", true),
         sb.from("ausencia").select("persona_id, tipo, fecha_inicio, fecha_fin").lte("fecha_inicio", hasta).gte("fecha_fin", desde),
       ]);
       setPersonasQ((persRes.data ?? []) as PersonaTrimestral[]);
@@ -278,6 +278,7 @@ export default function AusenciasPage() {
                 personasData={personasQ}
                 ausenciasData={ausenciasQ}
                 tiposDinamicos={tiposDB}
+                rolActual={rol}
               />
             )
           )}

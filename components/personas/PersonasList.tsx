@@ -538,7 +538,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
         })()}
       </div>
 
-      <PersonaForm open={drawerOpen} onClose={() => setDrawerOpen(false)} onSuccess={load} />
+      <PersonaForm open={drawerOpen} onClose={() => setDrawerOpen(false)} onSuccess={load} isAdmin={isAdmin} />
 
       <DesactivarModal
         persona={desactivando}

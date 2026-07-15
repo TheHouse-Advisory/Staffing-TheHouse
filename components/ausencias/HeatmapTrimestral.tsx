@@ -52,6 +52,7 @@ export interface PersonaTrimestral {
   apellido: string;
   cargo_actual: string | null;
   is_leverager?: boolean;
+  referente?: boolean;
 }
 
 export interface AusenciaTrimestral {
@@ -76,6 +77,7 @@ interface HeatmapTrimestralProps {
   // Tipos de ausencia creados desde la BD (ej. "post_natal", "mba"): sin esto, cualquier
   // tipo que no esté en el catálogo estático COLOR_AUSENCIA cae al gris de fallback.
   tiposDinamicos?: TipoAusenciaDinamico[];
+  rolActual?: string | null;
 }
 
 interface DiaCol {
@@ -174,7 +176,7 @@ function cuotaColor(pct: number): { bg: string; text: string } {
   return { bg: "#fef2f2", text: "#991b1b" };
 }
 
-export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasData, tiposDinamicos = [] }: HeatmapTrimestralProps) {
+export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasData, tiposDinamicos = [], rolActual }: HeatmapTrimestralProps) {
   const meses = useMemo(() => construirMeses(year, startMonth), [year, startMonth]);
 
   // Resuelve color de un tipo: dinámico (BD) > estático (COLOR_AUSENCIA) > gris de fallback.
@@ -382,6 +384,15 @@ export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasDat
                               title="Apalancador"
                             >
                               A
+                            </span>
+                          )}
+                          {rolActual === "admin" && p.referente && (
+                            <span
+                              className="w-3 h-3 rounded-full bg-[#e2884a] flex-shrink-0 flex items-center justify-center text-white font-black leading-none"
+                              style={{ fontSize: 6 }}
+                              title="Referente"
+                            >
+                              R
                             </span>
                           )}
                           <button

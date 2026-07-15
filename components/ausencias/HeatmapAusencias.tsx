@@ -876,6 +876,9 @@ export function HeatmapAusencias({
                                   {fila.persona.is_leverager && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
                                     <span className="w-4 h-4 rounded-full bg-[#3b5bdb] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>A</span>
                                   )}
+                                  {rolActual === "admin" && fila.persona.referente && (
+                                    <span className="w-4 h-4 rounded-full bg-[#e2884a] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>R</span>
+                                  )}
                                   {ocultarPctResumen ? (
                                     <span className="text-[11px] font-medium leading-tight text-[#1a1a1a] truncate text-left">
                                       {fila.persona.nombre} {fila.persona.apellido}

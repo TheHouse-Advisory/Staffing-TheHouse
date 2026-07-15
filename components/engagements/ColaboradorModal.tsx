@@ -83,6 +83,7 @@ export function ColaboradorModal({
   const [perfilLoad,    setPerfilLoad]    = useState(false);
   const [perfilCargado, setPerfilCargado] = useState(false);
   const [showAusencias, setShowAusencias] = useState(false);
+  const [showMatriz, setShowMatriz] = useState(false);
 
   // ── Carga Tab 1 al montar ─────────────────────────────────────
   useEffect(() => {
@@ -478,20 +479,31 @@ export function ColaboradorModal({
                   {/* Talent Matrix */}
                   {(persona.talento_potencial != null || persona.talento_desempeno != null) && (
                     <div className="flex flex-col gap-2">
-                      <span className="text-gray-400 text-xs">
-                        Talento
-                        {getTalentBoxName(persona.talento_potencial, persona.talento_desempeno) && (
-                          <span className="text-[#1a1a2e] font-semibold ml-1">
-                            : {getTalentBoxName(persona.talento_potencial, persona.talento_desempeno)}
-                          </span>
-                        )}
-                      </span>
-                      <TalentMatrix
-                        potencial={persona.talento_potencial}
-                        desempeno={persona.talento_desempeno}
-                        isEditable={false}
-                        size="full"
-                      />
+                      <button
+                        onClick={() => setShowMatriz((s) => !s)}
+                        className="w-full flex justify-between items-center hover:bg-gray-50 rounded px-0.5 py-0.5 transition-colors"
+                      >
+                        <span className="text-gray-400 text-xs">
+                          Talento
+                          {getTalentBoxName(persona.talento_potencial, persona.talento_desempeno) && (
+                            <span className="text-[#1a1a2e] font-semibold ml-1">
+                              : {getTalentBoxName(persona.talento_potencial, persona.talento_desempeno)}
+                            </span>
+                          )}
+                        </span>
+                        <ChevronDown
+                          className="w-3 h-3 text-gray-300"
+                          style={{ transform: showMatriz ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}
+                        />
+                      </button>
+                      {showMatriz && (
+                        <TalentMatrix
+                          potencial={persona.talento_potencial}
+                          desempeno={persona.talento_desempeno}
+                          isEditable={false}
+                          size="full"
+                        />
+                      )}
                     </div>
                   )}
 

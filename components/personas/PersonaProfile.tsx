@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Pencil, Trash2 } from "lucide-react";
+import { Pencil, Trash2, ChevronDown } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { format, intervalToDuration } from "date-fns";
 import { es } from "date-fns/locale";
@@ -121,6 +121,7 @@ export function PersonaProfile({ id }: Props) {
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(false);
   const [isEditingTalent, setIsEditingTalent] = useState(false);
+  const [showMatriz, setShowMatriz] = useState(false);
   const [talentDraft, setTalentDraft] = useState<{ p: number | null; d: number | null }>({ p: null, d: null });
   const [ausenciasDetalle, setAusenciasDetalle] = useState<DetalleAusenciasPersona | null>(null);
   const [historial,        setHistorial]        = useState<HistorialItem[]>([]);
@@ -353,6 +354,11 @@ export function PersonaProfile({ id }: Props) {
                     Apalancador
                   </span>
                 )}
+                {persona.referente && rolActual === "admin" && (
+                  <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-[#fff7ed] text-[#b45309] border border-[#fed7aa]">
+                    • Referente
+                  </span>
+                )}
                 {persona.rol_sistema && (
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#eaf4ff] text-[#1a5276] font-medium">
                     {persona.rol_sistema}
@@ -448,7 +454,16 @@ export function PersonaProfile({ id }: Props) {
         {/* ── Matriz de Talento 9-Box ──────────────────────── */}
         {rolActual !== "planificador" && rolActual !== "GyD" && rolActual !== "AySr" && <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold">Matriz de Talento</h3>
+            <button
+              onClick={() => setShowMatriz((s) => !s)}
+              className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
+            >
+              <h3 className="font-semibold">Matriz de Talento</h3>
+              <ChevronDown
+                className="w-4 h-4 text-gray-400"
+                style={{ transform: showMatriz ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}
+              />
+            </button>
             {!isEditingTalent ? (
               <button
                 onClick={() => {
@@ -487,12 +502,14 @@ export function PersonaProfile({ id }: Props) {
               </div>
             )}
           </div>
-          <TalentMatrix
-            potencial={isEditingTalent ? talentDraft.p : persona.talento_potencial}
-            desempeno={isEditingTalent ? talentDraft.d : persona.talento_desempeno}
-            isEditable={isEditingTalent}
-            onUpdate={(p, d) => setTalentDraft({ p, d })}
-          />
+          {showMatriz && (
+            <TalentMatrix
+              potencial={isEditingTalent ? talentDraft.p : persona.talento_potencial}
+              desempeno={isEditingTalent ? talentDraft.d : persona.talento_desempeno}
+              isEditable={isEditingTalent}
+              onUpdate={(p, d) => setTalentDraft({ p, d })}
+            />
+          )}
         </div>}
 
         {/* ── Proyectos activos y futuros ───────────────────── */}
@@ -941,6 +958,7 @@ export function PersonaProfile({ id }: Props) {
             load();
           }}
           persona={persona}
+          isAdmin={rolActual === "admin"}
         />
       )}
 

@@ -26,7 +26,7 @@ export type EstadoAcceso = "invitada" | "activa" | "suspendida";
 
 export type EstadoEngagement = "activo" | "terminado";
 
-export type TipoEngagement = "propuesta" | "proyecto" | "ayuda_interna";
+export type TipoEngagement = "propuesta" | "proyecto" | "ayuda_interna" | "posibles_proyectos";
 
 export type EstadoPropuesta = "borrador" | "aprobada" | "rechazada";
 
@@ -101,6 +101,7 @@ export interface Persona {
   talento_desempeno: number | null;
   fecha_nacimiento: string | null;
   is_leverager: boolean;
+  referente: boolean;
   is_ex_houser: boolean;
   fecha_salida: string | null;
   is_deleted: boolean;

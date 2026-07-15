@@ -5,13 +5,13 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   ArrowLeft, AlertTriangle, CheckCircle, User,
-  Pencil, Trash2, Plus, X, Flame, Users,
+  Pencil, Trash2, Plus, X, Flame, Users, Archive,
 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { createClient } from "@/lib/supabase/client";
 import { createAnyClient } from "@/lib/supabase/client";
-import { fetchCoberturaEngagement } from "@/lib/queries/engagements";
+import { fetchCoberturaEngagement, cambiarEstadoEngagement, cambiarTipoEngagement } from "@/lib/queries/engagements";
 import { colorOcupacion, formatPct, fLocal } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Modal";
@@ -81,6 +81,13 @@ export function EngagementDetail({ id }: Props) {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [eliminando, setEliminando] = useState(false);
   const [eliminandoError, setEliminandoError] = useState<string | null>(null);
+
+  // Archivar (estado → 'terminado')
+  const [archivando, setArchivando] = useState(false);
+  const [toastArchivo, setToastArchivo] = useState<string | null>(null);
+
+  // Confirmar proyecto real (tipo 'posibles_proyectos' → 'proyecto')
+  const [confirmandoProyecto, setConfirmandoProyecto] = useState(false);
 
   // Requerimiento CRUD
   const [reqForm, setReqForm] = useState<ReqForm | null>(null);
@@ -232,6 +239,30 @@ export function EngagementDetail({ id }: Props) {
     router.push("/engagements");
   };
 
+  // ── Archivar engagement (estado → 'terminado') ────────────────
+  const handleArchivar = async () => {
+    if (!engagement) return;
+    setArchivando(true);
+    const sb = createAnyClient();
+    const { error } = await cambiarEstadoEngagement(sb, engagement.id, "terminado");
+    setArchivando(false);
+    if (error) { setEliminandoError(error); return; }
+    setToastArchivo("Proyecto archivado correctamente.");
+    setTimeout(() => router.push("/engagements"), 1200);
+  };
+
+  // ── Confirmar proyecto real (tipo → 'proyecto') ────────────────
+  const handleConfirmarProyecto = async () => {
+    if (!engagement) return;
+    setConfirmandoProyecto(true);
+    const sb = createAnyClient();
+    const { error } = await cambiarTipoEngagement(sb, engagement.id, "proyecto");
+    setConfirmandoProyecto(false);
+    if (error) { setEliminandoError(error); return; }
+    setEngagement((prev) => (prev ? { ...prev, tipo: "proyecto" } : prev));
+    setToastArchivo("¡Proyecto confirmado de forma exitosa!");
+  };
+
   // ── CRUD Requerimientos ────────────────────────────────────────
   const abrirNuevoReq = () => {
     setReqForm({
@@ -356,6 +387,12 @@ export function EngagementDetail({ id }: Props) {
 
   return (
     <>
+      {/* Toast archivado */}
+      {toastArchivo && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-xl shadow-lg px-4 py-2.5 text-sm font-medium">
+          {toastArchivo}
+        </div>
+      )}
       <div className="max-w-3xl space-y-5">
 
         {/* Volver */}
@@ -378,6 +415,20 @@ export function EngagementDetail({ id }: Props) {
               <p className="text-[#888]">{engagement.cliente}</p>
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
+              {!isReadOnly && engagement.tipo === "posibles_proyectos" && (
+                <Button variant="primary" size="sm" onClick={handleConfirmarProyecto} loading={confirmandoProyecto}
+                  title="Confirmar como proyecto real">
+                  <CheckCircle className="w-3.5 h-3.5" />
+                  <span className="text-xs">Confirmar Proyecto Real</span>
+                </Button>
+              )}
+              {!isReadOnly && engagement.estado === "activo" && (
+                <Button variant="ghost" size="sm" onClick={handleArchivar} loading={archivando}
+                  className="text-[#888] hover:text-[#1a1a1a]" title="Finalizar/Archivar Proyecto">
+                  <Archive className="w-3.5 h-3.5" />
+                  <span className="text-xs">Finalizar/Archivar Proyecto</span>
+                </Button>
+              )}
               {!isReadOnly && (
                 <Button variant="ghost" size="sm" onClick={() => setEditando(true)}
                   className="text-[#888] hover:text-[#1a1a1a]" title="Editar engagement">
