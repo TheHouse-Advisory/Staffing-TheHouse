@@ -90,16 +90,19 @@ interface Props {
   ocultarApalancador?: boolean;
   /** Oculta Nº proyectos, industrias, capacidades, temáticas y ausencias año para roles restringidos */
   ocultarInfoRestringida?: boolean;
+  /** Badge Referente: solo visible si el usuario actual es admin */
+  isAdmin?: boolean;
   /** Ignorado — mantenido para compatibilidad con llamadores existentes */
   anchorX?: number;
   anchorY?: number;
 }
 
-export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, ocultarMatriz = false, ocultarCarga = false, ocultarApalancador = false, ocultarInfoRestringida = false }: Props) {
+export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, ocultarMatriz = false, ocultarCarga = false, ocultarApalancador = false, ocultarInfoRestringida = false, isAdmin = false }: Props) {
   const [persona, setPersona] = useState<Persona | null>(null);
   const [resumen, setResumen] = useState<ResumenData | null>(null);
   const [loading, setLoading] = useState(true);
   const [showAusencias, setShowAusencias] = useState(false);
+  const [showMatriz, setShowMatriz] = useState(false);
   const cardRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -244,12 +247,18 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
         <div className="overflow-y-auto px-4 pb-8 flex-1 min-h-0">
           {!loading && persona && resumen && (
             <div className="space-y-2.5 text-sm">
-              {(persona.is_leverager || diasEnEmpresa(persona.fecha_ingreso)) && (
+              {(persona.is_leverager || (persona.referente && isAdmin) || diasEnEmpresa(persona.fecha_ingreso)) && (
                 <div className="flex items-center gap-2 pb-1.5 border-b border-gray-100 flex-wrap">
                   {persona.is_leverager && !ocultarApalancador && (
                     <div className="flex items-center gap-1">
                       <span className="w-1.5 h-1.5 rounded-full bg-[#3b5bdb] flex-shrink-0" />
                       <span className="text-[10px] font-bold uppercase tracking-widest text-[#3b5bdb]">Apalancador</span>
+                    </div>
+                  )}
+                  {persona.referente && isAdmin && (
+                    <div className="flex items-center gap-1">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#b45309] flex-shrink-0" />
+                      <span className="text-[10px] font-bold uppercase tracking-widest text-[#b45309]">Referente</span>
                     </div>
                   )}
                   {diasEnEmpresa(persona.fecha_ingreso) && (
@@ -424,19 +433,30 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
               )}
               {!ocultarMatriz && (persona.talento_potencial != null || persona.talento_desempeno != null) && (
                 <div className="flex flex-col gap-2">
-                  <span className="text-gray-400 text-xs">
-                    Talento{getTalentBoxName(persona.talento_potencial, persona.talento_desempeno) && (
-                      <span className="text-[#1a1a2e] font-semibold ml-1">
-                        : {getTalentBoxName(persona.talento_potencial, persona.talento_desempeno)}
-                      </span>
-                    )}
-                  </span>
-                  <TalentMatrix
-                    potencial={persona.talento_potencial}
-                    desempeno={persona.talento_desempeno}
-                    isEditable={false}
-                    size="full"
-                  />
+                  <button
+                    onClick={() => setShowMatriz((s) => !s)}
+                    className="w-full flex justify-between items-center hover:bg-gray-50 rounded px-0.5 py-0.5 transition-colors"
+                  >
+                    <span className="text-gray-400 text-xs">
+                      Talento{getTalentBoxName(persona.talento_potencial, persona.talento_desempeno) && (
+                        <span className="text-[#1a1a2e] font-semibold ml-1">
+                          : {getTalentBoxName(persona.talento_potencial, persona.talento_desempeno)}
+                        </span>
+                      )}
+                    </span>
+                    <ChevronDown
+                      className="w-3 h-3 text-gray-300"
+                      style={{ transform: showMatriz ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}
+                    />
+                  </button>
+                  {showMatriz && (
+                    <TalentMatrix
+                      potencial={persona.talento_potencial}
+                      desempeno={persona.talento_desempeno}
+                      isEditable={false}
+                      size="full"
+                    />
+                  )}
                 </div>
               )}
               <div className="flex justify-between items-center">

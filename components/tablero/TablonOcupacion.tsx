@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { format, isWeekend } from "date-fns";
 import { es } from "date-fns/locale";
-import { AlertTriangle, X, User, CheckCircle, BarChart2, Search } from "lucide-react";
+import { AlertTriangle, X, User, CheckCircle, BarChart2, Search, Undo2 } from "lucide-react";
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -12,6 +12,7 @@ import {
   type FilaDia,
   type FilaProyecto,
 } from "@/lib/queries/tablero";
+import { cambiarTipoEngagement } from "@/lib/queries/engagements";
 import { colorOcupacion, formatPct } from "@/lib/utils";
 import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 
@@ -517,6 +518,16 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
   const [diasCriticosPersona, setDiasCriticosPersona] = useState<Set<string>>(new Set());
   const [diasCriticosEng, setDiasCriticosEng] = useState<Set<string>>(new Set());
   const [collapsedMonths, setCollapsedMonths] = useState<string[]>([]);
+  const [toast, setToast] = useState<string | null>(null);
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 4000); };
+
+  // Degrada un "Proyecto" a "Posible proyecto" (tipo → 'posibles_proyectos')
+  async function moverAPosibleProyecto(fila: FilaProyecto) {
+    const supabase = createClient();
+    await cambiarTipoEngagement(supabase, fila.engagement_id, "posibles_proyectos");
+    setFilasProyecto((prev) => prev.map((f) => (f.engagement_id !== fila.engagement_id ? f : { ...f, tipo: "posibles_proyectos" })));
+    showToast("Proyecto movido a Posible de forma exitosa");
+  }
 
   const cargar = useCallback(async () => {
     setLoading(true);
@@ -787,6 +798,11 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
 
   return (
     <div className="p-6">
+      {toast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-xl shadow-lg px-4 py-2.5 text-sm font-medium">
+          {toast}
+        </div>
+      )}
       <div className="flex flex-col gap-1.5 mb-3">
         {/* Fila 1: Resumen compacto alineado a la derecha */}
         <div className="flex justify-end">
@@ -856,6 +872,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
               {[
                 { tipo: "proyecto",      label: "Proyectos",              color: "#4a90e2" },
                 { tipo: "propuesta",     label: "Propuestas comerciales", color: "#9b59b6" },
+                { tipo: "posibles_proyectos", label: "Posibles proyectos", color: "#f5a623" },
                 { tipo: "ayuda_interna", label: "Desarrollo interno",          color: "#27ae60" },
               ].flatMap(({ tipo, label, color: secColor }) => {
                 const q = searchTerm.toLowerCase().trim();
@@ -882,7 +899,17 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
                 const filasEng = lista.map((fila) => (
                   <tr key={fila.engagement_id} className="border-b border-[#f5f5f5]">
                     <td className="px-4 py-2 font-medium sticky left-0 bg-white z-10">
-                      <span className="truncate block max-w-[180px] text-sm">{fila.engagement_nombre}</span>
+                      <div className="flex items-center gap-1">
+                        <span className="truncate block max-w-[180px] text-sm">{fila.engagement_nombre}</span>
+                        {fila.tipo === "proyecto" && (
+                          <button
+                            onClick={() => moverAPosibleProyecto(fila)}
+                            title="Mover a Posible Proyecto"
+                            className="p-0.5 rounded hover:bg-amber-50 text-gray-300 hover:text-amber-500 flex-shrink-0">
+                            <Undo2 className="w-3 h-3" />
+                          </button>
+                        )}
+                      </div>
                     </td>
                     <td className="px-3 py-2 text-[#888] text-xs truncate max-w-[120px]">{fila.cliente}</td>
                     {columnas.map((col, ci) => {

@@ -3,7 +3,7 @@
  * Consume la vista cobertura_engagement del schema de Supabase.
  */
 import type { TypedSupabaseClient } from "@/lib/supabase/types";
-import type { Engagement, CoberturaEngagement } from "@/lib/types/database";
+import type { Engagement, CoberturaEngagement, TipoEngagement } from "@/lib/types/database";
 
 export interface EngagementConCobertura extends Engagement {
   tiene_alerta: boolean;
@@ -32,8 +32,8 @@ function filtroActuales(cutoff: string): string {
 }
 
 /**
- * Lista de engagements activos/propuestas ACTUALES/FUTUROS con indicador de cobertura.
- * Excluye proyectos cuya fecha de fin efectiva sea < hoy - 30 días.
+ * Lista de engagements ACTIVOS (estado = 'activo') con indicador de cobertura.
+ * Excluye proyectos cuya fecha de fin efectiva sea < hoy - 30 días y los archivados ('terminado').
  */
 export async function fetchEngagementsConCobertura(
   supabase: TypedSupabaseClient
@@ -43,7 +43,7 @@ export async function fetchEngagementsConCobertura(
   const { data: engagements, error: engError } = await supabase
     .from("engagement")
     .select("*")
-    .in("estado", ["propuesta", "activo", "pausado"])
+    .eq("estado", "activo")
     .eq("is_deleted", false)
     .or(filtroActuales(cutoff))
     .order("created_at", { ascending: false });
@@ -150,6 +150,54 @@ export async function fetchEngagementsPasados(
     totalPaginas: Math.ceil(total / PAGE_SIZE),
     error: null,
   };
+}
+
+/**
+ * Actualiza el estado de un engagement ('activo' | 'terminado').
+ * 'terminado' = archivado: desaparece de tablero/inicio/vista principal (filtran por 'activo').
+ */
+export async function cambiarEstadoEngagement(
+  supabase: TypedSupabaseClient,
+  id: string,
+  nuevoEstado: "activo" | "terminado"
+): Promise<{ error: string | null }> {
+  const { error } = await supabase
+    .from("engagement")
+    .update({ estado: nuevoEstado } as never)
+    .eq("id", id);
+  return { error: error?.message ?? null };
+}
+
+/**
+ * Actualiza el tipo de un engagement. Uso principal: confirmar 'posibles_proyectos' → 'proyecto'.
+ */
+export async function cambiarTipoEngagement(
+  supabase: TypedSupabaseClient,
+  id: string,
+  nuevoTipo: TipoEngagement
+): Promise<{ error: string | null }> {
+  const { error } = await supabase
+    .from("engagement")
+    .update({ tipo: nuevoTipo } as never)
+    .eq("id", id);
+  return { error: error?.message ?? null };
+}
+
+/**
+ * Engagements archivados manualmente (estado = 'terminado'). Sin paginar: uso en tab "Archivo Histórico".
+ */
+export async function fetchEngagementsHistoricos(
+  supabase: TypedSupabaseClient
+): Promise<{ data: Engagement[]; error: string | null }> {
+  const { data, error } = await supabase
+    .from("engagement")
+    .select("*")
+    .eq("estado", "terminado")
+    .eq("is_deleted", false)
+    .order("updated_at", { ascending: false });
+
+  if (error) return { data: [], error: error.message };
+  return { data: (data ?? []) as Engagement[], error: null };
 }
 
 /**

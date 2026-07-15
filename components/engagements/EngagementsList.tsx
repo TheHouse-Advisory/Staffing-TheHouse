@@ -3,8 +3,8 @@
 import { useState, useEffect, useCallback, useMemo, Fragment } from "react";
 import Link from "next/link";
 import {
-  Plus, AlertTriangle, Circle, Trash2, RotateCcw, X, Archive, Search,
-  ChevronLeft, ChevronRight, ChevronDown, Minimize2, Maximize2,
+  Plus, AlertTriangle, Circle, Trash2, RotateCcw, RefreshCw, X, Archive, Search,
+  ChevronRight, ChevronDown, Minimize2, Maximize2,
 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -12,8 +12,9 @@ import { createClient } from "@/lib/supabase/client";
 import { createAnyClient } from "@/lib/supabase/client";
 import {
   fetchEngagementsConCobertura,
-  fetchEngagementsPasados,
+  fetchEngagementsHistoricos,
 } from "@/lib/queries/engagements";
+import { cambiarEstadoEngagement } from "@/lib/queries/engagements";
 import { limpiarEngagementsCaducados, diasRestantesPapelera } from "@/lib/tasks/cleanupEngagements";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Modal";
@@ -24,11 +25,7 @@ import type { Engagement, RolSistema } from "@/lib/types/database";
 
 interface Props { rolActual: RolSistema | null; }
 interface EngEliminado extends Engagement { deleted_at: string; }
-type Vista = "principal" | "papelera" | "historico";
-
-// Columnas cuyo dato vive en tablas relacionales: el servidor no puede filtrarlas,
-// se manejan solo en cliente. Pasar "" al servidor evita que borre los registros.
-const COLUMNAS_ENRIQUECIDAS = new Set(["industria", "tematicas", "capacidades", "participantes"]);
+type Vista = "principal" | "papelera";
 
 interface EngExtra {
   industria: string | null;
@@ -41,6 +38,7 @@ interface EngExtra {
 const SECCIONES_DEF = [
   { tipo: "proyecto",      titulo: "Proyectos",              color: "#4a90e2", msgVacio: "No hay proyectos que coincidan con la búsqueda." },
   { tipo: "propuesta",     titulo: "Propuestas comerciales", color: "#9b59b6", msgVacio: "No hay propuestas que coincidan con la búsqueda." },
+  { tipo: "posibles_proyectos", titulo: "Posibles proyectos",     color: "#f5a623", msgVacio: "No hay posibles proyectos que coincidan con la búsqueda." },
   { tipo: "ayuda_interna", titulo: "Desarrollo interno",          color: "#27ae60", msgVacio: "No hay elementos de desarrollo interno que coincidan." },
 ] as const;
 
@@ -360,16 +358,11 @@ export function EngagementsList({ rolActual }: Props) {
   const [eliminados, setEliminados] = useState<EngEliminado[]>([]);
   const [loadingPapelera, setLoadingPapelera] = useState(false);
 
-  // Histórico
-  const [historico, setHistorico] = useState<Engagement[]>([]);
-  const [loadingHistorico, setLoadingHistorico] = useState(false);
-  const [paginaHistorico, setPaginaHistorico] = useState(1);
-  const [totalPaginasHistorico, setTotalPaginasHistorico] = useState(1);
-  const [totalHistorico, setTotalHistorico] = useState(0);
-  const [busqueda, setBusqueda] = useState("");
-  const [busquedaInput, setBusquedaInput] = useState("");
-  const [columnaFiltro, setColumnaFiltro] = useState("todas");
-  const [historicoExtra, setHistoricoExtra] = useState<Map<string, EngExtra>>(new Map());
+  // Tabs de la vista principal: Activos (default) vs Archivo Histórico (estado='terminado')
+  const [tabPrincipal, setTabPrincipal] = useState<"activos" | "archivado">("activos");
+  const [archivados, setArchivados] = useState<Engagement[]>([]);
+  const [loadingArchivados, setLoadingArchivados] = useState(false);
+  const [archivadosExtra, setArchivadosExtra] = useState<Map<string, EngExtra>>(new Map());
 
   // Búsqueda en vista principal
   const [principalBusqueda, setPrincipalBusqueda] = useState("");
@@ -381,6 +374,11 @@ export function EngagementsList({ rolActual }: Props) {
   const [confirmDefinitivo, setConfirmDefinitivo] = useState<{ id: string; nombre: string } | null>(null);
   const [accionando, setAccionando] = useState(false);
   const [papeleraCount, setPapeleraCount] = useState(0);
+
+  // Acciones directas por fila en el tab Archivo Histórico (sin modal intermedio)
+  const [procesandoHistoricoId, setProcesandoHistoricoId] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 4000); };
 
   const isAdmin = rolActual === "admin";
   const sb = createAnyClient();
@@ -403,14 +401,12 @@ export function EngagementsList({ rolActual }: Props) {
     setLoadingPapelera(false);
   }, []);
 
-  const loadHistorico = useCallback(async (pagina: number, texto: string) => {
-    setLoadingHistorico(true);
+  const loadArchivados = useCallback(async () => {
+    setLoadingArchivados(true);
     const supabase = createClient();
-    const res = await fetchEngagementsPasados(supabase, pagina, texto);
-    setHistorico(res.data);
-    setTotalHistorico(res.total);
-    setTotalPaginasHistorico(res.totalPaginas);
-    setLoadingHistorico(false);
+    const { data } = await fetchEngagementsHistoricos(supabase);
+    setArchivados(data);
+    setLoadingArchivados(false);
   }, []);
 
   useEffect(() => {
@@ -420,25 +416,7 @@ export function EngagementsList({ rolActual }: Props) {
       .then(({ count }: { count: number | null }) => setPapeleraCount(count ?? 0));
   }, [load]);
   useEffect(() => { if (vista === "papelera") loadPapelera(); }, [vista, loadPapelera]);
-  useEffect(() => { if (vista === "historico") loadHistorico(paginaHistorico, busqueda); }, [vista, paginaHistorico, busqueda, loadHistorico]);
-
-  // Debounce: sincroniza busquedaInput → busqueda para disparar fetch en servidor.
-  // Para columnas enriquecidas (relaciones), el servidor no conoce esos datos:
-  // se pasa "" para que traiga todos los registros y el filtro corra solo en cliente.
-  useEffect(() => {
-    const t = setTimeout(() => {
-      setPaginaHistorico(1);
-      setBusqueda(COLUMNAS_ENRIQUECIDAS.has(columnaFiltro) ? "" : busquedaInput);
-    }, 400);
-    return () => clearTimeout(t);
-  }, [busquedaInput, columnaFiltro]);
-
-  // Filtro client-side histórico: delega en matchEngagement
-  const historicoFiltrado = useMemo(() => {
-    const q = norm(busquedaInput.trim());
-    if (!q) return historico;
-    return historico.filter((e) => matchEngagement(e, historicoExtra.get(e.id), columnaFiltro, q));
-  }, [busquedaInput, columnaFiltro, historico, historicoExtra]);
+  useEffect(() => { if (vista === "principal" && tabPrincipal === "archivado") loadArchivados(); }, [vista, tabPrincipal, loadArchivados]);
 
   // Enriquecimiento para vista principal (industria, tematicas, capacidades, participantes)
   useEffect(() => {
@@ -474,23 +452,19 @@ export function EngagementsList({ rolActual }: Props) {
     return engagements.filter((e) => matchEngagement(e, principalExtra.get(e.id), principalColumna, q));
   }, [principalBusqueda, principalColumna, engagements, principalExtra]);
 
-  // Enriquecer datos del histórico (industria, tematicas, capacidades, participantes)
+  // Enriquecer datos del Archivo Histórico (industria, tematicas, capacidades, participantes)
   useEffect(() => {
-    if (historico.length === 0) { setHistoricoExtra(new Map()); return; }
-    const ids = historico.map((e) => e.id);
+    if (archivados.length === 0) { setArchivadosExtra(new Map()); return; }
+    const ids = archivados.map((e) => e.id);
     Promise.all([
-      // industrias únicas
       sb.from("cat_industria").select("id, nombre"),
-      // tematicas por engagement
       (sb as any).from("engagement_tematica").select("engagement_id, cat_tematica(nombre)").in("engagement_id", ids),
-      // capacidades por engagement
       (sb as any).from("engagement_capacidad").select("engagement_id, cat_capacidad(nombre)").in("engagement_id", ids),
-      // participantes (asignaciones, cualquier estado)
       (sb as any).from("asignacion").select("engagement_id, persona:persona_id(nombre, apellido, cargo_actual, iniciales)").in("engagement_id", ids),
     ]).then(([indRes, temRes, capRes, asigRes]) => {
       const indMap = new Map<string, string>((indRes.data ?? []).map((r: any) => [r.id, r.nombre]));
       const map = new Map<string, EngExtra>();
-      for (const eng of historico) {
+      for (const eng of archivados) {
         map.set(eng.id, {
           industria: eng.industria_id ? (indMap.get(eng.industria_id) ?? null) : null,
           tematicas: ((temRes.data ?? []) as any[]).filter((r) => r.engagement_id === eng.id).map((r) => r.cat_tematica?.nombre).filter(Boolean),
@@ -501,9 +475,9 @@ export function EngagementsList({ rolActual }: Props) {
             .filter((p, i, arr) => arr.findIndex((x) => x.nombre === p.nombre && x.apellido === p.apellido) === i),
         });
       }
-      setHistoricoExtra(map);
+      setArchivadosExtra(map);
     });
-  }, [historico]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [archivados]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function moverAPapelera(id: string) {
     setAccionando(true);
@@ -512,8 +486,7 @@ export function EngagementsList({ rolActual }: Props) {
     setConfirmPapelera(null);
     // Filtro optimista en ambas listas + actualizo contador
     setEngagements((prev) => prev.filter((e) => e.id !== id));
-    setHistorico((prev) => prev.filter((e) => e.id !== id));
-    setTotalHistorico((prev) => Math.max(0, prev - 1));
+    setArchivados((prev) => prev.filter((e) => e.id !== id));
     setPapeleraCount((prev) => prev + 1);
   }
 
@@ -535,10 +508,23 @@ export function EngagementsList({ rolActual }: Props) {
     loadPapelera();
   }
 
-  function handleBuscar(e: React.FormEvent) {
-    e.preventDefault();
-    setPaginaHistorico(1);
-    setBusqueda(COLUMNAS_ENRIQUECIDAS.has(columnaFiltro) ? "" : busquedaInput);
+  // ── Acciones directas del tab Archivo Histórico (sin modal) ───────────
+  async function reactivarDesdeHistorico(id: string, nombre: string) {
+    setProcesandoHistoricoId(id);
+    await cambiarEstadoEngagement(sb, id, "activo");
+    setArchivados((prev) => prev.filter((e) => e.id !== id));
+    await load(); // refresca activos para que reaparezca de inmediato
+    setProcesandoHistoricoId(null);
+    showToast(`"${nombre}" reactivado. Ya está en Proyectos Activos.`);
+  }
+
+  async function enviarPapeleraDesdeHistorico(id: string, nombre: string) {
+    setProcesandoHistoricoId(id);
+    await sb.from("engagement").update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq("id", id);
+    setArchivados((prev) => prev.filter((e) => e.id !== id));
+    setPapeleraCount((prev) => prev + 1);
+    setProcesandoHistoricoId(null);
+    showToast(`"${nombre}" enviado a la papelera. Podrás recuperarlo durante 30 días.`);
   }
 
   if (loading) return <p className="text-sm text-[#888]">Cargando...</p>;
@@ -604,207 +590,29 @@ export function EngagementsList({ rolActual }: Props) {
     </>
   );
 
-  // ── VISTA HISTÓRICO ─────────────────────────────────────────────────
-  if (vista === "historico") return (
-    <>
-      <div className="flex items-center justify-between mb-6 gap-4">
-        <div className="flex items-center gap-2">
-          <button onClick={() => setVista("principal")} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400">
-            <X className="w-4 h-4" />
-          </button>
-          <Archive className="w-4 h-4 text-[#888]" />
-          <h2 className="text-sm font-bold text-[#1a1a1a]">Archivo Histórico</h2>
-          {totalHistorico > 0 && <span className="text-xs text-[#aaa]">({totalHistorico} proyectos)</span>}
-        </div>
-        {/* Buscador */}
-        <form onSubmit={handleBuscar} className="flex items-center gap-2">
-          <select
-            value={columnaFiltro}
-            onChange={(e) => setColumnaFiltro(e.target.value)}
-            className="py-1.5 pl-2 pr-6 text-xs border border-[#e8e8e8] rounded-lg focus:outline-none focus:border-[#4a90e2] text-[#555] bg-white appearance-none cursor-pointer"
-            style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23aaa'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 6px center" }}
-          >
-            <option value="todas">Todas las columnas</option>
-            <option value="codigo">Código</option>
-            <option value="proyecto">Proyecto</option>
-            <option value="cliente">Cliente</option>
-            <option value="industria">Industria</option>
-            <option value="tematicas">Temáticas</option>
-            <option value="participantes">Participantes</option>
-            <option value="capacidades">Capacidades</option>
-            <option value="descripcion">Descripción</option>
-          </select>
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#aaa]" />
-            <input
-              type="text"
-              value={busquedaInput}
-              onChange={(e) => setBusquedaInput(e.target.value)}
-              placeholder={columnaFiltro === "todas" ? "Buscar en historial..." : `Buscar por ${columnaFiltro}...`}
-              className="pl-8 pr-3 py-1.5 text-xs border border-[#e8e8e8] rounded-lg focus:outline-none focus:border-[#4a90e2] w-48"
-            />
-          </div>
-          <button type="submit" className="text-xs px-3 py-1.5 rounded-lg bg-[#f5f5f5] hover:bg-[#eee] text-[#555] transition-colors">
-            Buscar
-          </button>
-          {busqueda && (
-            <button type="button" onClick={() => { setBusquedaInput(""); setBusqueda(""); setPaginaHistorico(1); }}
-              className="text-xs text-[#aaa] hover:text-[#555]">
-              Limpiar
-            </button>
-          )}
-        </form>
-      </div>
-
-      {busqueda && (
-        <p className="text-xs text-[#888] mb-4">
-          Buscando en historial: <span className="font-semibold text-[#1a1a1a]">"{busqueda}"</span>
-        </p>
-      )}
-
-      {loadingHistorico ? (
-        <p className="text-sm text-[#888]">Cargando historial...</p>
-      ) : (
-        <>
-          {historicoFiltrado.length === 0 ? (
-            <div className="text-center py-12 text-[#888]">
-              <Archive className="w-10 h-10 mx-auto mb-3 opacity-20" />
-              <p className="text-sm font-medium">No hay proyectos en el historial.</p>
-            </div>
-          ) : (
-          <div className="overflow-x-auto rounded-xl border border-[#e8e8e8]">
-            <table className="w-full text-xs border-collapse">
-              <thead>
-                <tr className="bg-[#f5f5f5] border-b border-[#e8e8e8]">
-                  {["Código","Proyecto","Cliente","Industria","Temáticas","Participantes","Capacidades","Inicio","Término","Descripción"].map((h) => (
-                    <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-[#888] uppercase tracking-wide whitespace-nowrap">{h}</th>
-                  ))}
-                  {isAdmin && <th className="px-3 py-2.5" />}
-                </tr>
-              </thead>
-              <tbody>
-                {historicoFiltrado.map((e, idx) => {
-                  const ex = historicoExtra.get(e.id);
-                  const fechaFin = e.fecha_fin_real ?? e.fecha_fin_estimada;
-                  const fmt = (d: string | null) => d ? format(new Date(d + "T00:00:00"), "d MMM yy", { locale: es }) : "—";
-                  return (
-                    <tr key={e.id} className={`border-b border-[#f0f0f0] hover:bg-[#fafafa] transition-colors ${idx % 2 === 0 ? "" : "bg-[#fafafa]/50"}`}>
-                      {/* Código */}
-                      <td className="px-3 py-3 font-mono text-[11px] text-[#4a90e2] whitespace-nowrap">
-                        {e.codigo || "—"}
-                      </td>
-                      {/* Nombre */}
-                      <td className="px-3 py-3 min-w-[140px]">
-                        <Link href={`/engagements/${e.id}`} className="font-semibold text-[#1a1a1a] hover:text-[#4a90e2] hover:underline transition-colors leading-tight block">
-                          {e.nombre}
-                        </Link>
-                      </td>
-                      {/* Cliente */}
-                      <td className="px-3 py-3 text-[#555] whitespace-nowrap">{e.cliente || "—"}</td>
-                      {/* Industria */}
-                      <td className="px-3 py-3 text-[#555] whitespace-nowrap">{ex?.industria || "—"}</td>
-                      {/* Temáticas */}
-                      <td className="px-3 py-3 min-w-[120px]">
-                        {ex?.tematicas.length ? (
-                          <div className="flex flex-wrap gap-1">
-                            {ex.tematicas.map((t) => (
-                              <span key={t} className="px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-700 text-[10px] font-medium whitespace-nowrap">{t}</span>
-                            ))}
-                          </div>
-                        ) : <span className="text-[#ccc]">—</span>}
-                      </td>
-                      {/* Participantes */}
-                      <td className="px-3 py-3 min-w-[160px]">
-                        {ex?.participantes.length ? (
-                          <div className="flex flex-wrap gap-1">
-                            {ex.participantes.map((p) => {
-                              const color = CARGO_COLORS[p.cargo] ?? CARGO_COLOR_DEFAULT;
-                              const initials = p.iniciales?.trim() ? p.iniciales.trim().toUpperCase().slice(0, 3) : `${p.nombre[0] ?? ""}${p.apellido[0] ?? ""}`.toUpperCase();
-                              return (
-                                <span key={`${p.nombre}${p.apellido}`}
-                                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border border-[#e8e8e8] bg-white whitespace-nowrap"
-                                  title={`${p.cargo}: ${p.nombre} ${p.apellido}`}>
-                                  <span className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] font-bold flex-shrink-0"
-                                    style={{ background: color }}>{initials}</span>
-                                  <span className="text-[#555]">{p.nombre[0]}. {p.apellido}</span>
-                                </span>
-                              );
-                            })}
-                          </div>
-                        ) : <span className="text-[#ccc]">—</span>}
-                      </td>
-                      {/* Capacidades */}
-                      <td className="px-3 py-3 min-w-[120px]">
-                        {ex?.capacidades.length ? (
-                          <div className="flex flex-wrap gap-1">
-                            {ex.capacidades.map((c) => (
-                              <span key={c} className="px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-medium whitespace-nowrap">{c}</span>
-                            ))}
-                          </div>
-                        ) : <span className="text-[#ccc]">—</span>}
-                      </td>
-                      {/* Inicio */}
-                      <td className="px-3 py-3 text-[#555] whitespace-nowrap">{fmt(e.fecha_inicio)}</td>
-                      {/* Término */}
-                      <td className="px-3 py-3 text-[#555] whitespace-nowrap">{fmt(fechaFin)}</td>
-                      {/* Descripción */}
-                      <td className="px-3 py-3 text-[#888] max-w-[200px]">
-                        <p className="truncate" title={e.descripcion ?? ""}>{e.descripcion || "—"}</p>
-                      </td>
-                      {isAdmin && (
-                        <td className="px-3 py-3">
-                          <button onClick={() => setConfirmPapelera({ id: e.id, nombre: e.nombre })}
-                            className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-400 transition-colors"
-                            title="Mover a papelera">
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </td>
-                      )}
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-          )}
-
-          {/* Paginación */}
-          {totalPaginasHistorico > 1 && (
-            <div className="flex items-center justify-center gap-3 mt-8">
-              <button
-                onClick={() => setPaginaHistorico((p) => Math.max(1, p - 1))}
-                disabled={paginaHistorico === 1}
-                className="p-2 rounded-lg border border-[#e8e8e8] hover:bg-[#f5f5f5] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                <ChevronLeft className="w-4 h-4" />
-              </button>
-              <span className="text-sm text-[#555]">
-                Página <span className="font-semibold">{paginaHistorico}</span> de <span className="font-semibold">{totalPaginasHistorico}</span>
-              </span>
-              <button
-                onClick={() => setPaginaHistorico((p) => Math.min(totalPaginasHistorico, p + 1))}
-                disabled={paginaHistorico === totalPaginasHistorico}
-                className="p-2 rounded-lg border border-[#e8e8e8] hover:bg-[#f5f5f5] disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-              >
-                <ChevronRight className="w-4 h-4" />
-              </button>
-            </div>
-          )}
-        </>
-      )}
-
-      <ConfirmDialog open={!!confirmPapelera} onClose={() => setConfirmPapelera(null)}
-        onConfirm={() => confirmPapelera && moverAPapelera(confirmPapelera.id)}
-        title="Mover a la papelera"
-        message={`¿Deseas mover "${confirmPapelera?.nombre}" a la papelera? Podrás recuperarlo durante los próximos 30 días.`}
-        confirmLabel="Mover a papelera" loading={accionando}
-      />
-    </>
-  );
-
   // ── VISTA PRINCIPAL ─────────────────────────────────────────────────
   return (
     <>
+      {/* Tabs: Proyectos Activos vs Archivo Histórico (estado='terminado') */}
+      <div className="flex items-center gap-1 border-b border-[#e8e8e8] mb-4">
+        {([
+          { key: "activos", label: "Proyectos Activos" },
+          { key: "archivado", label: "Archivo Histórico" },
+        ] as const).map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setTabPrincipal(t.key)}
+            className={`px-3 py-2 text-sm font-semibold border-b-2 transition-colors -mb-px ${
+              tabPrincipal === t.key
+                ? "border-[#4a90e2] text-[#4a90e2]"
+                : "border-transparent text-[#888] hover:text-[#555]"
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
       <div className="flex flex-col gap-4 mb-6">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3 flex-wrap">
@@ -814,11 +622,6 @@ export function EngagementsList({ rolActual }: Props) {
                 : <>{engagements.length} proyecto{engagements.length !== 1 ? "s" : ""}</>
               }
             </p>
-            <button onClick={() => setVista("historico")}
-              className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-[#e8e8e8] hover:bg-[#f5f5f5] text-[#888] transition-colors">
-              <Archive className="w-3 h-3" />
-              Archivo Histórico
-            </button>
             {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
             <button onClick={() => setVista("papelera")}
               className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-[#e8e8e8] hover:bg-[#f5f5f5] text-[#888] transition-colors">
@@ -839,51 +642,166 @@ export function EngagementsList({ rolActual }: Props) {
           )}
         </div>
 
-        {/* Buscador principal */}
-        <div className="flex items-center gap-2">
-          <select
-            value={principalColumna}
-            onChange={(e) => setPrincipalColumna(e.target.value)}
-            className="py-1.5 pl-2 pr-6 text-xs border border-[#e8e8e8] rounded-lg focus:outline-none focus:border-[#4a90e2] text-[#555] bg-white appearance-none cursor-pointer"
-            style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23aaa'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 6px center" }}
-          >
-            <option value="todas">Todas las columnas</option>
-            <option value="codigo">Código</option>
-            <option value="proyecto">Proyecto</option>
-            <option value="cliente">Cliente</option>
-            <option value="industria">Industria</option>
-            <option value="tematicas">Temáticas</option>
-            <option value="participantes">Participantes</option>
-            <option value="capacidades">Capacidades</option>
-            <option value="descripcion">Descripción</option>
-          </select>
-          <div className="relative">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#aaa]" />
-            <input
-              type="text"
-              value={principalBusqueda}
-              onChange={(e) => setPrincipalBusqueda(e.target.value)}
-              placeholder={principalColumna === "todas" ? "Buscar proyectos..." : `Buscar por ${principalColumna}...`}
-              className="pl-8 pr-3 py-1.5 text-xs border border-[#e8e8e8] rounded-lg focus:outline-none focus:border-[#4a90e2] w-52"
-            />
+        {/* Buscador principal — solo en tab Activos */}
+        {tabPrincipal === "activos" && (
+          <div className="flex items-center gap-2">
+            <select
+              value={principalColumna}
+              onChange={(e) => setPrincipalColumna(e.target.value)}
+              className="py-1.5 pl-2 pr-6 text-xs border border-[#e8e8e8] rounded-lg focus:outline-none focus:border-[#4a90e2] text-[#555] bg-white appearance-none cursor-pointer"
+              style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23aaa'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 6px center" }}
+            >
+              <option value="todas">Todas las columnas</option>
+              <option value="codigo">Código</option>
+              <option value="proyecto">Proyecto</option>
+              <option value="cliente">Cliente</option>
+              <option value="industria">Industria</option>
+              <option value="tematicas">Temáticas</option>
+              <option value="participantes">Participantes</option>
+              <option value="capacidades">Capacidades</option>
+              <option value="descripcion">Descripción</option>
+            </select>
+            <div className="relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#aaa]" />
+              <input
+                type="text"
+                value={principalBusqueda}
+                onChange={(e) => setPrincipalBusqueda(e.target.value)}
+                placeholder={principalColumna === "todas" ? "Buscar proyectos..." : `Buscar por ${principalColumna}...`}
+                className="pl-8 pr-3 py-1.5 text-xs border border-[#e8e8e8] rounded-lg focus:outline-none focus:border-[#4a90e2] w-52"
+              />
+            </div>
+            {principalBusqueda && (
+              <button type="button" onClick={() => setPrincipalBusqueda("")}
+                className="text-xs text-[#aaa] hover:text-[#555]">
+                Limpiar
+              </button>
+            )}
           </div>
-          {principalBusqueda && (
-            <button type="button" onClick={() => setPrincipalBusqueda("")}
-              className="text-xs text-[#aaa] hover:text-[#555]">
-              Limpiar
-            </button>
-          )}
-        </div>
+        )}
       </div>
 
-      <SeccionesTablaEngagements
-        engagements={engagementsFiltrados}
-        extra={principalExtra}
-        isAdmin={isAdmin}
-        hayBusqueda={!!principalBusqueda.trim()}
-        onPapelera={(id, nombre) => setConfirmPapelera({ id, nombre })}
-        rolActual={rolActual}
-      />
+      {tabPrincipal === "activos" ? (
+        <SeccionesTablaEngagements
+          engagements={engagementsFiltrados}
+          extra={principalExtra}
+          isAdmin={isAdmin}
+          hayBusqueda={!!principalBusqueda.trim()}
+          onPapelera={(id, nombre) => setConfirmPapelera({ id, nombre })}
+          rolActual={rolActual}
+        />
+      ) : loadingArchivados ? (
+        <p className="text-sm text-[#888]">Cargando archivo histórico...</p>
+      ) : archivados.length === 0 ? (
+        <div className="text-center py-12 text-[#888]">
+          <Archive className="w-10 h-10 mx-auto mb-3 opacity-20" />
+          <p className="text-sm font-medium">No hay proyectos archivados.</p>
+        </div>
+      ) : (
+        <div className="overflow-x-auto rounded-xl border border-[#e8e8e8]">
+          <table className="w-full text-xs border-collapse">
+            <thead>
+              <tr className="bg-[#f5f5f5] border-b border-[#e8e8e8]">
+                {["Código","Proyecto","Cliente","Industria","Temáticas","Participantes","Capacidades","Inicio","Término","Descripción"].map((h) => (
+                  <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-[#888] uppercase tracking-wide whitespace-nowrap">{h}</th>
+                ))}
+                {isAdmin && <th className="px-3 py-2.5" />}
+              </tr>
+            </thead>
+            <tbody>
+              {archivados.map((e, idx) => {
+                const ex = archivadosExtra.get(e.id);
+                const fechaFin = e.fecha_fin_real ?? e.fecha_fin_estimada;
+                const fmt = (d: string | null) => d ? format(new Date(d + "T00:00:00"), "d MMM yy", { locale: es }) : "—";
+                return (
+                  <tr key={e.id} className={`border-b border-[#f0f0f0] hover:bg-[#fafafa] transition-colors ${idx % 2 === 0 ? "" : "bg-[#fafafa]/50"}`}>
+                    {/* Código */}
+                    <td className="px-3 py-3 font-mono text-[11px] text-[#4a90e2] whitespace-nowrap">
+                      {e.codigo || "—"}
+                    </td>
+                    {/* Nombre */}
+                    <td className="px-3 py-3 min-w-[140px]">
+                      <Link href={`/engagements/${e.id}`} className="font-semibold text-[#1a1a1a] hover:text-[#4a90e2] hover:underline transition-colors leading-tight block">
+                        {e.nombre}
+                      </Link>
+                    </td>
+                    {/* Cliente */}
+                    <td className="px-3 py-3 text-[#555] whitespace-nowrap">{e.cliente || "—"}</td>
+                    {/* Industria */}
+                    <td className="px-3 py-3 text-[#555] whitespace-nowrap">{ex?.industria || "—"}</td>
+                    {/* Temáticas */}
+                    <td className="px-3 py-3 min-w-[120px]">
+                      {ex?.tematicas.length ? (
+                        <div className="flex flex-wrap gap-1">
+                          {ex.tematicas.map((t) => (
+                            <span key={t} className="px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-700 text-[10px] font-medium whitespace-nowrap">{t}</span>
+                          ))}
+                        </div>
+                      ) : <span className="text-[#ccc]">—</span>}
+                    </td>
+                    {/* Participantes */}
+                    <td className="px-3 py-3 min-w-[160px]">
+                      {ex?.participantes.length ? (
+                        <div className="flex flex-wrap gap-1">
+                          {ex.participantes.map((p) => {
+                            const color = CARGO_COLORS[p.cargo] ?? CARGO_COLOR_DEFAULT;
+                            const initials = p.iniciales?.trim() ? p.iniciales.trim().toUpperCase().slice(0, 3) : `${p.nombre[0] ?? ""}${p.apellido[0] ?? ""}`.toUpperCase();
+                            return (
+                              <span key={`${p.nombre}${p.apellido}`}
+                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium border border-[#e8e8e8] bg-white whitespace-nowrap"
+                                title={`${p.cargo}: ${p.nombre} ${p.apellido}`}>
+                                <span className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[8px] font-bold flex-shrink-0"
+                                  style={{ background: color }}>{initials}</span>
+                                <span className="text-[#555]">{p.nombre[0]}. {p.apellido}</span>
+                              </span>
+                            );
+                          })}
+                        </div>
+                      ) : <span className="text-[#ccc]">—</span>}
+                    </td>
+                    {/* Capacidades */}
+                    <td className="px-3 py-3 min-w-[120px]">
+                      {ex?.capacidades.length ? (
+                        <div className="flex flex-wrap gap-1">
+                          {ex.capacidades.map((c) => (
+                            <span key={c} className="px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-medium whitespace-nowrap">{c}</span>
+                          ))}
+                        </div>
+                      ) : <span className="text-[#ccc]">—</span>}
+                    </td>
+                    {/* Inicio */}
+                    <td className="px-3 py-3 text-[#555] whitespace-nowrap">{fmt(e.fecha_inicio)}</td>
+                    {/* Término */}
+                    <td className="px-3 py-3 text-[#555] whitespace-nowrap">{fmt(fechaFin)}</td>
+                    {/* Descripción */}
+                    <td className="px-3 py-3 text-[#888] max-w-[200px]">
+                      <p className="truncate" title={e.descripcion ?? ""}>{e.descripcion || "—"}</p>
+                    </td>
+                    {isAdmin && (
+                      <td className="px-3 py-3">
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => reactivarDesdeHistorico(e.id, e.nombre)}
+                            disabled={procesandoHistoricoId === e.id}
+                            className="p-1 rounded hover:bg-blue-50 text-[#ccc] hover:text-[#4a90e2] transition-colors disabled:opacity-40"
+                            title="Volver a activar proyecto">
+                            <RefreshCw className="w-3.5 h-3.5" />
+                          </button>
+                          <button onClick={() => enviarPapeleraDesdeHistorico(e.id, e.nombre)}
+                            disabled={procesandoHistoricoId === e.id}
+                            className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-400 transition-colors disabled:opacity-40"
+                            title="Enviar a la papelera">
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    )}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
 
       <EngagementForm open={drawerOpen} onClose={() => setDrawerOpen(false)} onSuccess={load} />
 
@@ -893,6 +811,13 @@ export function EngagementsList({ rolActual }: Props) {
         message={`¿Estás seguro de que quieres mover "${confirmPapelera?.nombre}" a la papelera? Podrás recuperarlo durante los próximos 30 días.`}
         confirmLabel="Mover a papelera" loading={accionando}
       />
+
+      {/* Toast de confirmación */}
+      {toast && (
+        <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] bg-emerald-50 border border-emerald-300 text-emerald-800 rounded-xl shadow-lg px-4 py-2.5 text-sm font-medium">
+          {toast}
+        </div>
+      )}
     </>
   );
 }

@@ -453,7 +453,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
 
     if (!esPropuesta) {
       if (!form.nombre.trim()) e.nombre = "Requerido";
-      if (form.tipo !== "ayuda_interna" && !form.cliente.trim()) e.cliente = "Requerido";
+      if (form.tipo !== "ayuda_interna" && form.tipo !== "posibles_proyectos" && !form.cliente.trim()) e.cliente = "Requerido";
     }
     if (form.fecha_fin_estimada && form.fecha_inicio && form.fecha_fin_estimada < form.fecha_inicio) {
       e.fecha_fin_estimada = "No puede ser anterior a la fecha de inicio";
@@ -514,7 +514,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     const payload = {
       nombre: form.nombre.trim(),
       cliente: form.cliente.trim(),
-      tipo: form.tipo as "propuesta" | "proyecto" | "ayuda_interna",
+      tipo: form.tipo as "propuesta" | "proyecto" | "ayuda_interna" | "posibles_proyectos",
       estado: form.estado as "activo" | "terminado",
       codigo: form.codigo.trim() || null,
       descripcion: form.descripcion.trim() || null,
@@ -761,9 +761,9 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           </FieldWrapper>
           <FieldWrapper
             label="Cliente"
-            required={form.tipo !== "ayuda_interna" && form.tipo !== "propuesta"}
+            required={form.tipo !== "ayuda_interna" && form.tipo !== "propuesta" && form.tipo !== "posibles_proyectos"}
             error={errors.cliente}
-            hint={form.tipo === "ayuda_interna" || form.tipo === "propuesta" ? "Opcional" : undefined}
+            hint={form.tipo === "ayuda_interna" || form.tipo === "propuesta" || form.tipo === "posibles_proyectos" ? "Opcional" : undefined}
           >
             <Input
               value={form.cliente}
@@ -881,6 +881,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
             <Select value={form.tipo} onChange={setField("tipo")}
               options={[
                 { value: "propuesta", label: "Propuesta comercial" },
+                { value: "posibles_proyectos", label: "Posibles proyectos" },
                 { value: "proyecto", label: "Proyecto" },
                 { value: "ayuda_interna", label: "Desarrollo interno" },
               ]} />

@@ -37,10 +37,14 @@ interface PersonaFormProps {
   onClose: () => void;
   onSuccess: () => void;
   persona?: Persona; // undefined = crear, definido = editar
+  /** Solo admins pueden ver/editar el campo "Referente" */
+  isAdmin?: boolean;
 }
 
 // Cargos que pueden ser apalancadores
 const CARGOS_LEVERAGER = ["Consultor Senior", "Consultor de Proyectos", "Consultor Proyecto", "Consultor Analista"];
+// Cargos que pueden ser "Referente" (incluye variantes con/sin "de Proyectos" — ver CARGOS_OCULTOS_GYD)
+const CARGOS_REFERENTE = ["Director de Proyectos", "Director", "Gerente de Proyectos", "Gerente", "Asociado"];
 
 interface FormState {
   nombre: string;
@@ -52,6 +56,7 @@ interface FormState {
   fecha_nacimiento: string;
   mentor_id: string;
   is_leverager: boolean;
+  referente: boolean;
   industrias: string[];
   capacidades: string[];
   tematicas: string[];
@@ -67,12 +72,13 @@ const EMPTY: FormState = {
   fecha_nacimiento: "",
   mentor_id: "",
   is_leverager: false,
+  referente: false,
   industrias: [],
   capacidades: [],
   tematicas: [],
 };
 
-export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormProps) {
+export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false }: PersonaFormProps) {
   const [form, setForm] = useState<FormState>(EMPTY);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [loading, setLoading] = useState(false);
@@ -141,6 +147,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
         fecha_nacimiento: persona!.fecha_nacimiento ?? "",
         mentor_id: persona!.mentor_id ?? "",
         is_leverager: persona!.is_leverager ?? false,
+        referente: persona!.referente ?? false,
         industrias: (pi.data ?? []).map((r: any) => r.industria_id),
         capacidades: (pc.data ?? []).map((r: any) => r.capacidad_id),
         tematicas: (pt.data ?? []).map((r: any) => r.tematica_id),
@@ -180,6 +187,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
       mentor_id: form.mentor_id || null,
       // Si el cargo ya no es elegible, forzar false al guardar
       is_leverager: CARGOS_LEVERAGER.includes(form.cargo_actual) ? form.is_leverager : false,
+      referente: CARGOS_REFERENTE.includes(form.cargo_actual) ? form.referente : false,
     };
 
     let personaId: string;
@@ -364,6 +372,29 @@ export function PersonaForm({ open, onClose, onSuccess, persona }: PersonaFormPr
               <span
                 className="absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
                 style={{ transform: form.is_leverager ? "translateX(18px)" : "translateX(2px)" }}
+              />
+            </button>
+          </div>
+        )}
+
+        {/* Toggle Referente — solo para cargos elegibles y solo visible para admins */}
+        {isAdmin && CARGOS_REFERENTE.includes(form.cargo_actual) && (
+          <div className="flex items-center justify-between p-3 rounded-lg border border-[#e8e8e8] bg-[#fafafa]">
+            <div>
+              <p className="text-sm font-semibold text-[#1a1a2e]">¿Es Referente?</p>
+              <p className="text-xs text-[#888] mt-0.5">
+                Director, Gerente o Asociado que actúa como referente del equipo.
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, referente: !f.referente }))}
+              className="relative w-10 h-6 rounded-full transition-colors flex-shrink-0"
+              style={{ background: form.referente ? "#4a90e2" : "#e0e0e0" }}
+            >
+              <span
+                className="absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
+                style={{ transform: form.referente ? "translateX(18px)" : "translateX(2px)" }}
               />
             </button>
           </div>
