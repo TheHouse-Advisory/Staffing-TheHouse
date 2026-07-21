@@ -95,10 +95,13 @@ export async function fetchOcupacionDiariaPersona(
   const personasData = (personasRaw ?? []) as unknown as PersonaRaw[];
 
   // 2. Asignaciones reales que solapan con la semana (incluye engagement_id para días críticos)
+  // !inner + filtro estado/is_deleted: descarta asignaciones "fantasma" de engagements borrados o no activos
   const { data: asigRaw, error: asigErr } = await supabase
     .from("asignacion")
-    .select("persona_id, engagement_id, pct_dedicacion, fecha_inicio, fecha_fin")
+    .select("persona_id, engagement_id, pct_dedicacion, fecha_inicio, fecha_fin, engagement:engagement_id!inner(estado, is_deleted)" as any)
     .eq("estado", "activa")
+    .eq("engagement.estado", "activo")
+    .eq("engagement.is_deleted", false)
     .lte("fecha_inicio", finStr)
     .or(`fecha_fin.gte.${inicioStr},fecha_fin.is.null`);
 
@@ -274,6 +277,7 @@ export async function fetchCoberturaProyecto(
     .from("engagement")
     .select("id, codigo, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
     .eq("estado", "activo")
+    .eq("is_deleted", false)
     .lte("fecha_inicio", finStr)
     .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null`);
 

@@ -111,10 +111,17 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
       const sb = createAnyClient();
       const [{ data: per }, asigRes, histRes, indRes, capRes, temRes, mentoreRes, ausDetalle] = await Promise.all([
         sb.from("persona").select("*").eq("id", personaId).single(),
-        sb.from("asignacion").select("pct_dedicacion").eq("persona_id", personaId).eq("estado", "activa"),
-        // Historial: solo asignaciones YA FINALIZADAS (fecha_fin < hoy)
+        // Ocupación: excluye asignaciones "fantasma" (engagement borrado, en papelera, no activo o ya vencida)
+        sb.from("asignacion")
+          .select("pct_dedicacion, engagement:engagement_id!inner(estado, is_deleted)" as any)
+          .eq("persona_id", personaId)
+          .eq("estado", "activa")
+          .eq("engagement.estado", "activo")
+          .eq("engagement.is_deleted", false)
+          .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().slice(0, 10)}`),
+        // Historial: solo asignaciones YA FINALIZADAS (fecha_fin < hoy), con engagement existente y no borrado
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        sb.from("asignacion").select("fecha_inicio, fecha_fin, engagement:engagement_id(id, codigo, nombre, cliente, industria:industria_id(nombre))" as any).eq("persona_id", personaId).not("fecha_fin", "is", null).lt("fecha_fin", new Date().toISOString().slice(0, 10)).order("fecha_inicio", { ascending: false }),
+        sb.from("asignacion").select("fecha_inicio, fecha_fin, engagement:engagement_id!inner(id, codigo, nombre, cliente, industria:industria_id(nombre), is_deleted)" as any).eq("persona_id", personaId).not("fecha_fin", "is", null).lt("fecha_fin", new Date().toISOString().slice(0, 10)).eq("engagement.is_deleted", false).order("fecha_inicio", { ascending: false }),
         sb.from("persona_industria").select("cat_industria(nombre)").eq("persona_id", personaId),
         sb.from("persona_capacidad").select("cat_capacidad(nombre)").eq("persona_id", personaId),
         sb.from("persona_tematica").select("cat_tematica(nombre)").eq("persona_id", personaId),

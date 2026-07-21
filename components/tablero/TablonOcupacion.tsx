@@ -225,11 +225,14 @@ function PersonaPopover({ state, planId, onClose }: { state: PopoverPersonaState
       const diaStr = state.diaStr;
       type AsigDesglose = { id: string; pct_dedicacion: number; engagement: { nombre: string } | null };
 
+      // !inner + filtro estado/is_deleted: descarta asignaciones "fantasma" del desglose y del total
       const { data: realRaw } = await supabase
         .from("asignacion")
-        .select("id, pct_dedicacion, engagement:engagement_id(nombre, codigo)")
+        .select("id, pct_dedicacion, engagement:engagement_id!inner(nombre, codigo, estado, is_deleted)" as any)
         .eq("persona_id", state.personaId)
         .eq("estado", "activa")
+        .eq("engagement.estado", "activo")
+        .eq("engagement.is_deleted", false)
         .lte("fecha_inicio", diaStr)
         .or(`fecha_fin.gte.${diaStr},fecha_fin.is.null`);
 
