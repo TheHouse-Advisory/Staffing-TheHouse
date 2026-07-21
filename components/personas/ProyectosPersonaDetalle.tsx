@@ -154,11 +154,15 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
       setLoading(true);
       const sb = createAnyClient();
       const hoy = new Date().toISOString().split("T")[0];
+      // !inner + filtro por estado/is_deleted del engagement: descarta asignaciones "fantasma"
+      // de engagements borrados, en papelera o no activos
       const { data } = await (sb as any)
         .from("asignacion")
-        .select("id, fecha_inicio, fecha_fin, pct_dedicacion, engagement:engagement_id(id, nombre, cliente, industria:industria_id(nombre))")
+        .select("id, fecha_inicio, fecha_fin, pct_dedicacion, engagement:engagement_id!inner(id, nombre, cliente, industria:industria_id(nombre), estado, is_deleted)")
         .eq("persona_id", personaId)
         .eq("estado", "activa")
+        .eq("engagement.estado", "activo")
+        .eq("engagement.is_deleted", false)
         .gte("fecha_fin", hoy)
         .order("fecha_inicio");
 
