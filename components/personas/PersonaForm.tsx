@@ -39,6 +39,8 @@ interface PersonaFormProps {
   persona?: Persona; // undefined = crear, definido = editar
   /** Solo admins pueden ver/editar el campo "Referente" */
   isAdmin?: boolean;
+  /** Si se provee, hace scroll automático a esa sección al abrir el formulario */
+  initialSection?: "desarrollo-carrera";
 }
 
 // Cargos que pueden ser apalancadores
@@ -78,7 +80,7 @@ const EMPTY: FormState = {
   tematicas: [],
 };
 
-export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false }: PersonaFormProps) {
+export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false, initialSection }: PersonaFormProps) {
   const [form, setForm] = useState<FormState>(EMPTY);
   const [errors, setErrors] = useState<Partial<Record<keyof FormState, string>>>({});
   const [loading, setLoading] = useState(false);
@@ -91,6 +93,9 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
   const [tematicas, setTematicas] = useState<Option[]>([]);
   const [mentoresOpciones, setMentoresOpciones] = useState<Option[]>([]);
   const [periodosCargo, setPeriodosCargo] = useState<PeriodoCargo[]>([]);
+  // Marca cuando terminó de cargar los datos de relaciones (industrias/capacidades/temáticas/historial),
+  // para no hacer scroll a una sección antes de que su layout final (chips, filas) esté renderizado
+  const [relacionesReady, setRelacionesReady] = useState(false);
 
   // Cargar catálogos una vez
   useEffect(() => {
@@ -120,8 +125,9 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
 
   // Poblar form al editar
   useEffect(() => {
-    if (!open) { setForm(EMPTY); setErrors({}); setServerError(null); return; }
-    if (!persona) return;
+    if (!open) { setForm(EMPTY); setErrors({}); setServerError(null); setRelacionesReady(false); return; }
+    if (!persona) { setRelacionesReady(true); return; }
+    setRelacionesReady(false);
 
     async function loadRelaciones() {
       const supabase = createAnyClient();
@@ -152,9 +158,23 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
         capacidades: (pc.data ?? []).map((r: any) => r.capacidad_id),
         tematicas: (pt.data ?? []).map((r: any) => r.tematica_id),
       });
+      setRelacionesReady(true);
     }
     loadRelaciones();
   }, [open, persona]);
+
+  // Auto-scroll a la sección solicitada (ej: botón lápiz de "Desarrollo de Carrera" en el perfil).
+  // Espera a que las relaciones terminen de cargar: recién ahí el layout final (chips, filas
+  // de historial) está renderizado y la posición de la sección es la definitiva.
+  useEffect(() => {
+    if (!open || !initialSection || !relacionesReady) return;
+    const id = initialSection === "desarrollo-carrera" ? "desarrollo-carrera-form" : null;
+    if (!id) return;
+    const t = setTimeout(() => {
+      document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 50);
+    return () => clearTimeout(t);
+  }, [open, initialSection, relacionesReady]);
 
   const set = (field: keyof FormState) => (value: string | string[]) =>
     setForm((f) => ({ ...f, [field]: value }));
@@ -437,7 +457,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
         </div>
 
         {/* ── Desarrollo de Carrera ────────────────────────── */}
-        <div className="border-t border-[#f0f0f0] pt-6">
+        <div id="desarrollo-carrera-form" className="border-t border-[#f0f0f0] pt-6">
           <div className="flex items-center justify-between mb-4">
             <div>
               <h3 className="text-sm font-semibold text-[#1a1a2e]">Desarrollo de Carrera</h3>

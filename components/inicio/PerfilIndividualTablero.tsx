@@ -44,7 +44,7 @@ interface Columna {
 
 interface SimEngSnap {
   id: string; nombre: string; codigo?: string | null; cliente: string | null;
-  fecha_inicio: string; fecha_fin: string;
+  tipo?: string; fecha_inicio: string; fecha_fin: string;
   personas: { id: string; pct: number; fecha_inicio: string; fecha_fin: string }[];
 }
 
@@ -160,6 +160,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
             // Proyectos del snapshot que incluyen a esta persona y solapan el rango visible
             const proyectos = simulationSnapshot
               .filter((eng) =>
+                eng.tipo !== "posibles_proyectos" &&
                 eng.fecha_inicio <= fechaFin &&
                 (eng.fecha_fin ?? fechaFin) >= fechaInicio &&
                 eng.personas.some((ps) => ps.id === p.id)
@@ -192,7 +193,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
       const [persRes, asigRes, ausenRes] = await Promise.all([
         sb.from("persona").select("id, nombre, apellido, cargo_actual").eq("activo", true),
         sb.from("asignacion")
-          .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin, engagement:engagement_id(id, codigo, nombre, cliente)" as any)
+          .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin, engagement:engagement_id(id, codigo, nombre, cliente, tipo)" as any)
           .eq("estado", "activa")
           .lte("fecha_inicio", fechaFin)
           .gte("fecha_fin", fechaInicio),
@@ -211,6 +212,10 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
         .map((p) => {
           const asigsSinDedup = ((asigRes.data ?? []) as any[])
             .filter((a) => a.persona_id === p.id)
+            .filter((a) => {
+              const eng = Array.isArray(a.engagement) ? a.engagement[0] : a.engagement;
+              return eng?.tipo !== "posibles_proyectos";
+            })
             .map((a) => {
               const eng = Array.isArray(a.engagement) ? a.engagement[0] : a.engagement;
               return {
@@ -378,6 +383,9 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
                           style={esFuturo
                             ? { background: "#f0fdf4", color: "#15803d" }
                             : { background: "#dbeafe", color: "#1d4ed8" }}
+                          title={esFuturo
+                            ? "Días para que inicie el proyecto/la asignación"
+                            : "Días hábiles que lleva la persona asignada a este proyecto"}
                         >
                           {esFuturo ? `En ${dias}d` : `${dias}d`}
                         </span>}

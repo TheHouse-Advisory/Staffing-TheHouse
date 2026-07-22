@@ -4,8 +4,10 @@ import { useState, useEffect, useCallback } from "react";
 import Link from "next/link";
 import {
   Plus, UserX, UserCheck, ChevronRight, Archive, Trash2, X,
-  RotateCcw, ChevronLeft, Circle, Lock,
+  RotateCcw, ChevronLeft, Circle, Lock, Search, Clock,
 } from "lucide-react";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 import { createAnyClient } from "@/lib/supabase/client";
 import { Button } from "@/components/ui/Button";
 import { Modal, ConfirmDialog } from "@/components/ui/Modal";
@@ -30,6 +32,7 @@ function PersonaCard({
   onDesactivar,
   cargoColor,
   dimmed = false,
+  fechaSalidaLabel,
 }: {
   persona: Persona;
   isAdmin: boolean;
@@ -38,6 +41,8 @@ function PersonaCard({
   onDesactivar?: (p: Persona) => void;
   cargoColor?: string;
   dimmed?: boolean;
+  /** Fecha de salida formateada — se muestra junto a las acciones (vista Ex-Housers "por fecha") */
+  fechaSalidaLabel?: string;
 }) {
   const initials = getIniciales(persona.nombre, persona.apellido, persona.iniciales);
   const avatarColor = cargoColor ?? CARGO_COLORS[persona.cargo_actual ?? ""] ?? CARGO_COLOR_DEFAULT;
@@ -63,7 +68,12 @@ function PersonaCard({
           </span>
         )}
       </div>
-      <div className="flex items-center gap-1 flex-shrink-0">
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {fechaSalidaLabel && (
+          <span className="text-[11px] text-[#aaa] font-medium whitespace-nowrap" title="Fecha de salida">
+            Salida: {fechaSalidaLabel}
+          </span>
+        )}
         {isAdmin && onDesactivar && (
           <button
             onClick={(e) => { e.preventDefault(); onDesactivar(persona); }}
@@ -98,13 +108,20 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [vista, setVista] = useState<Vista>("principal");
 
-  // Ex-Housers (paginado)
+  // Ex-Housers (paginado, agrupado por cargo)
   const [exHousers, setExHousers] = useState<Persona[]>([]);
   const [loadingEx, setLoadingEx] = useState(false);
   const [paginaEx, setPaginaEx] = useState(1);
   const [totalEx, setTotalEx] = useState(0);
   const [totalPaginasEx, setTotalPaginasEx] = useState(1);
   const [exCount, setExCount] = useState(0);
+
+  // Ex-Housers: búsqueda por nombre + modo "todos por fecha de salida" (plano, sin agrupar)
+  const [exSearch, setExSearch] = useState("");
+  const [exOrdenFecha, setExOrdenFecha] = useState(false);
+  const [exHousersAll, setExHousersAll] = useState<Persona[]>([]);
+  const [loadingExAll, setLoadingExAll] = useState(false);
+  const exModoFlat = exSearch.trim() !== "" || exOrdenFecha;
 
   // Papelera
   const [eliminados, setEliminados] = useState<PersonaEliminada[]>([]);
@@ -155,6 +172,19 @@ export function PersonasList({ rolActual }: PersonasListProps) {
     setLoadingEx(false);
   }, []);
 
+  // Carga TODOS los ex-housers (sin paginar) para búsqueda y modo "por fecha de salida"
+  const loadExHousersAll = useCallback(async () => {
+    setLoadingExAll(true);
+    const { data } = await sb
+      .from("persona")
+      .select("*")
+      .eq("is_ex_houser", true)
+      .eq("is_deleted", false)
+      .order("fecha_salida", { ascending: false });
+    setExHousersAll((data ?? []) as Persona[]);
+    setLoadingExAll(false);
+  }, []);
+
   const loadPapelera = useCallback(async () => {
     setLoadingPapelera(true);
     await limpiarPersonasCaducadas(sb);
@@ -182,6 +212,13 @@ export function PersonasList({ rolActual }: PersonasListProps) {
     if (vista === "ex_housers") loadExHousers(paginaEx);
   }, [vista, paginaEx, loadExHousers]);
 
+  // Modo búsqueda / "todos por fecha de salida": carga completa (lazy, una sola vez)
+  useEffect(() => {
+    if (vista === "ex_housers" && exModoFlat && exHousersAll.length === 0 && !loadingExAll) {
+      loadExHousersAll();
+    }
+  }, [vista, exModoFlat, exHousersAll.length, loadingExAll, loadExHousersAll]);
+
   useEffect(() => {
     if (vista === "papelera") loadPapelera();
   }, [vista, loadPapelera]);
@@ -192,6 +229,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
     setAccionando(false);
     setDesactivando(null);
     setExHousers((prev) => prev.filter((p) => p.id !== id));
+    setExHousersAll((prev) => prev.filter((p) => p.id !== id));
     setTotalEx((prev) => Math.max(0, prev - 1));
     setExCount((prev) => Math.max(0, prev - 1));
     load(); // recarga lista de activos
@@ -252,6 +290,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
     setDesactivando(null);
     setPersonas((prev) => prev.filter((p) => p.id !== id));
     setExHousers((prev) => prev.filter((p) => p.id !== id));
+    setExHousersAll((prev) => prev.filter((p) => p.id !== id));
     setTotalEx((prev) => Math.max(0, prev - 1));
     setPapeleraCount((prev) => prev + 1);
   }
@@ -412,7 +451,54 @@ export function PersonasList({ rolActual }: PersonasListProps) {
         {totalEx > 0 && <span className="text-xs text-[#aaa]">({totalEx} personas)</span>}
       </div>
 
-      {loadingEx ? <p className="text-sm text-[#888]">Cargando...</p>
+      {/* Buscador + modo de orden */}
+      <div className="flex items-center gap-2 mb-6 flex-wrap">
+        <div className="relative flex-1 min-w-[220px] max-w-xs">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400 pointer-events-none" />
+          <input
+            type="text"
+            value={exSearch}
+            onChange={(e) => setExSearch(e.target.value)}
+            placeholder="Buscar por nombre o apellido..."
+            className="w-full pl-8 pr-3 py-1.5 text-xs border border-gray-200 rounded-lg bg-white placeholder:text-gray-400 focus:outline-none focus:ring-1 focus:ring-[#4a90e2] focus:border-[#4a90e2]"
+          />
+        </div>
+        <button
+          onClick={() => setExOrdenFecha((v) => !v)}
+          title="Ver todos ordenados de más reciente a más antiguo, sin agrupar por cargo"
+          className={`flex items-center gap-1.5 text-xs px-2.5 py-1.5 rounded-lg border transition-colors ${
+            exOrdenFecha ? "bg-[#eaf4ff] border-[#4a90e2] text-[#2f6fc4]" : "border-[#e8e8e8] text-[#888] hover:bg-[#f5f5f5]"
+          }`}
+        >
+          <Clock className="w-3.5 h-3.5" />
+          Todos por fecha de salida
+        </button>
+      </div>
+
+      {exModoFlat ? (
+        loadingExAll ? <p className="text-sm text-[#888]">Cargando...</p> : (() => {
+          const term = exSearch.trim().toLowerCase();
+          const filtrados = term
+            ? exHousersAll.filter((p) => `${p.nombre} ${p.apellido}`.toLowerCase().includes(term))
+            : exHousersAll;
+          if (filtrados.length === 0) return (
+            <div className="text-center py-12 text-[#888]">
+              <Circle className="w-10 h-10 mx-auto mb-3 opacity-20" />
+              <p className="text-sm font-medium">{term ? "Sin resultados para tu búsqueda." : "No hay ex-housers registrados."}</p>
+            </div>
+          );
+          return (
+            <div className="flex flex-col gap-2 max-w-3xl">
+              {filtrados.map((p) => (
+                <PersonaCard key={p.id} persona={p} isAdmin={isAdmin} dimmed
+                  onDesactivar={isAdmin ? (per) => setDesactivando(per) : undefined}
+                  fechaSalidaLabel={p.fecha_salida ? format(new Date(p.fecha_salida + "T00:00:00"), "d MMM yyyy", { locale: es }) : undefined}
+                />
+              ))}
+            </div>
+          );
+        })()
+      ) : loadingEx ? <p className="text-sm text-[#888]">Cargando...</p>
         : exHousers.length === 0 ? (
           <div className="text-center py-12 text-[#888]">
             <Circle className="w-10 h-10 mx-auto mb-3 opacity-20" />
@@ -420,12 +506,43 @@ export function PersonasList({ rolActual }: PersonasListProps) {
           </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 max-w-5xl">
-              {exHousers.map((p) => (
-                <PersonaCard key={p.id} persona={p} isAdmin={isAdmin} dimmed
-                  onDesactivar={isAdmin ? (per) => setDesactivando(per) : undefined}
-                />
-              ))}
+            {/* Grupos por último cargo (cargo_actual se conserva al pasar a Ex-Houser) */}
+            <div className="space-y-6 max-w-5xl">
+              {(() => {
+                // Más reciente a más antiguo por fecha de salida, dentro de cada grupo de cargo
+                const exHousersOrdenados = [...exHousers].sort(
+                  (a, b) => new Date(b.fecha_salida ?? 0).getTime() - new Date(a.fecha_salida ?? 0).getTime()
+                );
+                const cargoOrden = [...CARGOS];
+                const sinCargo = exHousersOrdenados.filter(
+                  (p) => !cargoOrden.includes((p.cargo_actual ?? "") as typeof CARGOS[number])
+                );
+                const grupos = [
+                  ...cargoOrden.map((c) => ({ cargo: c, lista: exHousersOrdenados.filter((p) => p.cargo_actual === c) })),
+                  ...(sinCargo.length > 0 ? [{ cargo: "Sin cargo", lista: sinCargo }] : []),
+                ].filter((g) => g.lista.length > 0);
+
+                return grupos.map(({ cargo, lista }) => {
+                  const color = CARGO_COLORS[cargo] ?? CARGO_COLOR_DEFAULT;
+                  return (
+                    <div key={cargo}>
+                      <div className="flex items-center gap-2 mb-3">
+                        <div className="w-1 h-4 rounded-full flex-shrink-0" style={{ background: color }} />
+                        <span className="text-[11px] font-bold uppercase tracking-widest" style={{ color }}>{cargo}</span>
+                        <span className="text-[11px] text-[#ccc]">{lista.length}</span>
+                        <div className="flex-1 h-0.5 rounded-full" style={{ background: color, opacity: 0.3 }} />
+                      </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {lista.map((p) => (
+                          <PersonaCard key={p.id} persona={p} isAdmin={isAdmin} dimmed cargoColor={color}
+                            onDesactivar={isAdmin ? (per) => setDesactivando(per) : undefined}
+                          />
+                        ))}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
             </div>
 
             {totalPaginasEx > 1 && (

@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import {
   ArrowLeft, AlertTriangle, CheckCircle, User,
   Pencil, Trash2, Plus, X, Flame, Users, Archive,
+  Plane, Diamond,
 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -105,6 +106,10 @@ export function EngagementDetail({ id }: Props) {
   type DiaCritico = { id: string; fecha: string; fecha_fin: string | null; intensidad: string; descripcion: string | null };
   const INTENSIDAD_COLOR: Record<string, string> = { rojo: "#ef4444", amarillo: "#f59e0b", verde: "#22c55e" };
   const [diasCriticos, setDiasCriticos] = useState<DiaCritico[]>([]);
+
+  // Talleres y Viajes (actividades planificadas del engagement)
+  type ActividadDetalle = { id: string; tipo: "Viajes" | "Taller"; titulo: string; descripcion: string | null; fecha_inicio: string; fecha_fin: string };
+  const [actividades, setActividades] = useState<ActividadDetalle[]>([]);
   const [nuevoDia, setNuevoDia] = useState("");
   const [nuevoDiaFin, setNuevoDiaFin] = useState("");
   const [nuevoDiaIntensidad, setNuevoDiaIntensidad] = useState<"rojo" | "amarillo" | "verde">("rojo");
@@ -131,7 +136,7 @@ export function EngagementDetail({ id }: Props) {
       persona: { nombre: string; apellido: string } | null;
     }
 
-    const [{ data: eng, error: engErr }, cobResult, asigResult, dcResult, capResult, temResult] = await Promise.all([
+    const [{ data: eng, error: engErr }, cobResult, asigResult, dcResult, capResult, temResult, actResult] = await Promise.all([
       sb.from("engagement").select("*, cat_industria(nombre)").eq("id", id).single(),
       fetchCoberturaEngagement(supabase, id),
       sb
@@ -143,6 +148,7 @@ export function EngagementDetail({ id }: Props) {
       sb.from("dia_critico").select("id, fecha, fecha_fin, intensidad, descripcion").eq("engagement_id", id).order("fecha"),
       (sb as any).from("engagement_capacidad").select("cat_capacidad(nombre)").eq("engagement_id", id),
       (sb as any).from("engagement_tematica").select("cat_tematica(nombre)").eq("engagement_id", id),
+      (sb as any).from("engagement_actividades").select("id, tipo, titulo, descripcion, fecha_inicio, fecha_fin").eq("engagement_id", id),
     ]);
 
     if (engErr || !eng) {
@@ -186,6 +192,7 @@ export function EngagementDetail({ id }: Props) {
     setAsignacionesPorReq(porReq);
     setAsignacionesSinReq(sinReq);
     setDiasCriticos((dcResult.data ?? []) as DiaCritico[]);
+    setActividades((actResult.data ?? []) as ActividadDetalle[]);
 
     setLoading(false);
   };
@@ -761,6 +768,45 @@ export function EngagementDetail({ id }: Props) {
             </div>}
           </div>
         </div>}
+
+        {/* ── Talleres y Viajes ──────────────────────────────────── */}
+        {actividades.length > 0 && (
+          <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
+            <div className="px-5 py-3 bg-[#f0f9ff] border-b border-[#dbeafe] flex items-center gap-2">
+              <Plane className="w-4 h-4 text-[#4a90e2] flex-shrink-0" />
+              <p className="font-semibold text-sm text-[#1a1a1a]">Talleres y Viajes</p>
+              <span className="ml-auto text-xs text-[#888]">{actividades.length}</span>
+            </div>
+            <div className="divide-y divide-[#f0f0f0]">
+              {[...actividades]
+                .sort((a, b) => new Date(b.fecha_inicio).getTime() - new Date(a.fecha_inicio).getTime())
+                .map((a) => (
+                  <div key={a.id} className="flex items-start gap-3 px-5 py-3">
+                    {a.tipo === "Viajes"
+                      ? <Plane className="w-4 h-4 text-[#92400e] flex-shrink-0 mt-0.5" />
+                      : <Diamond className="w-4 h-4 text-blue-600 flex-shrink-0 mt-0.5" />}
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full flex-shrink-0 ${
+                          a.tipo === "Viajes" ? "bg-blue-100 text-blue-700" : "bg-purple-100 text-purple-700"
+                        }`}>
+                          {a.tipo}
+                        </span>
+                        <span className="text-sm font-medium">{a.titulo}</span>
+                      </div>
+                      {a.descripcion && <p className="text-xs text-[#888] mt-1">{a.descripcion}</p>}
+                    </div>
+                    <span className="text-xs text-[#aaa] flex-shrink-0">
+                      {format(fLocal(a.fecha_inicio), "d MMM", { locale: es })}
+                      {a.fecha_fin && a.fecha_fin !== a.fecha_inicio
+                        ? ` → ${format(fLocal(a.fecha_fin), "d MMM yyyy", { locale: es })}`
+                        : ""}
+                    </span>
+                  </div>
+                ))}
+            </div>
+          </div>
+        )}
 
         {/* Asignaciones sin requerimiento */}
         {asignacionesSinReq.length > 0 && (

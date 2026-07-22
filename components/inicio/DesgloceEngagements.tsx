@@ -17,6 +17,7 @@ import { Button } from "@/components/ui/Button";
 import type { Engagement } from "@/lib/types/database";
 import { COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 import { cambiarEstadoEngagement, cambiarTipoEngagement } from "@/lib/queries/engagements";
+import { useCargosColapsados } from "@/components/providers/CargosColapsadosContext";
 
 // ── Cargos Asociado y Consultor Senior son la misma categoría visual ──
 const GRUPO_SENIOR = ["Asociado", "Consultor Senior", "Asociado / Consultor Senior"];
@@ -184,6 +185,8 @@ interface Props {
   onSimDesasignarRequest?: (payload: { asignacionId: string; engId: string; nombrePersona: string }) => void;
   /** Oculta el % de carga en "Equipo asignado" para roles restringidos (G&D, A&Sr, planificador, Desarrollo) */
   ocultarPctEquipo?: boolean;
+  /** Solo admin puede ver el botón de colapsar/desplegar cargos dentro de un engagement */
+  isAdmin?: boolean;
 }
 
 export interface SimAsigPayload {
@@ -203,7 +206,7 @@ type UndoEntry =
   | { type: "color_semana"; engId: string; label: string; fecha: string; fecha_fin: string; prevEntry: { fecha: string; fecha_fin: string | null; intensidad: string } | null }
   | { type: "edit_reqs";   engId: string; label: string; engNombre: string; prevReqs: ReqData[]; prevPersonas: PersonaAsig[] };
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest, ocultarPctEquipo = false }: Props) {
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest, ocultarPctEquipo = false, isAdmin = false }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
   const [baseInterna, setBaseInterna] = useState<Date>(new Date());
 
@@ -685,6 +688,10 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   }
   function colapsarTodos() { setColapsados(new Set(engs.map((e) => e.id))); }
   function expandirTodos()  { setColapsados(new Set()); }
+
+  // Colapso por cargo dentro de un engagement (clave: `${engId}::${cargo}`)
+  // Compartido vía contexto: sincroniza Inicio > Cuadrante Tablero y Tablero > Vista Proyectos
+  const { colapsados: cargosColapsados, toggle: toggleCargoColapso } = useCargosColapsados();
 
   const columnas: Columna[] = useMemo(
     () =>
@@ -2196,6 +2203,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                     const ROW_H  = 20;                       // altura fija para TODAS las filas
                     // última categoría del engagement → cierra con dashed inferior (separa de "Ausentes")
                     const isLastCargo = cargo === cargosUnicos[cargosUnicos.length - 1];
+                    // Colapso individual del cargo — mini-fila compacta con botón para desplegar
+                    const cargoKey = `${eng.id}::${cargo}`;
+                    const cargoColapsado = cargosColapsados.has(cargoKey);
 
                     // barEdge usa TODOS los segmentos de la persona para detectar bordes correctamente
                     const barEdge = (pa: PersonaAsig, colIdx: number) => {
@@ -2216,6 +2226,34 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                     ];
                     if (unifiedRows.length === 0) unifiedRows.push({ p: null, kind: "EMPTY" });
 
+                    // Cargo colapsado: 1 mini-fila con nombre + conteo + botón para desplegar
+                    if (cargoColapsado) {
+                      return [
+                        <tr key={`cargo-mini-${eng.id}-${cargo}`}>
+                          <td className="py-0 sticky left-0 bg-white z-10 border-r border-gray-100"
+                            style={{ width: 70, minWidth: 70, height: ROW_H, borderTop: "1px dashed #e2e8f0", borderBottom: isLastCargo ? "1px dashed #e2e8f0" : undefined }}>
+                            <div className="flex items-center h-full gap-0.5 overflow-hidden">
+                              {isAdmin && (
+                                <button
+                                  onClick={(e) => { e.stopPropagation(); toggleCargoColapso(cargoKey); }}
+                                  title="Desplegar cargo"
+                                  className="p-0.5 rounded text-gray-300 hover:text-gray-500 transition-colors flex-shrink-0">
+                                  <ChevronRight className="w-2.5 h-2.5" />
+                                </button>
+                              )}
+                              <span className="text-[9px] font-medium truncate text-gray-400" style={{ maxWidth: 40 }} title={cargo}>{cargo}</span>
+                            </div>
+                          </td>
+                          <td colSpan={columnas.length} className="px-1"
+                            style={{ height: ROW_H, borderTop: "1px dashed #e2e8f0", borderBottom: isLastCargo ? "1px dashed #e2e8f0" : undefined }}>
+                            <span className="text-[8px] text-gray-300 italic">
+                              {personas.length} {personas.length === 1 ? "persona" : "personas"} · colapsado
+                            </span>
+                          </td>
+                        </tr>,
+                      ];
+                    }
+
                     return unifiedRows.map(({ p, kind }, rowIdx) => {
                       const isFirstRow  = rowIdx === 0;
                       const isLastRow   = rowIdx === unifiedRows.length - 1;
@@ -2232,6 +2270,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                             {isFirstRow ? (
                               /* Fila visible: nombre cargo (clickable → panel sugeridos) + botones hover */
                               <div className="relative flex items-center h-full group/cargo overflow-hidden">
+                                {isAdmin && (
+                                  <button
+                                    onClick={(e) => { e.stopPropagation(); toggleCargoColapso(cargoKey); }}
+                                    title="Colapsar cargo"
+                                    className="p-0.5 rounded text-gray-200 hover:text-gray-400 transition-colors flex-shrink-0">
+                                    <ChevronDown className="w-2.5 h-2.5" />
+                                  </button>
+                                )}
                                 <button
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -2305,7 +2351,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                         onDragOver={(e) => { e.preventDefault(); setDragOverGhostKey(ghostKey); }}
                                         onDragLeave={() => setDragOverGhostKey(null)}
                                         onDrop={(e) => handleGhostDrop(e, eng, cargo, gp)}>
-                                        {gFirst && <span className="pl-2 text-[10px] font-bold" style={{ color: cargoColor }}>{iniciales(gp.nombre, gp.apellido, gp.iniciales)}</span>}
+                                        {gFirst && <span className="pl-2 text-[10px] font-bold" style={{ color: cargoColor }} title={isAdmin ? `${gp.nombre} ${gp.apellido}` : undefined}>{iniciales(gp.nombre, gp.apellido, gp.iniciales)}</span>}
                                       </div>
                                     );
                                   })}
@@ -2397,8 +2443,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                       {isFirst && (
                                         <div className="absolute flex items-center gap-0.5 z-20" style={{ top: 2, left: -14, pointerEvents: "none" }}>
                                           <div className={`flex items-center justify-center text-center whitespace-nowrap rounded-full text-white font-bold tracking-tighter select-none cursor-pointer shadow-sm ${iniciales(p.nombre, p.apellido, p.iniciales).length > 2 ? "text-[6px]" : "text-[8px]"}`}
-                                            style={{ width: 16, height: 16, backgroundColor: cargoColor, border: "1.5px solid white" }}
-                                            title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
+                                            style={{ width: 16, height: 16, backgroundColor: cargoColor, border: "1.5px solid white", pointerEvents: "auto" }}
+                                            title={isAdmin ? `${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%` : undefined}>
                                             {iniciales(p.nombre, p.apellido, p.iniciales)}
                                           </div>
                                         </div>
@@ -2504,8 +2550,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                           ✓
                                         </button>}
                                         <div className={`flex items-center justify-center text-center whitespace-nowrap rounded-full text-white font-bold tracking-tighter select-none shadow-sm ${iniciales(p.nombre, p.apellido, p.iniciales).length > 2 ? "text-[6px]" : "text-[8px]"}`}
-                                          style={{ width: 16, height: 16, backgroundColor: cargoColor, border: "1.5px solid white", pointerEvents: "none" }}
-                                          title={`PLAN · ${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
+                                          style={{ width: 16, height: 16, backgroundColor: cargoColor, border: "1.5px solid white", pointerEvents: "auto" }}
+                                          title={isAdmin ? `PLAN · ${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%` : undefined}>
                                           {iniciales(p.nombre, p.apellido, p.iniciales)}
                                         </div>
                                       </div>

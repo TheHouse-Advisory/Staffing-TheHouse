@@ -120,6 +120,7 @@ export function PersonaProfile({ id }: Props) {
   const [mentoreados, setMentoreados] = useState<Persona[]>([]);
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(false);
+  const [editSeccionInicial, setEditSeccionInicial] = useState<"desarrollo-carrera" | undefined>(undefined);
   const [isEditingTalent, setIsEditingTalent] = useState(false);
   const [showMatriz, setShowMatriz] = useState(false);
   const [talentDraft, setTalentDraft] = useState<{ p: number | null; d: number | null }>({ p: null, d: null });
@@ -385,7 +386,7 @@ export function PersonaProfile({ id }: Props) {
             <Button
               variant="ghost"
               size="sm"
-              onClick={() => setEditando(true)}
+              onClick={() => { setEditSeccionInicial(undefined); setEditando(true); }}
               className="text-[#888] hover:text-[#1a1a1a]"
               title="Editar"
             >
@@ -782,9 +783,18 @@ export function PersonaProfile({ id }: Props) {
               <h3 className="font-semibold">Desarrollo de Carrera</h3>
               <p className="text-xs text-[#aaa] mt-0.5">Escalones de seniority recorridos</p>
             </div>
-            <span className="text-[10px] text-[#aaa] font-medium">
-              {historialCargosDB.length === 0 ? "Sin registros" : `${historialCargosDB.length} periodo${historialCargosDB.length > 1 ? "s" : ""}`}
-            </span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-[#aaa] font-medium">
+                {historialCargosDB.length === 0 ? "Sin registros" : `${historialCargosDB.length} periodo${historialCargosDB.length > 1 ? "s" : ""}`}
+              </span>
+              <button
+                onClick={() => { setEditSeccionInicial("desarrollo-carrera"); setEditando(true); }}
+                className="p-1 rounded hover:bg-[#f5f5f5] text-[#888] hover:text-[#1a1a1a] transition-colors"
+                title="Editar Desarrollo de Carrera"
+              >
+                <Pencil className="w-3.5 h-3.5" />
+              </button>
+            </div>
           </div>
 
           {/* Escalones horizontales */}
@@ -952,13 +962,15 @@ export function PersonaProfile({ id }: Props) {
       {persona && (
         <PersonaForm
           open={editando}
-          onClose={() => setEditando(false)}
+          onClose={() => { setEditando(false); setEditSeccionInicial(undefined); }}
           onSuccess={() => {
             setEditando(false);
+            setEditSeccionInicial(undefined);
             load();
           }}
           persona={persona}
           isAdmin={rolActual === "admin"}
+          initialSection={editSeccionInicial}
         />
       )}
 
