@@ -598,6 +598,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
                 onSimDropRequest={readOnly ? undefined : handleSimAsignarConValidacion}
                 onRegisterUndoPush={readOnly ? undefined : registerUndoPush}
                 onSimDesasignarRequest={readOnly ? undefined : handleSimDesasignarRequest}
+                isAdmin={isAdmin}
               />
             </div>
           </div>

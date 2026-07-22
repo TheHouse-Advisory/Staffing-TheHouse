@@ -121,7 +121,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
           .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().slice(0, 10)}`),
         // Historial: solo asignaciones YA FINALIZADAS (fecha_fin < hoy), con engagement existente y no borrado
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        sb.from("asignacion").select("fecha_inicio, fecha_fin, engagement:engagement_id!inner(id, codigo, nombre, cliente, industria:industria_id(nombre), is_deleted)" as any).eq("persona_id", personaId).not("fecha_fin", "is", null).lt("fecha_fin", new Date().toISOString().slice(0, 10)).eq("engagement.is_deleted", false).order("fecha_inicio", { ascending: false }),
+        sb.from("asignacion").select("fecha_inicio, fecha_fin, engagement:engagement_id!inner(id, codigo, nombre, cliente, industria:industria_id(nombre), is_deleted, tipo)" as any).eq("persona_id", personaId).not("fecha_fin", "is", null).lt("fecha_fin", new Date().toISOString().slice(0, 10)).eq("engagement.is_deleted", false).neq("engagement.tipo", "posibles_proyectos").order("fecha_inicio", { ascending: false }),
         sb.from("persona_industria").select("cat_industria(nombre)").eq("persona_id", personaId),
         sb.from("persona_capacidad").select("cat_capacidad(nombre)").eq("persona_id", personaId),
         sb.from("persona_tematica").select("cat_tematica(nombre)").eq("persona_id", personaId),
@@ -209,7 +209,7 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
     const proyectos = simulationSnapshot.filter((eng) => {
       const inicio = (eng.fecha_inicio ?? "").slice(0, 10);
       const fin    = (eng.fecha_fin    ?? "").slice(0, 10);
-      return inicio <= hoy && hoy <= fin && eng.personas.some((p) => p.id === personaId);
+      return eng.tipo !== "posibles_proyectos" && inicio <= hoy && hoy <= fin && eng.personas.some((p) => p.id === personaId);
     });
     const ocupacion = proyectos.reduce((sum, eng) => {
       const p = eng.personas.find((p) => p.id === personaId);
