@@ -1818,7 +1818,11 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       </div>
 
       {loading ? (
-        <p className="text-sm text-gray-300">Cargando...</p>
+        <div className="flex-1 space-y-2 animate-pulse">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="h-8 bg-gray-100 rounded-md" />
+          ))}
+        </div>
       ) : engs.length === 0 ? (
         <p className="text-sm text-gray-300 italic">Sin engagements activos en este período.</p>
       ) : (

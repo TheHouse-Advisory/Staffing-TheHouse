@@ -101,6 +101,23 @@ function PersonaCard({
   );
 }
 
+// ── Skeleton de carga — tarjetas simuladas mientras llega la data ────
+function PersonasSkeleton() {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 animate-pulse">
+      {Array.from({ length: 6 }).map((_, i) => (
+        <div key={i} className="bg-white border border-[#e8e8e8] rounded-xl p-4 flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-[#eee] flex-shrink-0" />
+          <div className="flex-1 min-w-0 space-y-1.5">
+            <div className="h-3.5 w-28 bg-[#eee] rounded" />
+            <div className="h-3 w-20 bg-[#f2f2f2] rounded" />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // ── Componente principal ─────────────────────────────────────────────
 export function PersonasList({ rolActual }: PersonasListProps) {
   const [personas, setPersonas] = useState<Persona[]>([]);
@@ -324,7 +341,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
     loadPapelera();
   }
 
-  if (loading) return <p className="text-sm text-[#888]">Cargando...</p>;
+  if (loading) return <PersonasSkeleton />;
 
   // ── VISTA PAPELERA ──────────────────────────────────────────────────
   if (vista === "papelera") return (
@@ -340,7 +357,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
         <p className="text-xs text-[#aaa]">Eliminación definitiva a los 30 días.</p>
       </div>
 
-      {loadingPapelera ? <p className="text-sm text-[#888]">Cargando...</p>
+      {loadingPapelera ? <PersonasSkeleton />
         : eliminados.length === 0 ? (
           <div className="text-center py-12 text-[#888]">
             <Trash2 className="w-10 h-10 mx-auto mb-3 opacity-20" />
@@ -476,7 +493,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
       </div>
 
       {exModoFlat ? (
-        loadingExAll ? <p className="text-sm text-[#888]">Cargando...</p> : (() => {
+        loadingExAll ? <PersonasSkeleton /> : (() => {
           const term = exSearch.trim().toLowerCase();
           const filtrados = term
             ? exHousersAll.filter((p) => `${p.nombre} ${p.apellido}`.toLowerCase().includes(term))
@@ -498,7 +515,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
             </div>
           );
         })()
-      ) : loadingEx ? <p className="text-sm text-[#888]">Cargando...</p>
+      ) : loadingEx ? <PersonasSkeleton />
         : exHousers.length === 0 ? (
           <div className="text-center py-12 text-[#888]">
             <Circle className="w-10 h-10 mx-auto mb-3 opacity-20" />

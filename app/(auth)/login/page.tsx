@@ -9,6 +9,18 @@ type Mode = "login" | "forgot";
 /** Segundos de espera tras pedir un enlace, para no chocar con el límite de Supabase. */
 const RESET_COOLDOWN = 60;
 
+/** Formatea minutos de bloqueo en un texto legible (ej. "2 días", "48 horas", "15 minutos"). */
+function formatearDuracion(minutos: number): string {
+  if (minutos < 60) return `${minutos} minuto${minutos === 1 ? "" : "s"}`;
+  const horas = Math.round(minutos / 60);
+  if (horas < 24) return `${horas} hora${horas === 1 ? "" : "s"}`;
+  const dias = Math.floor(horas / 24);
+  const horasResto = horas % 24;
+  return horasResto === 0
+    ? `${dias} día${dias === 1 ? "" : "s"}`
+    : `${dias} día${dias === 1 ? "" : "s"} y ${horasResto} hora${horasResto === 1 ? "" : "s"}`;
+}
+
 function LoginForm() {
   const searchParams = useSearchParams();
   const [mode, setMode] = useState<Mode>("login");
@@ -48,18 +60,39 @@ function LoginForm() {
     setLoading(true);
     setError(null);
 
+    const emailNorm = email.trim().toLowerCase();
     const supabase = createClient();
+
+    // Bloqueo por intentos fallidos: se revisa ANTES de intentar la contraseña.
+    // as any: función nueva, aún no está en los tipos generados de Supabase.
+    const { data: bloqueoData } = await (supabase as any).rpc("fn_verificar_bloqueo", { p_email: emailNorm });
+    const bloqueo = bloqueoData?.[0];
+    if (bloqueo?.bloqueado) {
+      setError(`Demasiados intentos fallidos. Intenta de nuevo en ${formatearDuracion(bloqueo.minutos_restantes)}.`);
+      setLoading(false);
+      return;
+    }
+
     const { error: authError } = await supabase.auth.signInWithPassword({
-      email: email.trim().toLowerCase(),
+      email: emailNorm,
       password,
     });
 
     if (authError) {
-      // Mensaje genérico para no filtrar si el correo existe o no.
-      setError("Email o contraseña incorrectos.");
+      const { data: intentoData } = await (supabase as any).rpc("fn_registrar_intento_fallido", { p_email: emailNorm });
+      const intento = intentoData?.[0];
+      // Mensaje genérico para no filtrar si el correo existe o no,
+      // salvo que ya se haya activado el bloqueo.
+      setError(
+        intento?.bloqueado
+          ? `Demasiados intentos fallidos. Tu cuenta quedó bloqueada por ${formatearDuracion(intento.minutos_restantes)}.`
+          : "Email o contraseña incorrectos."
+      );
       setLoading(false);
       return;
     }
+
+    await (supabase as any).rpc("fn_login_exitoso", { p_email: emailNorm });
 
     // El middleware se encarga de redirigir; usamos location para forzar
     // que la sesión recién creada se aplique en la próxima request.

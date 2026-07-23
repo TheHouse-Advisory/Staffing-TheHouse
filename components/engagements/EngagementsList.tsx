@@ -310,6 +310,29 @@ function SeccionesTablaEngagements({
   );
 }
 
+// ── Skeleton de carga — filas simuladas mientras llega la data ────────
+function ListaSkeleton() {
+  return (
+    <div className="animate-pulse">
+      <div className="overflow-x-auto rounded-xl border border-[#e8e8e8]">
+        <div className="flex bg-[#f5f5f5] border-b border-[#e8e8e8] px-3 py-2.5 gap-4">
+          <div className="h-3 w-16 bg-[#eee] rounded" />
+          <div className="h-3 w-32 bg-[#eee] rounded" />
+          <div className="h-3 w-24 bg-[#eee] rounded" />
+        </div>
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="flex items-center border-b border-[#f0f0f0] px-3 py-3 gap-4">
+            <div className="h-3.5 w-14 bg-[#f2f2f2] rounded" />
+            <div className="h-3.5 w-40 bg-[#f2f2f2] rounded" />
+            <div className="h-3.5 w-24 bg-[#f2f2f2] rounded" />
+            <div className="h-3.5 w-20 bg-[#f2f2f2] rounded-full" />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function norm(s: string): string {
   return s.toLowerCase().normalize("NFD").replace(/\p{Mn}/gu, "");
 }
@@ -527,7 +550,7 @@ export function EngagementsList({ rolActual }: Props) {
     showToast(`"${nombre}" enviado a la papelera. Podrás recuperarlo durante 30 días.`);
   }
 
-  if (loading) return <p className="text-sm text-[#888]">Cargando...</p>;
+  if (loading) return <ListaSkeleton />;
 
   // ── VISTA PAPELERA ──────────────────────────────────────────────────
   if (vista === "papelera") return (
@@ -543,7 +566,7 @@ export function EngagementsList({ rolActual }: Props) {
         <p className="text-xs text-[#aaa]">Eliminación definitiva a los 30 días.</p>
       </div>
 
-      {loadingPapelera ? <p className="text-sm text-[#888]">Cargando...</p>
+      {loadingPapelera ? <ListaSkeleton />
         : eliminados.length === 0 ? (
           <div className="text-center py-12 text-[#888]">
             <Trash2 className="w-10 h-10 mx-auto mb-3 opacity-20" />
@@ -691,7 +714,7 @@ export function EngagementsList({ rolActual }: Props) {
           rolActual={rolActual}
         />
       ) : loadingArchivados ? (
-        <p className="text-sm text-[#888]">Cargando archivo histórico...</p>
+        <ListaSkeleton />
       ) : archivados.length === 0 ? (
         <div className="text-center py-12 text-[#888]">
           <Archive className="w-10 h-10 mx-auto mb-3 opacity-20" />

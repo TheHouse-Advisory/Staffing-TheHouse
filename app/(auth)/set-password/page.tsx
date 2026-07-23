@@ -3,6 +3,10 @@
 import { useState } from "react";
 import { createClient } from "@/lib/supabase/client";
 
+const REQUISITOS_TEXTO = "Mínimo 8 caracteres, con al menos una mayúscula, una minúscula y un número.";
+// Debe coincidir con la política configurada en Supabase (Authentication → Sign In → Password requirements).
+const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
+
 export default function SetPasswordPage() {
   const [password,  setPassword]  = useState("");
   const [confirm,   setConfirm]   = useState("");
@@ -13,8 +17,8 @@ export default function SetPasswordPage() {
     e.preventDefault();
     setError(null);
 
-    if (password.length < 8) {
-      setError("La contraseña debe tener al menos 8 caracteres.");
+    if (!PASSWORD_REGEX.test(password)) {
+      setError(REQUISITOS_TEXTO);
       return;
     }
     if (password !== confirm) {
@@ -49,10 +53,11 @@ export default function SetPasswordPage() {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Mínimo 8 caracteres"
+              placeholder="Contraseña"
               required
               className="border border-[#e8e8e8] rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#1a1a2e]/20"
             />
+            <p className="text-[11px] text-[#aaa]">{REQUISITOS_TEXTO}</p>
           </div>
 
           <div className="flex flex-col gap-1">

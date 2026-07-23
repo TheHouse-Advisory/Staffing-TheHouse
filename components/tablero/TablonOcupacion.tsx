@@ -507,6 +507,40 @@ function LeyendaProyecto() {
 }
 
 // ─────────────────────────────────────────────────────────────
+//  Skeleton de carga — misma silueta que la tabla final
+// ─────────────────────────────────────────────────────────────
+
+function TableroSkeleton() {
+  return (
+    <div className="p-6 animate-pulse">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="h-4 w-16 bg-[#eee] rounded" />
+        {Array.from({ length: 5 }).map((_, i) => (
+          <div key={i} className="h-5 w-16 bg-[#f0f0f0] rounded-md" />
+        ))}
+      </div>
+      <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
+        <div className="flex border-b border-[#e8e8e8] bg-[#f9f9f9] px-4 py-3 gap-3">
+          <div className="h-4 w-40 bg-[#eee] rounded" />
+          <div className="h-4 w-24 bg-[#eee] rounded" />
+        </div>
+        {Array.from({ length: 6 }).map((_, r) => (
+          <div key={r} className="flex items-center border-b border-[#f5f5f5] px-4 py-2.5 gap-3">
+            <div className="h-4 w-32 bg-[#f2f2f2] rounded" />
+            <div className="h-4 w-20 bg-[#f2f2f2] rounded" />
+            <div className="flex-1 flex gap-1.5">
+              {Array.from({ length: 7 }).map((_, c) => (
+                <div key={c} className="h-8 flex-1 bg-[#f2f2f2] rounded-md" />
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
 //  Componente principal
 // ─────────────────────────────────────────────────────────────
 
@@ -576,7 +610,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
     };
   }, [cargar]);
 
-  if (loading) return <div className="flex items-center justify-center h-48 text-sm text-[#888]">Cargando tablero...</div>;
+  if (loading) return <TableroSkeleton />;
   if (error)   return <div className="flex items-center justify-center h-48 text-sm text-red-500">Error: {error}</div>;
 
   const pv = periodoVista ?? "dia";
