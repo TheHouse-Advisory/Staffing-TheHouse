@@ -24,8 +24,8 @@ yarn-debug.log*
 yarn-error.log*
 
 # local env files — NUNCA subas credenciales
-.env*.local
-.env
+.env*
+!.env*.example
 
 # vercel
 .vercel

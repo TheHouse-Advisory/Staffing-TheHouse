@@ -329,7 +329,11 @@ export default function InicioPage() {
           </div>
 
           {loading ? (
-            <p className="text-sm text-gray-300">Cargando...</p>
+            <div className="space-y-2 animate-pulse">
+              {Array.from({ length: 4 }).map((_, i) => (
+                <div key={i} className="h-4 bg-gray-100 rounded-md w-3/4" />
+              ))}
+            </div>
           ) : (
             <div className="flex-1 overflow-y-auto space-y-3 pr-1">
               {cargos.map((cargo) => {

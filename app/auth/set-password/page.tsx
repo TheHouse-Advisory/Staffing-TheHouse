@@ -22,6 +22,9 @@ import { createClient } from "@/lib/supabase/client";
 import { confirmarCuenta } from "@/lib/auth/actions";
 
 const MIN_LENGTH = 8;
+const REQUISITOS_TEXTO = `Mínimo ${MIN_LENGTH} caracteres, con al menos una mayúscula, una minúscula y un número.`;
+// Debe coincidir con la política configurada en Supabase (Authentication → Sign In → Password requirements).
+const PASSWORD_REGEX = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d).{8,}$/;
 
 /** Traduce los errores frecuentes de updateUser a mensajes claros en español. */
 function traducirError(message: string): string {
@@ -30,7 +33,7 @@ function traducirError(message: string): string {
     return "La nueva contraseña debe ser distinta de la actual.";
   }
   if (m.includes("weak") || m.includes("at least")) {
-    return `La contraseña es muy débil. Usa al menos ${MIN_LENGTH} caracteres.`;
+    return `La contraseña es muy débil. ${REQUISITOS_TEXTO}`;
   }
   if (m.includes("session") || m.includes("jwt")) {
     return "La sesión del enlace expiró. Solicita un nuevo enlace desde el login.";
@@ -64,8 +67,8 @@ export default function SetPasswordPage() {
     e.preventDefault();
     setError(null);
 
-    if (password.length < MIN_LENGTH) {
-      setError(`La contraseña debe tener al menos ${MIN_LENGTH} caracteres.`);
+    if (!PASSWORD_REGEX.test(password)) {
+      setError(REQUISITOS_TEXTO);
       return;
     }
     if (password !== confirm) {
@@ -178,7 +181,7 @@ export default function SetPasswordPage() {
                     className="w-full px-3.5 py-2.5 rounded-lg border border-[#e0e0e0] text-sm focus:outline-none focus:ring-2 focus:ring-[#4a90e2]/40 focus:border-[#4a90e2] transition-colors"
                   />
                   <p className="text-xs text-[#aaa] mt-1">
-                    Mínimo {MIN_LENGTH} caracteres.
+                    {REQUISITOS_TEXTO}
                   </p>
                 </div>
 

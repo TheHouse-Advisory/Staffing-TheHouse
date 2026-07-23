@@ -304,7 +304,21 @@ export function PersonaProfile({ id }: Props) {
     await supabase.from("asignacion").delete().eq("persona_id", id).eq("engagement_id", engId);
   }
 
-  if (loading) return <p className="text-sm text-[#888] p-6">Cargando...</p>;
+  if (loading) return (
+    <div className="p-6 animate-pulse">
+      <div className="flex items-center gap-4 mb-6">
+        <div className="w-16 h-16 rounded-full bg-[#eee] flex-shrink-0" />
+        <div className="space-y-2">
+          <div className="h-4 w-40 bg-[#eee] rounded" />
+          <div className="h-3 w-28 bg-[#f2f2f2] rounded" />
+        </div>
+      </div>
+      <div className="space-y-2">
+        <div className="h-24 bg-[#f2f2f2] rounded-xl" />
+        <div className="h-24 bg-[#f2f2f2] rounded-xl" />
+      </div>
+    </div>
+  );
   if (!persona) return <p className="text-sm text-red-500 p-6">Persona no encontrada.</p>;
 
   const CARGOS_OCULTOS_AYSR = [...CARGOS_OCULTOS_GYD, "Asociado", "Consultor Senior", "Analista Senior"];

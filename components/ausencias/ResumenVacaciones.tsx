@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { X, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import { es } from "date-fns/locale";
@@ -164,7 +164,10 @@ export function ResumenVacaciones({ open, onClose }: Props) {
         {/* Lista */}
         <div className="flex-1 overflow-y-auto">
           {loading ? (
-            <p className="text-sm text-gray-400 text-center py-10">Cargando...</p>
+            <div className="flex items-center justify-center gap-2 text-gray-400 py-10">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm">Cargando resumen...</span>
+            </div>
           ) : (
             <div className="py-2">
               {cargosOrdenados.map((cargo) => {

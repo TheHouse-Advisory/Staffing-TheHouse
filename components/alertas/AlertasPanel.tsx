@@ -468,7 +468,13 @@ export function AlertasPanel() {
     return checks.some((c) => c.alertaId === `epp-${alerta.engagement_id}-${alerta.fecha_fin}`);
   }
 
-  if (loading) return <p className="text-sm text-gray-400">Cargando alertas...</p>;
+  if (loading) return (
+    <div className="space-y-3 animate-pulse">
+      {Array.from({ length: 4 }).map((_, i) => (
+        <div key={i} className="h-14 bg-gray-100 rounded-xl" />
+      ))}
+    </div>
+  );
 
   const ahora = new Date();
   const sinAlertas =
