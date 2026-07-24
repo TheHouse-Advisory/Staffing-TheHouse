@@ -333,6 +333,28 @@ export interface AnotacionEscenario {
   creado_en: string;
 }
 
+/** anotacion: id, created_at, titulo, contenido, categoria, autor_id, creado_por, editado_por, folder_id (ver supabase/anotaciones.sql, add_anotacion_folders.sql) */
+export interface Anotacion {
+  id: string;
+  created_at: string;
+  titulo: string;
+  contenido: string;
+  categoria: string | null;
+  autor_id: string | null;
+  creado_por?: string | null;
+  editado_por?: string | null;
+  folder_id?: string | null;
+}
+
+/** anotacion_folders: carpetas anidadas para Anotaciones (ver supabase/add_anotacion_folders.sql) */
+export interface AnotacionFolder {
+  id: string;
+  created_at: string;
+  nombre: string;
+  parent_id: string | null;
+  creado_por: string | null;
+}
+
 // ─────────────────────────────────────────────────────────────
 //  VISTAS — columnas exactas según el schema
 // ─────────────────────────────────────────────────────────────
@@ -494,6 +516,18 @@ export type Database = {
         Row: AnotacionEscenario;
         Insert: Omit<AnotacionEscenario, "id" | "creado_en">;
         Update: never; // el código actual solo hace INSERT/SELECT/DELETE, nunca UPDATE
+        Relationships: [];
+      };
+      anotacion: {
+        Row: Anotacion;
+        Insert: Omit<Anotacion, "id" | "created_at">;
+        Update: Partial<Omit<Anotacion, "id" | "created_at">>;
+        Relationships: [];
+      };
+      anotacion_folders: {
+        Row: AnotacionFolder;
+        Insert: Omit<AnotacionFolder, "id" | "created_at">;
+        Update: Partial<Omit<AnotacionFolder, "id" | "created_at">>;
         Relationships: [];
       };
     };
