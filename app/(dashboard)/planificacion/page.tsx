@@ -1,6 +1,8 @@
+import { requireAuth } from "@/lib/auth";
 import { GanttPlanificacion } from "@/components/planificacion/GanttPlanificacion";
 
-export default function PlanificacionPage() {
+export default async function PlanificacionPage() {
+  await requireAuth();
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* Header */}
