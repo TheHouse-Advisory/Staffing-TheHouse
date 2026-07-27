@@ -2,6 +2,7 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase/client";
+import { iniciarSesion } from "@/lib/auth/login-actions";
 import { useSearchParams } from "next/navigation";
 
 type Mode = "login" | "forgot";
@@ -60,39 +61,25 @@ function LoginForm() {
     setLoading(true);
     setError(null);
 
-    const emailNorm = email.trim().toLowerCase();
-    const supabase = createClient();
+    // Verificar bloqueo + intentar contraseña + registrar resultado corren
+    // server-side en un solo paso (ver lib/auth/login-actions.ts) para que
+    // el bloqueo no se pueda saltar ni gatillar llamando la RPC directo.
+    const result = await iniciarSesion({ email, password });
 
-    // Bloqueo por intentos fallidos: se revisa ANTES de intentar la contraseña.
-    // as any: función nueva, aún no está en los tipos generados de Supabase.
-    const { data: bloqueoData } = await (supabase as any).rpc("fn_verificar_bloqueo", { p_email: emailNorm });
-    const bloqueo = bloqueoData?.[0];
-    if (bloqueo?.bloqueado) {
-      setError(`Demasiados intentos fallidos. Intenta de nuevo en ${formatearDuracion(bloqueo.minutos_restantes)}.`);
+    if (!result.ok) {
+      if (result.kind === "credenciales_invalidas") {
+        // Mensaje genérico para no filtrar si el correo existe o no.
+        setError("Email o contraseña incorrectos.");
+      } else {
+        setError(
+          result.kind === "recien_bloqueada"
+            ? `Demasiados intentos fallidos. Tu cuenta quedó bloqueada por ${formatearDuracion(result.minutosRestantes)}.`
+            : `Demasiados intentos fallidos. Intenta de nuevo en ${formatearDuracion(result.minutosRestantes)}.`
+        );
+      }
       setLoading(false);
       return;
     }
-
-    const { error: authError } = await supabase.auth.signInWithPassword({
-      email: emailNorm,
-      password,
-    });
-
-    if (authError) {
-      const { data: intentoData } = await (supabase as any).rpc("fn_registrar_intento_fallido", { p_email: emailNorm });
-      const intento = intentoData?.[0];
-      // Mensaje genérico para no filtrar si el correo existe o no,
-      // salvo que ya se haya activado el bloqueo.
-      setError(
-        intento?.bloqueado
-          ? `Demasiados intentos fallidos. Tu cuenta quedó bloqueada por ${formatearDuracion(intento.minutos_restantes)}.`
-          : "Email o contraseña incorrectos."
-      );
-      setLoading(false);
-      return;
-    }
-
-    await (supabase as any).rpc("fn_login_exitoso", { p_email: emailNorm });
 
     // El middleware se encarga de redirigir; usamos location para forzar
     // que la sesión recién creada se aplique en la próxima request.

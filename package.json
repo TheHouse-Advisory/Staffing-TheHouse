@@ -30,5 +30,11 @@
     "autoprefixer": "^10.0.1",
     "eslint": "^9",
     "eslint-config-next": "15.2.4"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.23"
+    },
+    "sharp": "0.35.3"
   }
 }
