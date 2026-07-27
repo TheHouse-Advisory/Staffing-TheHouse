@@ -1,6 +1,8 @@
+import { requireAuth } from "@/lib/auth";
 import { AlertasPanel } from "@/components/alertas/AlertasPanel";
 
-export default function AlertasPage() {
+export default async function AlertasPage() {
+  await requireAuth();
   return (
     <div className="h-full overflow-y-auto p-6">
       <div className="max-w-2xl space-y-6">

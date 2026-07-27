@@ -67,15 +67,21 @@ function LoginForm() {
     const result = await iniciarSesion({ email, password });
 
     if (!result.ok) {
-      if (result.kind === "credenciales_invalidas") {
-        // Mensaje genérico para no filtrar si el correo existe o no.
-        setError("Email o contraseña incorrectos.");
-      } else {
-        setError(
-          result.kind === "recien_bloqueada"
-            ? `Demasiados intentos fallidos. Tu cuenta quedó bloqueada por ${formatearDuracion(result.minutosRestantes)}.`
-            : `Demasiados intentos fallidos. Intenta de nuevo en ${formatearDuracion(result.minutosRestantes)}.`
-        );
+      switch (result.kind) {
+        case "credenciales_invalidas":
+          // Mensaje genérico para no filtrar si el correo existe o no.
+          setError("Email o contraseña incorrectos.");
+          break;
+        case "recien_bloqueada":
+          setError(`Demasiados intentos fallidos. Tu cuenta quedó bloqueada por ${formatearDuracion(result.minutosRestantes)}.`);
+          break;
+        case "ya_bloqueada":
+          setError(`Demasiados intentos fallidos. Intenta de nuevo en ${formatearDuracion(result.minutosRestantes)}.`);
+          break;
+        case "ip_bloqueada":
+          // No se asocia a ninguna cuenta en particular: es un límite por conexión.
+          setError(`Demasiados intentos fallidos desde tu conexión. Intenta de nuevo en ${formatearDuracion(result.minutosRestantes)}.`);
+          break;
       }
       setLoading(false);
       return;

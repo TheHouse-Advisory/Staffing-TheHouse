@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { requireAuth } from "@/lib/auth";
 import { Topbar } from "@/components/layout/Topbar";
 import { EngagementDetail } from "@/components/engagements/EngagementDetail";
 
@@ -11,6 +12,7 @@ export const metadata: Metadata = {
 };
 
 export default async function EngagementDetailPage({ params }: Props) {
+  await requireAuth();
   const { id } = await params;
 
   return (
