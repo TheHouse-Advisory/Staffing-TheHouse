@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { BarChart2, Grid2X2, Layers, CalendarClock } from "lucide-react";
 import { ReportCard } from "@/components/reportes/ReportCard";
 import { TalentMatrixPreview } from "@/components/reportes/TalentMatrixPreview";
+import { ResumenProyectosPreview } from "@/components/reportes/ResumenProyectosPreview";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
 import type { RolSistema } from "@/lib/types/database";
 
@@ -88,8 +89,12 @@ export function ReportesClient() {
               titulo={r.titulo}
               categoria={r.categoria}
               href={r.href}
-              preview={r.id === "matriz-talento" ? <TalentMatrixPreview /> : undefined}
-              previewClassName={r.id === "matriz-talento" ? "h-[220px]" : "h-40"}
+              preview={
+                r.id === "matriz-talento" ? <TalentMatrixPreview />
+                : r.id === "resumen-proyectos" ? <ResumenProyectosPreview />
+                : undefined
+              }
+              previewClassName={r.id === "matriz-talento" ? "h-[220px]" : r.id === "resumen-proyectos" ? "h-[180px]" : "h-40"}
             />
           ))}
         </div>
