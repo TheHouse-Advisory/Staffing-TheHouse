@@ -200,6 +200,191 @@ export async function fetchEngagementsHistoricos(
   return { data: (data ?? []) as Engagement[], error: null };
 }
 
+function diaAntes(fecha: string): string {
+  const d = new Date(fecha + "T00:00:00");
+  d.setDate(d.getDate() - 1);
+  return d.toISOString().slice(0, 10);
+}
+
+function diaDespues(fecha: string): string {
+  const d = new Date(fecha + "T00:00:00");
+  d.setDate(d.getDate() + 1);
+  return d.toISOString().slice(0, 10);
+}
+
+/**
+ * Agrega una persona a un cargo/semana específica del Resumen de Proyectos
+ * (edición inline). Inserta una asignación nueva acotada solo a esa semana.
+ */
+export async function agregarAsignacionSemana(
+  // Cliente `any`: mismo patrón que AsignacionPersonaModal.tsx/PanelFitAsignacion.tsx
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  params: {
+    engagementId: string;
+    requerimientoId: string | null;
+    personaId: string;
+    cargo: string;
+    pctDedicacion: number;
+    estadoStaffing: "CONFIRMADO" | "PLAN";
+    semanaInicio: string;
+    semanaFin: string;
+  }
+): Promise<{ error: string | null }> {
+  const { error } = await sb.from("asignacion").insert({
+    engagement_id: params.engagementId,
+    requerimiento_id: params.requerimientoId,
+    persona_id: params.personaId,
+    cargo_al_momento: params.cargo,
+    pct_dedicacion: params.pctDedicacion,
+    estado: "activa",
+    estado_staffing: params.estadoStaffing,
+    fecha_inicio: params.semanaInicio,
+    fecha_fin: params.semanaFin,
+  });
+  return { error: error?.message ?? null };
+}
+
+/**
+ * Quita a una persona de una semana específica del Resumen de Proyectos,
+ * recortando (split) la asignación existente en vez de borrar todo su rango:
+ * el resto de las semanas fuera de la editada se conservan intactas.
+ */
+export async function quitarAsignacionSemana(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  asignacion: {
+    id: string;
+    engagementId: string;
+    requerimientoId: string | null;
+    personaId: string;
+    cargo: string;
+    pctDedicacion: number;
+    estadoStaffing: "CONFIRMADO" | "PLAN";
+    fechaInicio: string;
+    fechaFin: string | null;
+  },
+  semana: { inicio: string; fin: string }
+): Promise<{ error: string | null }> {
+  const partesRestantes: { inicio: string; fin: string | null }[] = [];
+
+  if (asignacion.fechaInicio < semana.inicio) {
+    partesRestantes.push({ inicio: asignacion.fechaInicio, fin: diaAntes(semana.inicio) });
+  }
+  if (asignacion.fechaFin === null || asignacion.fechaFin > semana.fin) {
+    partesRestantes.push({ inicio: diaDespues(semana.fin), fin: asignacion.fechaFin });
+  }
+
+  const { error: delError } = await sb.from("asignacion").delete().eq("id", asignacion.id);
+  if (delError) return { error: delError.message };
+
+  if (partesRestantes.length > 0) {
+    const inserts = partesRestantes.map((p) => ({
+      engagement_id: asignacion.engagementId,
+      requerimiento_id: asignacion.requerimientoId,
+      persona_id: asignacion.personaId,
+      cargo_al_momento: asignacion.cargo,
+      pct_dedicacion: asignacion.pctDedicacion,
+      estado: "activa",
+      estado_staffing: asignacion.estadoStaffing,
+      fecha_inicio: p.inicio,
+      fecha_fin: p.fin,
+    }));
+    const { error: insError } = await sb.from("asignacion").insert(inserts);
+    if (insError) return { error: insError.message };
+  }
+
+  return { error: null };
+}
+
+export interface AsignacionActual {
+  id: string;
+  personaId: string;
+  estadoStaffing: "CONFIRMADO" | "PLAN";
+  fechaInicio: string;
+  fechaFin: string | null;
+}
+
+/**
+ * Punto de entrada único de la celda editable del Resumen de Proyectos:
+ * recibe quiénes están HOY (actuales) y quiénes deberían quedar (deseados)
+ * para un cargo/semana, y aplica la diferencia (agregar/quitar) sobre esa
+ * semana puntual, reutilizando agregarAsignacionSemana/quitarAsignacionSemana.
+ */
+export async function actualizarAsignacionSemana(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  params: {
+    engagementId: string;
+    requerimientoId: string | null;
+    cargo: string;
+    pctDedicacion: number;
+    semana: { inicio: string; fin: string };
+    actuales: AsignacionActual[];
+    deseados: { personaId: string; estado: "CONFIRMADO" | "PLAN" }[];
+    /** Nombre a mostrar del usuario que edita (para resumen_proyectos_log) */
+    actorNombre?: string;
+  }
+): Promise<{ error: string | null }> {
+  const { engagementId, requerimientoId, cargo, pctDedicacion, semana, actuales, deseados, actorNombre } = params;
+  let huboCambios = false;
+
+  for (const actual of actuales) {
+    const sigueIgual = deseados.some(
+      (d) => d.personaId === actual.personaId && d.estado === actual.estadoStaffing
+    );
+    if (sigueIgual) continue;
+
+    const { error } = await quitarAsignacionSemana(
+      sb,
+      {
+        id: actual.id,
+        engagementId,
+        requerimientoId,
+        personaId: actual.personaId,
+        cargo,
+        pctDedicacion,
+        estadoStaffing: actual.estadoStaffing,
+        fechaInicio: actual.fechaInicio,
+        fechaFin: actual.fechaFin,
+      },
+      semana
+    );
+    if (error) return { error };
+    huboCambios = true;
+  }
+
+  for (const deseado of deseados) {
+    const yaEstaba = actuales.some(
+      (a) => a.personaId === deseado.personaId && a.estadoStaffing === deseado.estado
+    );
+    if (yaEstaba) continue;
+
+    const { error } = await agregarAsignacionSemana(sb, {
+      engagementId,
+      requerimientoId,
+      personaId: deseado.personaId,
+      cargo,
+      pctDedicacion,
+      estadoStaffing: deseado.estado,
+      semanaInicio: semana.inicio,
+      semanaFin: semana.fin,
+    });
+    if (error) return { error };
+    huboCambios = true;
+  }
+
+  if (huboCambios && actorNombre) {
+    await sb.from("resumen_proyectos_log").insert({
+      actor_nombre: actorNombre,
+      engagement_id: engagementId,
+      cargo: cargo || null,
+    });
+  }
+
+  return { error: null };
+}
+
 /**
  * Cobertura detallada de un engagement específico.
  */
