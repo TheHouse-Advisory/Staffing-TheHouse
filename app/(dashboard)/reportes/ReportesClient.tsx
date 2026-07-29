@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { BarChart2, Grid2X2, Layers, CalendarClock } from "lucide-react";
+import { BarChart2, Grid2X2, Layers, CalendarClock, Download } from "lucide-react";
+import Link from "next/link";
 import { ReportCard } from "@/components/reportes/ReportCard";
 import { TalentMatrixPreview } from "@/components/reportes/TalentMatrixPreview";
 import { ResumenProyectosPreview } from "@/components/reportes/ResumenProyectosPreview";
@@ -76,6 +77,15 @@ export function ReportesClient() {
         <span className="text-[11px] text-gray-400 font-medium">
           {reportesVisibles.length} {reportesVisibles.length === 1 ? "módulo disponible" : "módulos disponibles"}
         </span>
+        {rol === "admin" && (
+          <Link
+            href="/reportes/descargables"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#f0fdf4] hover:bg-[#dcfce7] transition-colors text-[12px] font-semibold text-[#16a34a]"
+          >
+            <Download className="w-3.5 h-3.5" />
+            Descargables
+          </Link>
+        )}
       </header>
 
       <div className="flex-1 overflow-y-auto p-6">

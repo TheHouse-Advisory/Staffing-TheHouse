@@ -6,8 +6,7 @@ import {
   subWeeks, subMonths, format, startOfMonth, endOfMonth,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2, GripVertical, RotateCcw, Diamond, Plane, BarChart2, Search, AlertTriangle, CheckCircle, Undo2 } from "lucide-react";
-import Link from "next/link";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2, GripVertical, RotateCcw, Diamond, Plane, Search, AlertTriangle, CheckCircle, Undo2 } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
 import { ColaboradorModal } from "@/components/engagements/ColaboradorModal";
@@ -18,6 +17,7 @@ import type { Engagement } from "@/lib/types/database";
 import { COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 import { cambiarEstadoEngagement, cambiarTipoEngagement } from "@/lib/queries/engagements";
 import { useCargosColapsados } from "@/components/providers/CargosColapsadosContext";
+import { VistaResumidaEngagements } from "./VistaResumidaEngagements";
 
 // ── Cargos Asociado y Consultor Senior son la misma categoría visual ──
 const GRUPO_SENIOR = ["Asociado", "Consultor Senior", "Asociado / Consultor Senior"];
@@ -95,6 +95,17 @@ function parseLocal(s: string): Date {
   // "2026-05-26" → local midnight (evita off-by-one por timezone UTC)
   return new Date(s + "T00:00:00");
 }
+// Día hábil anterior/siguiente (salta fines de semana) — usado por la navegación de Vista Resumida
+export function prevDiaHabil(d: Date): Date {
+  let nd = addDays(d, -1);
+  while (nd.getDay() === 0 || nd.getDay() === 6) nd = addDays(nd, -1);
+  return nd;
+}
+export function nextDiaHabil(d: Date): Date {
+  let nd = addDays(d, 1);
+  while (nd.getDay() === 0 || nd.getDay() === 6) nd = addDays(nd, 1);
+  return nd;
+}
 function rangoSolapan(aIni: string, aFin: string | null, cIni: Date, cFin: Date) {
   if (!aFin) return parseLocal(aIni) <= cFin;
   return parseLocal(aIni) <= cFin && parseLocal(aFin) >= cIni;
@@ -118,7 +129,7 @@ function iniciales(nombre: string, apellido: string, custom?: string | null) {
   return `${nombre[0] ?? ""}${apellido[0] ?? ""}`.toUpperCase();
 }
 
-interface PersonaAsig {
+export interface PersonaAsig {
   id: string; nombre: string; apellido: string;
   iniciales?: string | null;
   cargo: string | null; pct: number;
@@ -136,7 +147,7 @@ interface ReqData {
 }
 interface ActividadEng { tipo: "Viajes" | "Taller"; titulo: string; descripcion: string | null; fecha_inicio: string; fecha_fin: string; }
 
-interface EngRow {
+export interface EngRow {
   id: string; codigo: string | null; nombre: string; cliente: string | null; tipo: string;
   fecha_inicio: string; fecha_fin: string | null;
   personas: PersonaAsig[];
@@ -187,6 +198,11 @@ interface Props {
   ocultarPctEquipo?: boolean;
   /** Solo admin puede ver el botón de colapsar/desplegar cargos dentro de un engagement */
   isAdmin?: boolean;
+  /** Vista Resumida (oculta tabla y acciones secundarias, muestra placeholder) vs Detallada. Controlado por el padre. */
+  vistaResumida?: boolean;
+  /** Título mostrado al inicio de la fila de controles (ej. "TABLERO"). Junto con `onVistaResumidaChange` habilita el toggle Vista Resumida/Detallada dentro de esta misma fila. */
+  titulo?: string;
+  onVistaResumidaChange?: (v: boolean) => void;
 }
 
 export interface SimAsigPayload {
@@ -206,9 +222,9 @@ type UndoEntry =
   | { type: "color_semana"; engId: string; label: string; fecha: string; fecha_fin: string; prevEntry: { fecha: string; fecha_fin: string | null; intensidad: string } | null }
   | { type: "edit_reqs";   engId: string; label: string; engNombre: string; prevReqs: ReqData[]; prevPersonas: PersonaAsig[] };
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest, ocultarPctEquipo = false, isAdmin = false }: Props) {
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest, ocultarPctEquipo = false, isAdmin = false, vistaResumida = false, titulo, onVistaResumidaChange }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
-  const [baseInterna, setBaseInterna] = useState<Date>(new Date());
+  const [baseInterna, setBaseInterna] = useState<Date>(() => startOfISOWeek(new Date()));
 
   // Si vienen props externas las usamos; si no, usamos estado interno
   const vista = vistaExterna ?? vistaInterna;
@@ -1719,7 +1735,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const hoy = new Date();
 
   return (
-    <div className="flex flex-col h-full relative">
+    <div className="flex flex-col h-full w-full max-w-none relative">
       {/* Toast de alertas staffing */}
       {toast && (
         <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[9999] max-w-lg w-full px-4">
@@ -1730,94 +1746,101 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           </div>
         </div>
       )}
-      {/* Barra de controles — fila única ultra-compacta; se oculta cuando la navegación es controlada externamente */}
-      <div className="flex flex-row items-center justify-between gap-2 py-1 mb-2 flex-shrink-0">
-        {/* Bloque izquierdo: buscador + nuevo proyecto */}
-        <div className="flex items-center gap-2 flex-shrink-0">
-          <div className="relative flex items-center max-w-[240px] w-full">
-            <Search className="absolute left-2 w-3 h-3 text-gray-400 pointer-events-none" />
-            <input
-              type="text"
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Buscar por proyecto, código, cliente o persona..."
-              className="pl-6 pr-2.5 py-1.5 text-[11px] rounded-lg border border-gray-200 bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#4a90e2] focus:ring-1 focus:ring-[#4a90e2]/30 w-full transition-all"
-            />
-          </div>
-          {!readOnly && <button
-            onClick={() => { setEngToEdit(undefined); setFormOpen(true); }}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm font-semibold text-white transition-colors hover:opacity-90 whitespace-nowrap"
-            style={{ background: "#4a90e2" }}
-          >
-            <Plus className="w-3.5 h-3.5" />
-            Nuevo proyecto
-          </button>}
-        </div>
+      {/* Fila única de controles: TODO en un mismo flex, sin sub-contenedores con justify-between */}
+      <div className="flex items-center gap-1.5 w-full py-1 flex-shrink-0 overflow-x-auto">
+        {/* 1. Título */}
+        {titulo && (
+          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap flex-shrink-0">{titulo}</p>
+        )}
 
-        {/* Bloque central: acciones secundarias (historial) */}
-        <div className="flex items-center gap-1.5 flex-shrink-0">
-          {engs.length > 0 && (
-            <button
-              onClick={colapsados.size === engs.length ? expandirTodos : colapsarTodos}
-              title={colapsados.size === engs.length ? "Expandir todos" : "Colapsar todos"}
-              className="text-xs px-2 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors whitespace-nowrap"
-            >
-              {colapsados.size === engs.length ? "Expandir todos" : "Colapsar todos"}
+        {/* 2. Toggle Vista Resumida / Detallada */}
+        {titulo && onVistaResumidaChange && (
+          <div className="flex h-7 rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold flex-shrink-0">
+            <button onClick={() => onVistaResumidaChange(true)}
+              className="px-2 h-7 transition-colors"
+              style={vistaResumida ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
+              Vista Resumida
             </button>
-          )}
-          {!ocultarPctEquipo && <button
-            onClick={handleUndo}
-            disabled={!undoStack.length || undoing}
-            title={undoStack.length ? `Deshacer: ${undoStack[undoStack.length - 1]?.label}` : "Sin acciones para deshacer"}
-            className="flex items-center gap-1 text-xs px-2 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/30 hover:bg-blue-50 disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-gray-400 disabled:hover:border-gray-100 transition-all whitespace-nowrap"
-          >
-            {undoing
-              ? <Loader2 className="w-3 h-3 animate-spin" />
-              : <RotateCcw className="w-3 h-3" />}
-            <span>Deshacer{undoStack.length > 1 ? ` (${undoStack.length})` : ""}</span>
-          </button>}
-        </div>
+            <button onClick={() => onVistaResumidaChange(false)}
+              className="px-2 h-7 transition-colors"
+              style={!vistaResumida ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
+              Vista Detallada
+            </button>
+          </div>
+        )}
 
-        {/* Bloque derecho: vista, navegación y resumen */}
-        <div className="flex items-center gap-1 flex-shrink-0">
-          {!vistaExterna && (
-            <>
-              <div className="flex rounded-md overflow-hidden border border-gray-100 text-xs font-semibold">
+        {!vistaResumida && (
+          <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
+            {/* 3. Deshacer */}
+            {!ocultarPctEquipo && <button
+              onClick={handleUndo}
+              disabled={!undoStack.length || undoing}
+              title="Deshacer"
+              className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md border border-gray-100 text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/30 hover:bg-blue-50 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            >
+              {undoing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RotateCcw className="w-3.5 h-3.5" />}
+            </button>}
+
+            {/* 4. Colapsar */}
+            {engs.length > 0 && (
+              <button
+                onClick={colapsados.size === engs.length ? expandirTodos : colapsarTodos}
+                title="Colapsar vista"
+                className="h-7 w-7 flex-shrink-0 flex items-center justify-center rounded-md border border-gray-100 text-gray-400 hover:text-gray-600 hover:bg-gray-50 transition-colors"
+              >
+                {colapsados.size === engs.length ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+              </button>
+            )}
+
+            {/* 5. Buscador */}
+            <div className="relative flex items-center w-32 flex-shrink-0">
+              <Search className="absolute left-2 w-3 h-3 text-gray-400 pointer-events-none" />
+              <input
+                type="text"
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                placeholder="Buscar por proyecto..."
+                className="w-32 text-[11px] h-7 pl-6 pr-2 rounded-md border border-gray-200 bg-white text-gray-700 placeholder-gray-400 focus:outline-none focus:border-[#4a90e2] focus:ring-1 focus:ring-[#4a90e2]/30 transition-all"
+              />
+            </div>
+
+            {/* 6. Nuevo proyecto */}
+            {!readOnly && <button
+              onClick={() => { setEngToEdit(undefined); setFormOpen(true); }}
+              className="flex items-center gap-1 px-2 py-1 text-[11px] h-7 whitespace-nowrap rounded-md font-semibold text-white transition-colors hover:opacity-90 flex-shrink-0"
+              style={{ background: "#4a90e2" }}
+            >
+              <Plus className="w-3 h-3" />
+              Nuevo proyecto
+            </button>}
+
+            {/* 7. Selector de período */}
+            {!vistaExterna && (
+              <div className="flex text-[11px] h-7 rounded-md overflow-hidden border border-gray-100 font-semibold flex-shrink-0">
                 {(["dia", "semana", "mes"] as Vista[]).map((v) => (
                   <button key={v} onClick={() => setVistaInterna(v)}
-                    className="px-2 py-1 transition-colors"
+                    className="px-2 h-7 transition-colors"
                     style={vistaInterna === v ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
                     {v === "dia" ? "Día" : v === "semana" ? "Semana" : "Mes"}
                   </button>
                 ))}
               </div>
-              <button onClick={navAnterior} title="Retroceder" className="p-1 rounded hover:bg-gray-100 text-gray-400">
-                <ChevronsLeft className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={() => setBaseInterna((b) => addDays(b, -7))} title="Retroceder 1 semana" className="p-1 rounded hover:bg-gray-100 text-gray-400">
-                <ChevronLeft className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={() => setBaseInterna((b) => addDays(b, 7))} title="Avanzar 1 semana" className="p-1 rounded hover:bg-gray-100 text-gray-400">
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
-              <button onClick={navSiguiente} title="Avanzar" className="p-1 rounded hover:bg-gray-100 text-gray-400">
-                <ChevronsRight className="w-3.5 h-3.5" />
-              </button>
-            </>
-          )}
-
-          {/* Resumen — oculto en readOnly */}
-          {!readOnly && <Link
-            href="/reportes/resumen-proyectos"
-            className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-gray-200 text-[10px] text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/40 hover:bg-blue-50 transition-all whitespace-nowrap"
-          >
-            <BarChart2 className="w-2.5 h-2.5" />
-            <span>Resumen</span>
-          </Link>}
-        </div>
+            )}
+          </div>
+        )}
       </div>
 
-      {loading ? (
+      {vistaResumida ? (
+        <VistaResumidaEngagements
+          engs={engs}
+          base={base}
+          ausencias={ausencias}
+          onNavAnterior={vistaExterna ? undefined : () => setBaseInterna((b) => addDays(b, -7))}
+          onDiaAnterior={vistaExterna ? undefined : () => setBaseInterna((b) => prevDiaHabil(b))}
+          onDiaSiguiente={vistaExterna ? undefined : () => setBaseInterna((b) => nextDiaHabil(b))}
+          onNavSiguiente={vistaExterna ? undefined : () => setBaseInterna((b) => addDays(b, 7))}
+        />
+      ) : loading ? (
         <div className="flex-1 space-y-2 animate-pulse">
           {Array.from({ length: 4 }).map((_, i) => (
             <div key={i} className="h-8 bg-gray-100 rounded-md" />
@@ -1826,7 +1849,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       ) : engs.length === 0 ? (
         <p className="text-sm text-gray-300 italic">Sin engagements activos en este período.</p>
       ) : (
-        <div className="flex-1 overflow-auto">
+        <div className="flex-1 overflow-y-auto max-h-[calc(100vh-140px)]">
           <table className="w-full text-xs border-collapse"
             style={{ minWidth: `${110 + columnas.length * 52}px`, tableLayout: "fixed" }}>
             {/* colgroup: fija col proyecto y distribuye el resto en partes iguales */}
@@ -1837,15 +1860,42 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
             <thead className="sticky top-0 bg-white z-20">
               <tr>
                 <th className="text-left pr-2 pb-1.5 text-gray-400 font-semibold sticky left-0 bg-white z-30">
-                  Proyecto
+                  <div className="flex items-center justify-between gap-1">
+                    <span>Proyecto</span>
+                    {!vistaExterna && (
+                      <span className="flex items-center gap-0.5 flex-shrink-0">
+                        <button onClick={navAnterior} title="Retroceder" className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                          <ChevronsLeft className="w-3 h-3" />
+                        </button>
+                        <button onClick={() => setBaseInterna((b) => addDays(b, -7))} title="Retroceder 1 semana" className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                          <ChevronLeft className="w-3 h-3" />
+                        </button>
+                      </span>
+                    )}
+                  </div>
                 </th>
                 {columnas.map((col, i) => {
                   const esHoy = col.inicio <= hoy && hoy <= col.fin;
+                  const esUltima = i === columnas.length - 1;
                   return (
-                    <th key={i} className="text-center pb-1.5 font-semibold"
+                    <th key={i} className="text-center pb-1.5 px-1 font-semibold text-xs"
                       style={{ color: esHoy ? "#4a90e2" : "#aaa" }}>
-                      <div className="capitalize">{col.label}</div>
-                      <div className="font-normal text-[10px]">{col.sublabel}</div>
+                      <div className={esUltima ? "flex items-center justify-between gap-1" : undefined}>
+                        <div>
+                          <div className="capitalize">{col.label}</div>
+                          <div className="font-normal text-[10px]">{col.sublabel}</div>
+                        </div>
+                        {esUltima && !vistaExterna && (
+                          <span className="flex items-center gap-0.5 flex-shrink-0">
+                            <button onClick={() => setBaseInterna((b) => addDays(b, 7))} title="Avanzar 1 semana" className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                              <ChevronRight className="w-3 h-3" />
+                            </button>
+                            <button onClick={navSiguiente} title="Avanzar" className="p-1 rounded hover:bg-gray-100 text-gray-400">
+                              <ChevronsRight className="w-3 h-3" />
+                            </button>
+                          </span>
+                        )}
+                      </div>
                     </th>
                   );
                 })}

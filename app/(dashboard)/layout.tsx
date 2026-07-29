@@ -74,7 +74,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         isCollapsed={isCollapsed}
         setIsCollapsed={setIsCollapsed}
       />
-      <main className={`flex-1 flex flex-col overflow-hidden transition-all duration-300 ${isCollapsed ? "layout-zoom" : ""}`}>
+      <main className="flex-1 flex flex-col w-full overflow-x-auto overflow-y-hidden transition-all duration-300">
         <CargosColapsadosProvider>{children}</CargosColapsadosProvider>
       </main>
       <CommandPalette />
