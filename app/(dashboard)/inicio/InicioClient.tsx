@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   startOfISOWeek, addWeeks, subWeeks, addMonths, subMonths,
   format, isSameDay, parseISO, addDays, subDays,
@@ -81,6 +81,17 @@ export function InicioClient() {
 
   // Control expansión columna derecha
   const [activeQuadrant, setActiveQuadrant] = useState<"both" | "tablero" | "resumen">("both");
+
+  // TABLERO quadrant — toggle Vista Resumida / Detallada
+  const [vistaResumida, setVistaResumida] = useState(true);
+  // Default por rol: GyD/AySr/Desarrollo/planificador (solo lectura) arrancan en Resumida;
+  // admin/proposer (pueden editar) arrancan en Detallada. Solo se aplica una vez, al cargar el rol.
+  const defaultVistaAplicadoRef = useRef(false);
+  useEffect(() => {
+    if (rol === null || defaultVistaAplicadoRef.current) return;
+    defaultVistaAplicadoRef.current = true;
+    setVistaResumida(isReadOnly);
+  }, [rol, isReadOnly]);
 
   // RESÚMEN quadrant
   const [vistaResumen, setVistaResumen] = useState<"gantt" | "perfil">("gantt");
@@ -434,16 +445,6 @@ export function InicioClient() {
               : { flexGrow: 1, flexShrink: 1, flexBasis: "0%" }
           }
         >
-          <div className="flex items-center justify-between mb-3 flex-shrink-0">
-            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Tablero</p>
-            <button
-              onClick={() => setActiveQuadrant((q) => q === "tablero" ? "both" : "tablero")}
-              className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
-              title={activeQuadrant === "tablero" ? "Restaurar" : "Expandir tablero"}
-            >
-              {activeQuadrant === "tablero" ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
-            </button>
-          </div>
           <div className="flex-1 overflow-auto min-h-0">
             <DesgloceEngagements
               readOnly={isReadOnly}
@@ -452,6 +453,9 @@ export function InicioClient() {
               externalReloadKey={tableroReloadKey}
               ocultarPctEquipo={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
               isAdmin={rol === "admin"}
+              vistaResumida={vistaResumida}
+              titulo="Tablero"
+              onVistaResumidaChange={setVistaResumida}
             />
           </div>
         </div>
