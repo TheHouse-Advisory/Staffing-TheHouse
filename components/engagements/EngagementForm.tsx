@@ -1254,7 +1254,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                     onChange={(e) => setNuevaActividad((p) => ({ ...p, fecha_inicio: e.target.value }))} />
                 </FieldWrapper>
                 <FieldWrapper label="Fecha término">
-                  <Input type="date" value={nuevaActividad.fecha_fin}
+                  <Input type="date" value={nuevaActividad.fecha_fin} min={nuevaActividad.fecha_inicio || undefined}
                     onChange={(e) => setNuevaActividad((p) => ({ ...p, fecha_fin: e.target.value }))} />
                 </FieldWrapper>
               </div>

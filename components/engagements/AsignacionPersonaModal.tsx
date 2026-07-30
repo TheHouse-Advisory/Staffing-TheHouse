@@ -88,7 +88,6 @@ export function AsignacionPersonaModal({
     for (const r of rangos) {
       if (!r.inicio || !r.fin) return "Completa todas las fechas antes de guardar.";
       if (r.inicio > r.fin)    return `Inicio (${r.inicio}) posterior al fin (${r.fin}).`;
-      if (r.inicio < engInicio) return `Fecha ${r.inicio} anterior al inicio del proyecto (${engInicio}).`;
       if (r.fin   > engFin)    return `Fecha ${r.fin} posterior al fin del proyecto (${engFin}).`;
     }
     // Detectar solapamientos
@@ -188,7 +187,6 @@ export function AsignacionPersonaModal({
                     <input
                       type="date"
                       value={rng.inicio}
-                      min={engInicio}
                       max={engFin}
                       onChange={(e) => updateRango(rng.tempId, "inicio", e.target.value)}
                       className="flex-1 min-w-0 px-2 py-1.5 text-[12px] border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a90e2]/40 focus:border-[#4a90e2] transition-colors bg-white"
@@ -197,7 +195,7 @@ export function AsignacionPersonaModal({
                     <input
                       type="date"
                       value={rng.fin}
-                      min={rng.inicio || engInicio}
+                      min={rng.inicio || undefined}
                       max={engFin}
                       onChange={(e) => updateRango(rng.tempId, "fin", e.target.value)}
                       className="flex-1 min-w-0 px-2 py-1.5 text-[12px] border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a90e2]/40 focus:border-[#4a90e2] transition-colors bg-white"

@@ -2,8 +2,22 @@
  * Queries para Engagements y cobertura.
  * Consume la vista cobertura_engagement del schema de Supabase.
  */
+import { startOfISOWeek, format } from "date-fns";
 import type { TypedSupabaseClient } from "@/lib/supabase/types";
 import type { Engagement, CoberturaEngagement, TipoEngagement } from "@/lib/types/database";
+
+/**
+ * Última fecha real en que se modificó un dato del Tablero (engagement, asignación, ausencia, etc.).
+ * Usa la función ultima_actualizacion_real() en Supabase, que excluye cambios sin sesión
+ * (ej. scripts/SQL directo) y los de un perfil específico (ver migración para el default).
+ */
+export async function fetchUltimaActualizacionReal(
+  supabase: TypedSupabaseClient
+): Promise<Date | null> {
+  const { data, error } = await (supabase as any).rpc("ultima_actualizacion_real");
+  if (error || !data) return null;
+  return new Date(data);
+}
 
 export interface EngagementConCobertura extends Engagement {
   tiene_alerta: boolean;
@@ -11,15 +25,13 @@ export interface EngagementConCobertura extends Engagement {
   requerimientos_cubiertos: number;
 }
 
-/** Fecha de corte: hoy - 30 días (YYYY-MM-DD). */
-function cutoffFecha(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 30);
-  return d.toISOString().split("T")[0];
+/** Inicio de la semana ISO actual (lunes), YYYY-MM-DD. Corte entre "vigente" y "vencido". */
+function inicioSemana(): string {
+  return format(startOfISOWeek(new Date()), "yyyy-MM-dd");
 }
 
 /**
- * Filtro PostgREST para engagements ACTUALES/FUTUROS:
+ * Filtro PostgREST para engagements VIGENTES (no vencidos):
  * fecha efectiva >= cutoff  O  sin fecha de fin.
  * Fecha efectiva = fecha_fin_real ?? fecha_fin_estimada.
  */
@@ -32,13 +44,24 @@ function filtroActuales(cutoff: string): string {
 }
 
 /**
+ * Filtro PostgREST para engagements VENCIDOS: fecha efectiva < cutoff.
+ * Fecha efectiva = fecha_fin_real ?? fecha_fin_estimada. Sin fecha de fin → nunca vencido.
+ */
+function filtroVencidos(cutoff: string): string {
+  return [
+    `fecha_fin_real.lt.${cutoff}`,
+    `and(fecha_fin_real.is.null,fecha_fin_estimada.lt.${cutoff})`,
+  ].join(",");
+}
+
+/**
  * Lista de engagements ACTIVOS (estado = 'activo') con indicador de cobertura.
- * Excluye proyectos cuya fecha de fin efectiva sea < hoy - 30 días y los archivados ('terminado').
+ * Excluye proyectos vencidos (fecha de fin efectiva < inicio de esta semana) y los archivados ('terminado').
  */
 export async function fetchEngagementsConCobertura(
   supabase: TypedSupabaseClient
 ): Promise<{ data: EngagementConCobertura[]; error: string | null }> {
-  const cutoff = cutoffFecha();
+  const cutoff = inicioSemana();
 
   const { data: engagements, error: engError } = await supabase
     .from("engagement")
@@ -106,7 +129,7 @@ export interface PaginaHistorico {
 }
 
 /**
- * Engagements PASADOS (fecha efectiva < hoy - 30 días), paginados de 20 en 20.
+ * Engagements PASADOS (fecha efectiva < inicio de esta semana), paginados de 20 en 20.
  * Excluye is_deleted. Acepta búsqueda por nombre/cliente.
  */
 export async function fetchEngagementsPasados(
@@ -114,21 +137,14 @@ export async function fetchEngagementsPasados(
   pagina = 1,
   busqueda = ""
 ): Promise<PaginaHistorico> {
-  const cutoff = cutoffFecha();
+  const cutoff = inicioSemana();
   const desde = (pagina - 1) * PAGE_SIZE;
-
-  // Engagements donde la fecha efectiva < cutoff:
-  // fecha_fin_real < cutoff  O  (fecha_fin_real IS NULL AND fecha_fin_estimada < cutoff)
-  const filtroPasados = [
-    `fecha_fin_real.lt.${cutoff}`,
-    `and(fecha_fin_real.is.null,fecha_fin_estimada.lt.${cutoff})`,
-  ].join(",");
 
   let query = supabase
     .from("engagement")
     .select("*", { count: "exact" })
     .eq("is_deleted", false)
-    .or(filtroPasados)
+    .or(filtroVencidos(cutoff))
     .order("fecha_fin_real", { ascending: false, nullsFirst: false });
 
   if (busqueda.trim()) {
@@ -184,16 +200,19 @@ export async function cambiarTipoEngagement(
 }
 
 /**
- * Engagements archivados manualmente (estado = 'terminado'). Sin paginar: uso en tab "Archivo Histórico".
+ * Engagements del "Archivo Histórico": archivados manualmente (estado = 'terminado')
+ * O cuya fecha de fin efectiva ya pasó (< inicio de esta semana), sin importar el estado.
+ * Sin paginar: uso en tab "Archivo Histórico".
  */
 export async function fetchEngagementsHistoricos(
   supabase: TypedSupabaseClient
 ): Promise<{ data: Engagement[]; error: string | null }> {
+  const cutoff = inicioSemana();
   const { data, error } = await supabase
     .from("engagement")
     .select("*")
-    .eq("estado", "terminado")
     .eq("is_deleted", false)
+    .or([`estado.eq.terminado`, filtroVencidos(cutoff)].join(","))
     .order("updated_at", { ascending: false });
 
   if (error) return { data: [], error: error.message };

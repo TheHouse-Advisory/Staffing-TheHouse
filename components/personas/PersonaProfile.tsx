@@ -68,6 +68,8 @@ interface CargoDBRow {
   fechaInicio: string;
   fechaFin: string;   // "Presente" si fecha_fin es null
   actual: boolean;
+  esApalancador: boolean;
+  esReferente: boolean;
 }
 
 function fmtDuracion(fechaInicio: string, fechaFin: string): string {
@@ -180,7 +182,7 @@ export function PersonaProfile({ id }: Props) {
       // Historial de cargos (Desarrollo de Carrera)
       supabase
         .from("historial_cargos")
-        .select("cargo, fecha_inicio, fecha_fin")
+        .select("cargo, fecha_inicio, fecha_fin, es_apalancador, es_referente")
         .eq("persona_id", id)
         .order("fecha_inicio", { ascending: true }),
     ]);
@@ -271,12 +273,14 @@ export function PersonaProfile({ id }: Props) {
     setHistorial([...histMap.values()].sort((a, b) => b.fechaRef.localeCompare(a.fechaRef)));
 
     setHistorialCargosDB(
-      ((cargosRes.data ?? []) as { cargo: string; fecha_inicio: string; fecha_fin: string | null }[]).map(
+      ((cargosRes.data ?? []) as { cargo: string; fecha_inicio: string; fecha_fin: string | null; es_apalancador: boolean | null; es_referente: boolean | null }[]).map(
         (r) => ({
           cargo:       r.cargo,
           fechaInicio: r.fecha_inicio,
           fechaFin:    r.fecha_fin ?? "Presente",
           actual:      r.fecha_fin === null,
+          esApalancador: r.es_apalancador ?? false,
+          esReferente:   r.es_referente ?? false,
         })
       )
     );
@@ -853,6 +857,15 @@ export function PersonaProfile({ id }: Props) {
                                 ✓
                               </span>
                             )}
+                            {(entrada.esReferente || entrada.esApalancador) && (
+                              <span
+                                className="absolute -top-1 -left-1 text-[9px] text-white rounded-full w-4 h-4 flex items-center justify-center font-bold"
+                                style={{ background: entrada.esReferente ? "#7c3aed" : "#d97706" }}
+                                title={entrada.esReferente ? "Referente" : "Apalancador"}
+                              >
+                                {entrada.esReferente ? "R" : "A"}
+                              </span>
+                            )}
                           </div>
                           {entrada.actual && (
                             <span className="mt-1.5 text-[9px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white uppercase tracking-wide">
@@ -870,6 +883,16 @@ export function PersonaProfile({ id }: Props) {
                               {fmtDuracion(entrada.fechaInicio, entrada.actual ? new Date().toISOString().split("T")[0] : entrada.fechaFin)}
                             </p>
                           </div>
+                          {(entrada.esApalancador || entrada.esReferente) && (
+                            <div className="mt-1 flex flex-col items-center gap-0.5">
+                              {entrada.esApalancador && (
+                                <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 whitespace-nowrap">• Apalancador</span>
+                              )}
+                              {entrada.esReferente && (
+                                <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200 whitespace-nowrap">• Referente</span>
+                              )}
+                            </div>
+                          )}
                         </div>
                         {!esUltimo && (
                           <div className="flex-shrink-0 h-0.5 bg-[#93c5fd]" style={{ width: 20, marginBottom: 20 }} />
@@ -906,6 +929,15 @@ export function PersonaProfile({ id }: Props) {
                               ✓
                             </span>
                           )}
+                          {entrada && (entrada.esReferente || entrada.esApalancador) && (
+                            <span
+                              className="absolute -top-1 -left-1 text-[9px] text-white rounded-full w-4 h-4 flex items-center justify-center font-bold"
+                              style={{ background: entrada.esReferente ? "#7c3aed" : "#d97706" }}
+                              title={entrada.esReferente ? "Referente" : "Apalancador"}
+                            >
+                              {entrada.esReferente ? "R" : "A"}
+                            </span>
+                          )}
                         </div>
                         {esActual && (
                           <span className="mt-1.5 text-[9px] font-bold px-2 py-0.5 rounded-full bg-blue-600 text-white uppercase tracking-wide">
@@ -923,6 +955,16 @@ export function PersonaProfile({ id }: Props) {
                             <p className="text-[8px] text-[#c0c0c0] leading-tight mt-0.5 italic">
                               {fmtDuracion(entrada.fechaInicio, entrada.actual ? new Date().toISOString().split("T")[0] : entrada.fechaFin)}
                             </p>
+                          </div>
+                        )}
+                        {entrada && (entrada.esApalancador || entrada.esReferente) && (
+                          <div className="mt-1 flex flex-col items-center gap-0.5" style={{ maxWidth: 100 }}>
+                            {entrada.esApalancador && (
+                              <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-50 text-amber-700 border border-amber-200 text-center leading-tight">• Apalancador</span>
+                            )}
+                            {entrada.esReferente && (
+                              <span className="text-[8px] font-semibold px-1.5 py-0.5 rounded-full bg-violet-50 text-violet-700 border border-violet-200 text-center leading-tight">• Referente</span>
+                            )}
                           </div>
                         )}
                       </div>

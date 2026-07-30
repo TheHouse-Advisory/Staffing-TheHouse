@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   startOfISOWeek, addDays, addWeeks, addMonths,
   subWeeks, subMonths, format, startOfMonth, endOfMonth,
@@ -15,7 +16,7 @@ import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import type { Engagement } from "@/lib/types/database";
 import { COLOR_AUSENCIA } from "@/lib/queries/ausencias";
-import { cambiarEstadoEngagement, cambiarTipoEngagement } from "@/lib/queries/engagements";
+import { cambiarEstadoEngagement, cambiarTipoEngagement, fetchUltimaActualizacionReal } from "@/lib/queries/engagements";
 import { useCargosColapsados } from "@/components/providers/CargosColapsadosContext";
 import { VistaResumidaEngagements } from "./VistaResumidaEngagements";
 
@@ -94,6 +95,40 @@ function columnasMes(base: Date): Columna[] {
 function parseLocal(s: string): Date {
   // "2026-05-26" → local midnight (evita off-by-one por timezone UTC)
   return new Date(s + "T00:00:00");
+}
+function fmtUltimaActualizacion(d: Date): string {
+  return `${format(d, "d 'de' MMMM", { locale: es })}, ${format(d, "HH:mm")} hrs`;
+}
+// Tooltip de actividad (viaje/taller) via portal — evita que el contenedor con scroll lo recorte
+function TipActividad({ icon, texto }: { icon: React.ReactNode; texto: string }) {
+  const [abierto, setAbierto] = useState(false);
+  const anchorRef = useRef<HTMLDivElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  const [style, setStyle] = useState<React.CSSProperties>({ visibility: "hidden" });
+
+  useLayoutEffect(() => {
+    if (!abierto || !anchorRef.current) return;
+    const a = anchorRef.current.getBoundingClientRect();
+    const margin = 8;
+    const anchoTip = tipRef.current?.offsetWidth ?? 200;
+    let left = a.left + a.width / 2;
+    let translateX = "-50%";
+    if (left - anchoTip / 2 < margin) { left = a.left; translateX = "0%"; }
+    else if (left + anchoTip / 2 > window.innerWidth - margin) { left = a.right; translateX = "-100%"; }
+    setStyle({ left, top: a.top - 8, transform: `translate(${translateX}, -100%)` });
+  }, [abierto, texto]);
+
+  return (
+    <div ref={anchorRef} className="pointer-events-auto" title="" onMouseEnter={() => setAbierto(true)} onMouseLeave={() => setAbierto(false)}>
+      {icon}
+      {abierto && createPortal(
+        <div ref={tipRef} className="fixed pointer-events-none bg-slate-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-[9999] shadow-lg" style={style}>
+          {texto}
+        </div>,
+        document.body
+      )}
+    </div>
+  );
 }
 // Día hábil anterior/siguiente (salta fines de semana) — usado por la navegación de Vista Resumida
 export function prevDiaHabil(d: Date): Date {
@@ -232,8 +267,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const [engs, setEngs] = useState<EngRow[]>(() =>
     simulationMode && initialEngs ? structuredClone(initialEngs) : []
   );
-  const [ausencias, setAusencias] = useState<{ persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string }[]>([]);
+  const [ausencias, setAusencias] = useState<{ persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string; descripcion: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ultimaActualizacion, setUltimaActualizacion] = useState<Date | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [searchTerm, setSearchTerm] = useState("");
 
@@ -728,12 +764,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       function fetchAusenciasSimulacion() {
         const sb = createAnyClient();
         sb.from("ausencia")
-          .select("persona_id, fecha_inicio, fecha_fin, tipo")
+          .select("persona_id, fecha_inicio, fecha_fin, tipo, descripcion")
           .lte("fecha_inicio", finStr)
           .gte("fecha_fin", inicioStr)
           .then(({ data }: { data: any }) => {
-            const filas = (data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string }[];
+            const filas = (data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string; descripcion: string | null }[];
             setAusencias(ocultarPctEquipo ? filas.filter((a) => a.tipo !== "vacaciones_por_confirmar") : filas);
+            fetchUltimaActualizacionReal(sb).then(setUltimaActualizacion);
           });
       }
 
@@ -788,7 +825,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           .gte("fecha_fin", lookbackStr),
 
         sb.from("ausencia")
-          .select("persona_id, fecha_inicio, fecha_fin, tipo")
+          .select("persona_id, fecha_inicio, fecha_fin, tipo, descripcion")
           .lte("fecha_inicio", finStr)
           .gte("fecha_fin", inicioStr),
       ]);
@@ -885,9 +922,10 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         if (b.sort_order !== null) return 1;
         return a.nombre.localeCompare(b.nombre, "es");
       }));
-      const ausenciasCargadas = (ausRes.data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string }[];
+      const ausenciasCargadas = (ausRes.data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string; descripcion: string | null }[];
       setAusencias(ocultarPctEquipo ? ausenciasCargadas.filter((a) => a.tipo !== "vacaciones_por_confirmar") : ausenciasCargadas);
       setLoading(false);
+      fetchUltimaActualizacionReal(sb).then(setUltimaActualizacion);
     }
     load();
   }, [inicioStr, finStr, lookbackStr, reloadKey, externalReloadKey]);
@@ -1746,30 +1784,38 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           </div>
         </div>
       )}
-      {/* Fila única de controles: TODO en un mismo flex, sin sub-contenedores con justify-between */}
-      <div className="flex items-center gap-1.5 w-full py-1 flex-shrink-0 overflow-x-auto">
-        {/* 1. Título */}
-        {titulo && (
-          <p className="text-xs font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap flex-shrink-0">{titulo}</p>
+      {/* Header superior: fila de "última actualización" (arriba, alineada a la derecha) + fila de controles */}
+      <div className="flex flex-col gap-1 w-full flex-shrink-0">
+        {ultimaActualizacion && (
+          <p className="text-xs text-gray-400 self-end whitespace-nowrap">
+            Última actualización: {fmtUltimaActualizacion(ultimaActualizacion)}
+          </p>
         )}
 
-        {/* 2. Toggle Vista Resumida / Detallada */}
-        {titulo && onVistaResumidaChange && (
-          <div className="flex h-7 rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold flex-shrink-0">
-            <button onClick={() => onVistaResumidaChange(true)}
-              className="px-2 h-7 transition-colors"
-              style={vistaResumida ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
-              Vista Resumida
-            </button>
-            <button onClick={() => onVistaResumidaChange(false)}
-              className="px-2 h-7 transition-colors"
-              style={!vistaResumida ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
-              Vista Detallada
-            </button>
-          </div>
-        )}
+        {/* Fila única de controles: TODO en un mismo flex, sin sub-contenedores con justify-between */}
+        <div className="flex items-center gap-1.5 w-full py-1 flex-shrink-0 overflow-x-auto">
+          {/* 1. Título */}
+          {titulo && (
+            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap flex-shrink-0">{titulo}</p>
+          )}
 
-        {!vistaResumida && (
+          {/* 2. Toggle Vista Resumida / Detallada */}
+          {titulo && onVistaResumidaChange && (
+            <div className="flex h-7 rounded-md overflow-hidden border border-gray-100 text-[11px] font-semibold flex-shrink-0">
+              <button onClick={() => onVistaResumidaChange(true)}
+                className="px-2 h-7 transition-colors"
+                style={vistaResumida ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
+                Vista Resumida
+              </button>
+              <button onClick={() => onVistaResumidaChange(false)}
+                className="px-2 h-7 transition-colors"
+                style={!vistaResumida ? { background: "#4a90e2", color: "#fff" } : { background: "#f9f9f9", color: "#888" }}>
+                Vista Detallada
+              </button>
+            </div>
+          )}
+
+          {!vistaResumida && (
           <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
             {/* 3. Deshacer */}
             {!ocultarPctEquipo && <button
@@ -1828,6 +1874,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
             )}
           </div>
         )}
+        </div>
       </div>
 
       {vistaResumida ? (
@@ -2120,9 +2167,15 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                         );
                         const tieneViaje  = actCol.some((a) => a.tipo === "Viajes");
                         const tieneTaller = actCol.some((a) => a.tipo === "Taller");
-                        // Textos para tooltips nativos (title HTML — sin interferir con clicks)
-                        const tallerTip = actCol.filter((a) => a.tipo === "Taller").map((a) => `Taller: ${a.titulo}${a.descripcion ? ` — ${a.descripcion}` : ""}`).join("\n");
-                        const viajeTip  = actCol.filter((a) => a.tipo === "Viajes").map((a) => `Viaje: ${a.titulo}${a.descripcion ? ` — ${a.descripcion}` : ""}`).join("\n");
+                        // Textos para tooltips: "[Tipo]: [titulo] del [inicio] al [fin] - [descripcion]"
+                        const fmtActividad = (a: ActividadEng) => {
+                          const tipoLbl = a.tipo === "Viajes" ? "Viaje" : "Taller";
+                          const ini = format(parseLocal(a.fecha_inicio), "d MMM yyyy", { locale: es });
+                          const fin = format(parseLocal(a.fecha_fin), "d MMM yyyy", { locale: es });
+                          return `${tipoLbl}${a.titulo ? `: ${a.titulo}` : ""} del ${ini} al ${fin}${a.descripcion ? ` - ${a.descripcion}` : ""}`;
+                        };
+                        const tallerTip = actCol.filter((a) => a.tipo === "Taller").map(fmtActividad).join("\n");
+                        const viajeTip  = actCol.filter((a) => a.tipo === "Viajes").map(fmtActividad).join("\n");
                         // Detecta bordes del engagement para colocar manillas de resize
                         const prevColE = columnas[i - 1];
                         const nextColE = columnas[i + 1];
@@ -2172,19 +2225,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                   setQuickEdit({ engId: eng.id, fecha: format(col.inicio, "yyyy-MM-dd"), fecha_fin: format(col.fin, "yyyy-MM-dd"), x: ev.clientX, y: ev.clientY });
                                 }}>
                                 {tieneTaller && (
-                                  <div className="group/tip absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-auto">
-                                    <Diamond className="w-5 h-5 text-blue-600 fill-sky-200 cursor-default" />
-                                    <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-[9999] opacity-0 group-hover/tip:opacity-100 transition-opacity duration-200 shadow-lg">
-                                      {tallerTip}
-                                    </div>
+                                  <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
+                                    <TipActividad texto={tallerTip} icon={<Diamond className="w-5 h-5 text-blue-600 fill-sky-200 cursor-default" />} />
                                   </div>
                                 )}
                                 {tieneViaje && (
-                                  <div className="group/tip absolute top-0.5 right-1 z-10 pointer-events-auto">
-                                    <Plane className="w-3 h-3 cursor-default" style={{ color: "#92400e" }} />
-                                    <div className="pointer-events-none absolute bottom-full right-0 mb-2 bg-slate-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-[9999] opacity-0 group-hover/tip:opacity-100 transition-opacity duration-200 shadow-lg">
-                                      {viajeTip}
-                                    </div>
+                                  <div className="absolute top-0.5 right-1 z-10">
+                                    <TipActividad texto={viajeTip} icon={<Plane className="w-3 h-3 cursor-default" style={{ color: "#92400e" }} />} />
                                   </div>
                                 )}
                                 {!readOnly && !ocultarPctEquipo && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/40 transition-colors" />}
@@ -2219,19 +2266,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 setQuickEdit({ engId: eng.id, fecha: format(col.inicio, "yyyy-MM-dd"), fecha_fin: format(col.fin, "yyyy-MM-dd"), x: ev.clientX, y: ev.clientY });
                               }}>
                               {tieneTaller && (
-                                <div className="group/tip absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10 pointer-events-auto">
-                                  <Diamond className="w-6 h-6 text-blue-600 fill-sky-200 cursor-default" />
-                                  <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 bg-slate-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-[9999] opacity-0 group-hover/tip:opacity-100 transition-opacity duration-200 shadow-lg">
-                                    {tallerTip}
-                                  </div>
+                                <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-10">
+                                  <TipActividad texto={tallerTip} icon={<Diamond className="w-6 h-6 text-blue-600 fill-sky-200 cursor-default" />} />
                                 </div>
                               )}
                               {tieneViaje && (
-                                <div className="group/tip absolute top-1 right-1.5 z-10 pointer-events-auto">
-                                  <Plane className="w-3.5 h-3.5 cursor-default" style={{ color: "#92400e" }} />
-                                  <div className="pointer-events-none absolute bottom-full right-0 mb-2 bg-slate-900 text-white text-xs rounded px-2 py-1 whitespace-nowrap z-[9999] opacity-0 group-hover/tip:opacity-100 transition-opacity duration-200 shadow-lg">
-                                    {viajeTip}
-                                  </div>
+                                <div className="absolute top-1 right-1.5 z-10">
+                                  <TipActividad texto={viajeTip} icon={<Plane className="w-3.5 h-3.5 cursor-default" style={{ color: "#92400e" }} />} />
                                 </div>
                               )}
                               {!ocultarPctEquipo && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/30 transition-colors" />}
@@ -2252,8 +2293,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                     // como zona de drag-and-drop (comportamiento correcto, NO se corta con return []).
                     const personas = personasUnicas.filter((p) => getPersonaCargo(p) === cargo);
                     const cargoColor = COLORES[cargo] ?? COLOR_DEFAULT;
-                    const confirmados = personas.filter((p) => p.estado_staffing === "CONFIRMADO");
-                    const planesAll   = personas.filter((p) => p.estado_staffing === "PLAN");
+                    // Oculta filas cuya asignación no solapa la ventana visible (persona activa en el pasado/futuro, no ahora).
+                    // Revisa TODOS los segmentos de la persona (no solo el representante `p`, que puede ser un segmento
+                    // fuera de rango si hubo auto-split por ausencias/extensiones) — mismo patrón que `isActive` en las celdas.
+                    const solapaVentana = (p: PersonaAsig) => (segsPersona.get(p.id) ?? [p]).some((s) => rangoSolapan(s.fecha_inicio, s.fecha_fin, vistaInicio, vistaFin));
+                    const confirmados = personas.filter((p) => p.estado_staffing === "CONFIRMADO" && solapaVentana(p));
+                    const planesAll   = personas.filter((p) => p.estado_staffing === "PLAN" && solapaVentana(p));
                     const ROW_H  = 20;                       // altura fija para TODAS las filas
                     // última categoría del engagement → cierra con dashed inferior (separa de "Ausentes")
                     const isLastCargo = cargo === cargosUnicos[cargosUnicos.length - 1];

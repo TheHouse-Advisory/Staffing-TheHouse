@@ -640,7 +640,9 @@ export function EngagementsList({ rolActual }: Props) {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3 flex-wrap">
             <p className="text-sm text-[#888]">
-              {engagementsFiltrados.length !== engagements.length
+              {tabPrincipal === "archivado"
+                ? <>{archivados.length} proyecto{archivados.length !== 1 ? "s" : ""}</>
+                : engagementsFiltrados.length !== engagements.length
                 ? <>{engagementsFiltrados.length} <span className="text-[#bbb]">/ {engagements.length}</span></>
                 : <>{engagements.length} proyecto{engagements.length !== 1 ? "s" : ""}</>
               }

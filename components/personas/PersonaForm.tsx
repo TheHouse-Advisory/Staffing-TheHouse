@@ -15,6 +15,8 @@ interface PeriodoCargo {
   cargo: string;
   fecha_inicio: string;
   fecha_fin: string;
+  es_apalancador: boolean;
+  es_referente: boolean;
 }
 
 const ESCALONES_FORM = [
@@ -44,7 +46,7 @@ interface PersonaFormProps {
 }
 
 // Cargos que pueden ser apalancadores
-const CARGOS_LEVERAGER = ["Consultor Senior", "Consultor de Proyectos", "Consultor Proyecto", "Consultor Analista"];
+const CARGOS_LEVERAGER = ["Consultor Senior", "Senior", "Consultor de Proyectos", "Consultor Proyecto", "Consultor Analista"];
 // Cargos que pueden ser "Referente" (incluye variantes con/sin "de Proyectos" — ver CARGOS_OCULTOS_GYD)
 const CARGOS_REFERENTE = ["Director de Proyectos", "Director", "Gerente de Proyectos", "Gerente", "Asociado"];
 
@@ -57,8 +59,6 @@ interface FormState {
   fecha_ingreso: string;
   fecha_nacimiento: string;
   mentor_id: string;
-  is_leverager: boolean;
-  referente: boolean;
   industrias: string[];
   capacidades: string[];
   tematicas: string[];
@@ -73,8 +73,6 @@ const EMPTY: FormState = {
   fecha_ingreso: "",
   fecha_nacimiento: "",
   mentor_id: "",
-  is_leverager: false,
-  referente: false,
   industrias: [],
   capacidades: [],
   tematicas: [],
@@ -135,14 +133,20 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
         supabase.from("persona_industria").select("industria_id").eq("persona_id", persona!.id),
         supabase.from("persona_capacidad").select("capacidad_id").eq("persona_id", persona!.id),
         supabase.from("persona_tematica").select("tematica_id").eq("persona_id", persona!.id),
-        supabase.from("historial_cargos").select("cargo, fecha_inicio, fecha_fin")
+        supabase.from("historial_cargos").select("cargo, fecha_inicio, fecha_fin, es_apalancador, es_referente")
           .eq("persona_id", persona!.id).order("fecha_inicio", { ascending: true }),
       ]);
-      setPeriodosCargo(
-        ((hc.data ?? []) as { cargo: string; fecha_inicio: string; fecha_fin: string | null }[]).map(
-          (r) => ({ id: nextId(), cargo: r.cargo, fecha_inicio: r.fecha_inicio, fecha_fin: r.fecha_fin ?? "" })
-        )
+      const periodos = ((hc.data ?? []) as { cargo: string; fecha_inicio: string; fecha_fin: string | null; es_apalancador: boolean | null; es_referente: boolean | null }[]).map(
+        (r) => ({ id: nextId(), cargo: r.cargo, fecha_inicio: r.fecha_inicio, fecha_fin: r.fecha_fin ?? "", es_apalancador: r.es_apalancador ?? false, es_referente: r.es_referente ?? false })
       );
+      // Preservación de datos: el switch global legado (persona.is_leverager/referente) se traspasa
+      // al cargo actual (periodo sin fecha_fin) si ese periodo aún no tiene su propio switch activo.
+      const periodoActualLegado = periodos.find((p) => !p.fecha_fin);
+      if (periodoActualLegado) {
+        if (persona!.is_leverager && !periodoActualLegado.es_apalancador) periodoActualLegado.es_apalancador = true;
+        if (persona!.referente && !periodoActualLegado.es_referente) periodoActualLegado.es_referente = true;
+      }
+      setPeriodosCargo(periodos);
       setForm({
         nombre: persona!.nombre,
         apellido: persona!.apellido,
@@ -152,8 +156,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
         fecha_ingreso: persona!.fecha_ingreso ?? "",
         fecha_nacimiento: persona!.fecha_nacimiento ?? "",
         mentor_id: persona!.mentor_id ?? "",
-        is_leverager: persona!.is_leverager ?? false,
-        referente: persona!.referente ?? false,
         industrias: (pi.data ?? []).map((r: any) => r.industria_id),
         capacidades: (pc.data ?? []).map((r: any) => r.capacidad_id),
         tematicas: (pt.data ?? []).map((r: any) => r.tematica_id),
@@ -196,6 +198,9 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
     setServerError(null);
     const supabase = createAnyClient();
 
+    // persona.is_leverager/referente se derivan del periodo de cargo actual (sin fecha_fin)
+    // del historial — mantiene compatibilidad con el resto de la app (ej. PersonaProfile).
+    const periodoActual = periodosCargo.find((p) => !p.fecha_fin);
     const payload = {
       nombre: form.nombre.trim(),
       apellido: form.apellido.trim(),
@@ -206,8 +211,8 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
       fecha_nacimiento: form.fecha_nacimiento || null,
       mentor_id: form.mentor_id || null,
       // Si el cargo ya no es elegible, forzar false al guardar
-      is_leverager: CARGOS_LEVERAGER.includes(form.cargo_actual) ? form.is_leverager : false,
-      referente: CARGOS_REFERENTE.includes(form.cargo_actual) ? form.referente : false,
+      is_leverager: !!periodoActual && CARGOS_LEVERAGER.includes(periodoActual.cargo) && periodoActual.es_apalancador,
+      referente: !!periodoActual && CARGOS_REFERENTE.includes(periodoActual.cargo) && periodoActual.es_referente,
     };
 
     let personaId: string;
@@ -235,17 +240,21 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
     }
 
     // Sincronizar historial_cargos: borrar y re-insertar
-    await supabase.from("historial_cargos").delete().eq("persona_id", personaId);
+    const { error: histDelError } = await supabase.from("historial_cargos").delete().eq("persona_id", personaId);
+    if (histDelError) { setServerError(`Error al sincronizar historial de cargos: ${histDelError.message}`); setLoading(false); return; }
     const periodosFiltrados = periodosCargo.filter((p) => p.cargo && p.fecha_inicio);
     if (periodosFiltrados.length > 0) {
-      await supabase.from("historial_cargos").insert(
+      const { error: histInsError } = await supabase.from("historial_cargos").insert(
         periodosFiltrados.map((p) => ({
           persona_id:  personaId,
           cargo:       p.cargo,
           fecha_inicio: p.fecha_inicio,
           fecha_fin:   p.fecha_fin || null,
+          es_apalancador: CARGOS_LEVERAGER.includes(p.cargo) ? p.es_apalancador : false,
+          es_referente:   CARGOS_REFERENTE.includes(p.cargo) ? p.es_referente : false,
         }))
       );
+      if (histInsError) { setServerError(`Error al guardar historial de cargos: ${histInsError.message}`); setLoading(false); return; }
     }
 
     // Sincronizar relaciones N:N
@@ -374,52 +383,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
           />
         </FieldWrapper>
 
-        {/* Toggle Apalancador — solo para cargos elegibles */}
-        {CARGOS_LEVERAGER.includes(form.cargo_actual) && (
-          <div className="flex items-center justify-between p-3 rounded-lg border border-[#e8e8e8] bg-[#fafafa]">
-            <div>
-              <p className="text-sm font-semibold text-[#1a1a2e]">¿Es Apalancador?</p>
-              <p className="text-xs text-[#888] mt-0.5">
-                Consultor que trabaja bajo la supervisión directa de un Socio o Director.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setForm((f) => ({ ...f, is_leverager: !f.is_leverager }))}
-              className="relative w-10 h-6 rounded-full transition-colors flex-shrink-0"
-              style={{ background: form.is_leverager ? "#4a90e2" : "#e0e0e0" }}
-            >
-              <span
-                className="absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
-                style={{ transform: form.is_leverager ? "translateX(18px)" : "translateX(2px)" }}
-              />
-            </button>
-          </div>
-        )}
-
-        {/* Toggle Referente — solo para cargos elegibles y solo visible para admins */}
-        {isAdmin && CARGOS_REFERENTE.includes(form.cargo_actual) && (
-          <div className="flex items-center justify-between p-3 rounded-lg border border-[#e8e8e8] bg-[#fafafa]">
-            <div>
-              <p className="text-sm font-semibold text-[#1a1a2e]">¿Es Referente?</p>
-              <p className="text-xs text-[#888] mt-0.5">
-                Director, Gerente o Asociado que actúa como referente del equipo.
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => setForm((f) => ({ ...f, referente: !f.referente }))}
-              className="relative w-10 h-6 rounded-full transition-colors flex-shrink-0"
-              style={{ background: form.referente ? "#4a90e2" : "#e0e0e0" }}
-            >
-              <span
-                className="absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform"
-                style={{ transform: form.referente ? "translateX(18px)" : "translateX(2px)" }}
-              />
-            </button>
-          </div>
-        )}
-
         {/* Preferencias de matching */}
         <div className="border-t border-[#f0f0f0] pt-5">
           <p className="text-xs font-semibold text-[#888] uppercase tracking-widest mb-4">
@@ -468,7 +431,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
               onClick={() =>
                 setPeriodosCargo((prev) => [
                   ...prev,
-                  { id: nextId(), cargo: "", fecha_inicio: "", fecha_fin: "" },
+                  { id: nextId(), cargo: "", fecha_inicio: "", fecha_fin: "", es_apalancador: false, es_referente: false },
                 ])
               }
               className="flex items-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-lg border border-[#e0e0e0] text-[#555] hover:bg-[#f5f5f5] transition-colors"
@@ -499,8 +462,12 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
                   form.cargo_actual === "Desarrollo" ||
                   (form.cargo_actual ?? "").toLowerCase().includes("desarrollo");
 
+                const puedeApalancador = CARGOS_LEVERAGER.includes(p.cargo);
+                const puedeReferente = isAdmin && CARGOS_REFERENTE.includes(p.cargo);
+
                 return (
-                <div key={p.id} className="grid grid-cols-[1fr_130px_130px_32px] gap-2 items-center">
+                <div key={p.id} className="space-y-1.5 pb-1">
+                <div className="grid grid-cols-[1fr_130px_130px_32px] gap-2 items-center">
                   {/* Cargo: texto libre para Desarrollo, selector fijo para Consultoría */}
                   {esDesarrollo ? (
                     <input
@@ -576,6 +543,53 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
+                </div>
+
+                {/* Switch dinámico de Apalancador/Referente — según el tipo de cargo de esta fila */}
+                {(puedeApalancador || puedeReferente) && (
+                  <div className="flex items-center gap-4 pl-1">
+                    {puedeApalancador && (
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPeriodosCargo((prev) =>
+                              prev.map((x) => x.id === p.id ? { ...x, es_apalancador: !x.es_apalancador } : x)
+                            )
+                          }
+                          className="relative w-8 h-5 rounded-full transition-colors flex-shrink-0"
+                          style={{ background: p.es_apalancador ? "#4a90e2" : "#e0e0e0" }}
+                        >
+                          <span
+                            className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform"
+                            style={{ transform: p.es_apalancador ? "translateX(14px)" : "translateX(2px)" }}
+                          />
+                        </button>
+                        <span className="text-[11px] text-[#555]">¿Apalancador?</span>
+                      </label>
+                    )}
+                    {puedeReferente && (
+                      <label className="flex items-center gap-2 cursor-pointer select-none">
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPeriodosCargo((prev) =>
+                              prev.map((x) => x.id === p.id ? { ...x, es_referente: !x.es_referente } : x)
+                            )
+                          }
+                          className="relative w-8 h-5 rounded-full transition-colors flex-shrink-0"
+                          style={{ background: p.es_referente ? "#4a90e2" : "#e0e0e0" }}
+                        >
+                          <span
+                            className="absolute top-0.5 w-4 h-4 bg-white rounded-full shadow transition-transform"
+                            style={{ transform: p.es_referente ? "translateX(14px)" : "translateX(2px)" }}
+                          />
+                        </button>
+                        <span className="text-[11px] text-[#555]">¿Referente?</span>
+                      </label>
+                    )}
+                  </div>
+                )}
                 </div>
               );
               })}

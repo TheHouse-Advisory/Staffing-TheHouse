@@ -1048,9 +1048,16 @@ export function GanttPlanificacion() {
       // E. Actualiza estado local + refresca todos los componentes del dashboard
       // Usa snapshotFinal (con IDs reales) en lugar del plan stale para que el Smart Pull
       // posterior no detecte sim_eng_* como "nuevos" y degrade el estado a Borrador.
-      setPlanes((prev) => prev.map((p) =>
-        p.id !== plan.id ? p : { ...p, snapshot: snapshotFinal, estado: "Aceptado" as const, tieneRealPrevia: true }
-      ));
+      setPlanes((prev) => {
+        const next = prev.map((p) =>
+          p.id !== plan.id ? p : { ...p, snapshot: snapshotFinal, estado: "Aceptado" as const, tieneRealPrevia: true }
+        );
+        // Sincroniza también el caché de localStorage: cargarPlanesRemoto() prefiere el snapshot
+        // cacheado sobre el de Supabase, así que si no se actualiza aquí, un reload resucita el
+        // sim_eng_* viejo y una futura aprobación vuelve a crear otro engagement real duplicado.
+        try { localStorage.setItem(LS_KEY, JSON.stringify(next)); } catch {}
+        return next;
+      });
       // planAprobado → fuerza re-fetch completo del Tablero en Inicio
       window.dispatchEvent(new CustomEvent("planAprobado"));
       window.dispatchEvent(new CustomEvent("asignacionChanged"));

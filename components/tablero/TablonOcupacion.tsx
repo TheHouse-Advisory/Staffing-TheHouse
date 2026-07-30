@@ -12,7 +12,7 @@ import {
   type FilaDia,
   type FilaProyecto,
 } from "@/lib/queries/tablero";
-import { cambiarTipoEngagement } from "@/lib/queries/engagements";
+import { cambiarTipoEngagement, fetchUltimaActualizacionReal } from "@/lib/queries/engagements";
 import { colorOcupacion, formatPct } from "@/lib/utils";
 import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 
@@ -25,6 +25,10 @@ interface Props {
   planId: string | null;
   vista: "persona" | "proyecto";
   periodoVista?: "dia" | "semana" | "mes";
+}
+
+function fmtUltimaActualizacion(d: Date): string {
+  return `${format(d, "d 'de' MMMM", { locale: es })}, ${format(d, "HH:mm")} hrs`;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -550,6 +554,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
   const [searchTerm, setSearchTerm] = useState("");
   const [dias, setDias] = useState<Date[]>([]);
   const [loading, setLoading] = useState(true);
+  const [ultimaActualizacion, setUltimaActualizacion] = useState<Date | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [popover, setPopover] = useState<PopoverState | null>(null);
   const [diasCriticosPersona, setDiasCriticosPersona] = useState<Set<string>>(new Set());
@@ -594,6 +599,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
       }
     }
     setLoading(false);
+    fetchUltimaActualizacionReal(supabase).then(setUltimaActualizacion);
   }, [semanaInicio, planId, vista, periodoVista]);
 
   useEffect(() => { cargar(); }, [cargar]);
@@ -665,7 +671,12 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
 
     return (
       <div className="p-6">
-        <div className="flex justify-end mb-3">
+        <div className="flex items-center justify-end gap-3 mb-3">
+          {ultimaActualizacion && (
+            <p className="text-xs text-gray-400 whitespace-nowrap">
+              Última actualización: {fmtUltimaActualizacion(ultimaActualizacion)}
+            </p>
+          )}
           <Link href="/reportes/resumen-proyectos" className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg border border-gray-100 text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/30 hover:bg-blue-50 transition-all">
             <BarChart2 className="w-3 h-3" /><span>Resumen</span>
           </Link>
@@ -842,7 +853,12 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
       )}
       <div className="flex flex-col gap-1.5 mb-3">
         {/* Fila 1: Resumen compacto alineado a la derecha */}
-        <div className="flex justify-end">
+        <div className="flex items-center justify-end gap-3">
+          {ultimaActualizacion && (
+            <p className="text-xs text-gray-400 whitespace-nowrap">
+              Última actualización: {fmtUltimaActualizacion(ultimaActualizacion)}
+            </p>
+          )}
           <Link href="/reportes/resumen-proyectos" className="flex items-center gap-1 px-1.5 py-0.5 rounded border border-gray-200 text-[10px] text-gray-400 hover:text-[#4a90e2] hover:border-[#4a90e2]/40 hover:bg-blue-50 transition-all">
             <BarChart2 className="w-2.5 h-2.5" /><span>Resumen</span>
           </Link>

@@ -12,6 +12,7 @@ interface AusenciaRow {
   fecha_inicio: string;
   fecha_fin: string;
   tipo: string;
+  descripcion: string | null;
 }
 
 interface Props {
@@ -72,6 +73,14 @@ function labelAusencia(tipo: string): string {
   return COLOR_AUSENCIA[tipo as TipoAusencia]?.label ?? tipo;
 }
 
+/** "del d MMM yyyy al d MMM yyyy" o, si es un solo día, solo esa fecha. */
+function rangoAusencia(a: AusenciaRow): string {
+  const ini = format(new Date(a.fecha_inicio + "T00:00:00"), "d MMM yyyy", { locale: es });
+  if (a.fecha_inicio === a.fecha_fin) return ini;
+  const fin = format(new Date(a.fecha_fin + "T00:00:00"), "d MMM yyyy", { locale: es });
+  return `del ${ini} al ${fin}`;
+}
+
 function SeparadorSeccion({ label, cantidad, color }: { label: string; cantidad: number; color: string }) {
   return (
     <tr>
@@ -103,7 +112,7 @@ function FilaEngagement({ eng, diasIso, ausencias }: { eng: EngRow; diasIso: str
               {personasDia.map((p) => {
                 const ausencia = ausenciaDePersonaEnDia(p.id, diaIso, ausencias);
                 const title = ausencia
-                  ? `${p.nombre} ${p.apellido} - AUSENTE (${labelAusencia(ausencia.tipo)})`
+                  ? `${p.nombre} ${p.apellido} - Ausente (${labelAusencia(ausencia.tipo)}) - ${rangoAusencia(ausencia)}${ausencia.descripcion ? ` - ${ausencia.descripcion}` : ""}`
                   : `${p.nombre} ${p.apellido} - ${p.cargo ?? "Sin cargo"}`;
                 return (
                   <div
