@@ -68,6 +68,17 @@ export function InicioClient() {
 
   // Estado cuadrante EQUIPO: colapsado strip | normal 200px | expandido flex-1
   const [equipoEstado, setEquipoEstado] = useState<"normal" | "colapsado" | "expandido">("normal");
+  // Vista compartida vertical entre EQUIPO y DISPONIBLES PRÓXIMAMENTE: al expandir una,
+  // la otra se reduce a su versión compacta (header). "normal" = ambas comparten el espacio.
+  const [vistaPanelIzq, setVistaPanelIzq] = useState<"normal" | "equipo-expanded" | "disponibles-expanded">("normal");
+  const equipoCompacto = vistaPanelIzq === "disponibles-expanded";
+  const disponiblesCompacto = vistaPanelIzq === "equipo-expanded";
+  function toggleEquipoExpandido() {
+    setVistaPanelIzq((v) => (v === "equipo-expanded" ? "normal" : "equipo-expanded"));
+  }
+  function toggleDisponiblesExpandido() {
+    setVistaPanelIzq((v) => (v === "disponibles-expanded" ? "normal" : "disponibles-expanded"));
+  }
 
   // Panel lateral de recomendaciones
   const [panelReq, setPanelReq] = useState<PanelInfo | null>(null);
@@ -84,14 +95,14 @@ export function InicioClient() {
 
   // TABLERO quadrant — toggle Vista Resumida / Detallada
   const [vistaResumida, setVistaResumida] = useState(true);
-  // Default por rol: GyD/AySr/Desarrollo/planificador (solo lectura) arrancan en Resumida;
-  // admin/proposer (pueden editar) arrancan en Detallada. Solo se aplica una vez, al cargar el rol.
+  // Default por rol: todos los roles (admin y solo lectura) arrancan en Detallada.
+  // Solo se aplica una vez, al cargar el rol.
   const defaultVistaAplicadoRef = useRef(false);
   useEffect(() => {
     if (rol === null || defaultVistaAplicadoRef.current) return;
     defaultVistaAplicadoRef.current = true;
-    setVistaResumida(isReadOnly);
-  }, [rol, isReadOnly]);
+    setVistaResumida(false);
+  }, [rol]);
 
   // RESÚMEN quadrant
   const [vistaResumen, setVistaResumen] = useState<"gantt" | "perfil">("gantt");
@@ -129,8 +140,9 @@ export function InicioClient() {
         const { data: personaData } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
         rolActual = (personaData?.rol_sistema as RolSistema) ?? null;
         setRol(rolActual);
-        // Vista por defecto para Admin: Equipo colapsado, Tablero expandido
-        if (rolActual === "admin") {
+        // Vista por defecto para Admin y roles de solo lectura (AySr/GyD/Desarrollo/planificador):
+        // Equipo colapsado, Tablero expandido
+        if (rolActual === "admin" || rolActual === "AySr" || rolActual === "GyD" || rolActual === "Desarrollo" || rolActual === "planificador") {
           setEquipoEstado("colapsado");
           setActiveQuadrant("tablero");
         }
@@ -184,7 +196,8 @@ export function InicioClient() {
         if (!p.fecha_ingreso) return false;
         const ingreso = parseISO(p.fecha_ingreso);
         const aniv = new Date(hoyDate.getFullYear(), ingreso.getMonth(), ingreso.getDate());
-        return isSameDay(aniv, hoyDate) && hoyDate.getFullYear() - ingreso.getFullYear() > 0;
+        // Incluye años=0 (ingresó hoy mismo) como alerta de bienvenida
+        return isSameDay(aniv, hoyDate);
       });
       setAlertasHoy(conAniv.length);
       setLoading(false);
@@ -284,8 +297,8 @@ export function InicioClient() {
               : { flexGrow: 1, flexShrink: 1, flexBasis: "0%", minWidth: 0 }
           }
         >
-        {/* EQUIPO ocupa el espacio flexible */}
-        <div className="flex-1 min-h-0 overflow-hidden">
+        {/* EQUIPO ocupa el espacio flexible (se reduce a header cuando Disponibles está expandido) */}
+        <div className={equipoCompacto ? "flex-shrink-0 overflow-hidden" : "flex-1 min-h-0 overflow-hidden"}>
         {equipoEstado === "colapsado" ? (
           /* Strip colapsado */
           <div className="w-10 h-full rounded-xl border border-gray-100 shadow-sm bg-white flex flex-col items-center py-3 gap-3">
@@ -304,7 +317,7 @@ export function InicioClient() {
             </span>
           </div>
         ) : (
-        <div className="w-full h-full bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col overflow-hidden relative">
+        <div className={`w-full ${equipoCompacto ? "h-auto" : "h-full"} bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col overflow-hidden relative`}>
           <div className="flex items-center justify-between mb-3 flex-shrink-0">
             <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Equipo</p>
             <div className="flex items-center gap-0.5">
@@ -336,10 +349,18 @@ export function InicioClient() {
                   </button>
                 </>
               )}
+              {/* Expansión vertical compartida con Disponibles: EQUIPO crece y Disponibles pasa a compacto */}
+              <button
+                onClick={toggleEquipoExpandido}
+                title={vistaPanelIzq === "equipo-expanded" ? "Restaurar" : "Expandir equipo"}
+                className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
+              >
+                {vistaPanelIzq === "equipo-expanded" ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
             </div>
           </div>
 
-          {loading ? (
+          {!equipoCompacto && (loading ? (
             <div className="space-y-2 animate-pulse">
               {Array.from({ length: 4 }).map((_, i) => (
                 <div key={i} className="h-4 bg-gray-100 rounded-md w-3/4" />
@@ -405,7 +426,7 @@ export function InicioClient() {
                 );
               })}
             </div>
-          )}
+          ))}
 
           {/* Popup resumen persona — sólo visible cuando equipo está expandido */}
           {seleccionada && (
@@ -423,12 +444,15 @@ export function InicioClient() {
         )}{/* fin ternario equipo expandido */}
         </div>{/* fin wrapper flex-1 EQUIPO */}
 
-        {/* DISPONIBLES PRÓXIMAMENTE — oculto en strip colapsado */}
+        {/* DISPONIBLES PRÓXIMAMENTE — oculto en strip colapsado; compacto cuando EQUIPO está expandido en vertical */}
         {equipoEstado !== "colapsado" && (
           <DisponiblesTablero
             personas={personas}
             asignaciones={asignacionesDetalle}
             ausencias={ausenciasActivas}
+            expanded={!disponiblesCompacto}
+            onToggleExpanded={toggleDisponiblesExpandido}
+            fillHeight={vistaPanelIzq === "disponibles-expanded"}
           />
         )}
         </div>{/* fin columna izquierda */}
@@ -456,6 +480,8 @@ export function InicioClient() {
               vistaResumida={vistaResumida}
               titulo="Tablero"
               onVistaResumidaChange={setVistaResumida}
+              cuadranteExpandido={activeQuadrant === "tablero"}
+              onToggleCuadrante={() => setActiveQuadrant((q) => q === "tablero" ? "both" : "tablero")}
             />
           </div>
         </div>

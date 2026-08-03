@@ -106,6 +106,7 @@ export interface Persona {
   fecha_salida: string | null;
   is_deleted: boolean;
   deleted_at: string | null;
+  alertas_vista_en: string | null; // YYYY-MM-DD — última vez que este usuario vio la vista de Alertas
   created_at: string;
   updated_at: string;
 }

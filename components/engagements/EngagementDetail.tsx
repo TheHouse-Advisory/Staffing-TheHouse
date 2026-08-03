@@ -12,7 +12,10 @@ import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { createClient } from "@/lib/supabase/client";
 import { createAnyClient } from "@/lib/supabase/client";
-import { fetchCoberturaEngagement, cambiarEstadoEngagement, cambiarTipoEngagement } from "@/lib/queries/engagements";
+import {
+  fetchCoberturaEngagement, cambiarEstadoEngagement, cambiarTipoEngagement,
+  grupoDeCargo, compararGrupoCargo, construirTimelinePersona, type TramoTimeline,
+} from "@/lib/queries/engagements";
 import { colorOcupacion, formatPct, fLocal } from "@/lib/utils";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Modal";
@@ -35,6 +38,16 @@ interface AsignacionReq {
   fecha_inicio: string;
   fecha_fin: string | null;
   requerimiento_id: string | null;
+}
+
+// ── Equipo consolidado: una tarjeta por persona, agrupado por cargo ──
+interface PersonaEquipo {
+  persona_id: string;
+  persona_nombre: string;
+  cargo: string | null;
+  pct_dedicacion: number;
+  grupo: string;
+  tramos: TramoTimeline[];
 }
 
 // ── Formulario de requerimiento ────────────────────────────────
@@ -68,7 +81,7 @@ export function EngagementDetail({ id }: Props) {
   const [engagement, setEngagement] = useState<Engagement | null>(null);
   const [cobertura, setCobertura] = useState<CoberturaEngagement[]>([]);
   const [asignacionesPorReq, setAsignacionesPorReq] = useState<Map<string, AsignacionReq[]>>(new Map());
-  const [asignacionesSinReq, setAsignacionesSinReq] = useState<AsignacionReq[]>([]);
+  const [equipoPorGrupo, setEquipoPorGrupo] = useState<Map<string, PersonaEquipo[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [caracteristicas, setCaracteristicas] = useState<{
@@ -167,19 +180,69 @@ export function EngagementDetail({ id }: Props) {
     }));
 
     const porReq = new Map<string, AsignacionReq[]>();
-    const sinReq: AsignacionReq[] = [];
+    // Deduplica registros de asignación idénticos (misma persona + mismo requerimiento +
+    // mismo rango de fechas, pero con id distinto) — pueden existir en la BD por una
+    // asignación doble; se muestra una sola vez, quedándose con el primer id encontrado.
+    const vistos = new Set<string>();
+    const asigsDedup: AsignacionReq[] = [];
     for (const a of asigs) {
+      const dedupeKey = `${a.requerimiento_id ?? "sin_req"}|${a.persona_id}|${a.fecha_inicio}|${a.fecha_fin}`;
+      if (vistos.has(dedupeKey)) continue;
+      vistos.add(dedupeKey);
+      asigsDedup.push(a);
+
       if (a.requerimiento_id) {
         const arr = porReq.get(a.requerimiento_id) ?? [];
         arr.push(a);
         porReq.set(a.requerimiento_id, arr);
-      } else {
-        sinReq.push(a);
+      }
+    }
+    setAsignacionesPorReq(porReq);
+
+    // ── Equipo consolidado: una tarjeta por persona (con o sin requerimiento), ──
+    // agrupada por cargo, con sus tramos de asignación intercalados con ausencias.
+    const porPersona = new Map<string, AsignacionReq[]>();
+    for (const a of asigsDedup) {
+      const arr = porPersona.get(a.persona_id) ?? [];
+      arr.push(a);
+      porPersona.set(a.persona_id, arr);
+    }
+
+    const personaIds = [...porPersona.keys()];
+    const ausenciasPorPersona = new Map<string, { inicio: string; fin: string; tipo: string }[]>();
+    if (personaIds.length > 0) {
+      const { data: ausData } = await sb
+        .from("ausencia")
+        .select("persona_id, fecha_inicio, fecha_fin, tipo")
+        .in("persona_id", personaIds);
+      for (const row of (ausData ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string }[]) {
+        const arr = ausenciasPorPersona.get(row.persona_id) ?? [];
+        arr.push({ inicio: row.fecha_inicio, fin: row.fecha_fin, tipo: row.tipo });
+        ausenciasPorPersona.set(row.persona_id, arr);
       }
     }
 
-    setAsignacionesPorReq(porReq);
-    setAsignacionesSinReq(sinReq);
+    const equipoPorGrupoNuevo = new Map<string, PersonaEquipo[]>();
+    for (const [personaId, filas] of porPersona) {
+      const ordenadas = [...filas].sort((a, b) => a.fecha_inicio.localeCompare(b.fecha_inicio));
+      const ultima = ordenadas[ordenadas.length - 1];
+      const segmentos = ordenadas.map((f) => ({ inicio: f.fecha_inicio, fin: f.fecha_fin }));
+      const tramos = construirTimelinePersona(segmentos, ausenciasPorPersona.get(personaId) ?? []);
+      const grupo = grupoDeCargo(ultima.cargo_al_momento);
+      const entrada: PersonaEquipo = {
+        persona_id: personaId,
+        persona_nombre: ultima.persona_nombre,
+        cargo: ultima.cargo_al_momento,
+        pct_dedicacion: ultima.pct_dedicacion,
+        grupo,
+        tramos,
+      };
+      const arr = equipoPorGrupoNuevo.get(grupo) ?? [];
+      arr.push(entrada);
+      equipoPorGrupoNuevo.set(grupo, arr);
+    }
+    setEquipoPorGrupo(equipoPorGrupoNuevo);
+
     setActividades((actResult.data ?? []) as ActividadDetalle[]);
 
     setLoading(false);
@@ -483,163 +546,6 @@ export function EngagementDetail({ id }: Props) {
           </div>
         )}
 
-        {/* ── Requerimientos + asignaciones ──────────────────── */}
-        {!isReadOnly && <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <h3 className="font-semibold text-[15px]">Requerimientos y asignaciones</h3>
-            {!isReadOnly && (
-              <Button size="sm" onClick={abrirNuevoReq}>
-                <Plus className="w-3.5 h-3.5" />
-                Nuevo requerimiento
-              </Button>
-            )}
-          </div>
-
-          {tieneRequerimientos ? (
-            Object.entries(porNombre)
-              .sort(([a], [b]) => a.localeCompare(b, "es"))
-              .map(([nombre, reqs]) => (
-                <div key={nombre} className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
-                  {/* Header de grupo */}
-                  <div className="px-5 py-3 bg-[#f9f9f9] border-b border-[#e8e8e8]">
-                    <p className="font-semibold text-sm">{nombre}</p>
-                  </div>
-
-                  <div className="divide-y divide-[#f0f0f0]">
-                    {reqs.map((r) => {
-                      const cubierto = r.pct_descubierto <= 0;
-                      const asigs = asignacionesPorReq.get(r.requerimiento_id) ?? [];
-                      return (
-                        <div key={r.requerimiento_id} className="px-5 py-4">
-                          {/* Fila de requerimiento */}
-                          <div className="flex items-start justify-between gap-4">
-                            <div className="flex-1 min-w-0">
-                              <div className="flex items-center gap-2">
-                                {cubierto
-                                  ? <CheckCircle className="w-4 h-4 text-[#27ae60] flex-shrink-0" />
-                                  : <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />}
-                                <span className="font-medium text-sm">
-                                  {r.cargo_requerido ?? "Cualquier cargo"}
-                                  {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
-                                  <span className="ml-2 text-xs font-normal text-[#aaa]">
-                                    {r.pct_requerido}%
-                                  </span>
-                                  )}
-                                </span>
-                              </div>
-                              <p className="text-xs text-[#888] mt-0.5 ml-6">
-                                {format(fLocal(r.req_fecha_inicio), "d MMM", { locale: es })}
-                                {" → "}
-                                {format(fLocal(r.req_fecha_fin), "d MMM yyyy", { locale: es })}
-                              </p>
-                            </div>
-
-                            <div className="flex items-center gap-1.5 flex-shrink-0">
-                              <span
-                                className="text-xs px-2 py-0.5 rounded-full font-semibold"
-                                style={{
-                                  background: cubierto ? "#dcf5e7" : "#fef08a",
-                                  color: cubierto ? "#1e7e45" : "#a16207",
-                                }}
-                              >
-                                {cubierto ? "Cubierto" : "Sin cubrir"}
-                              </span>
-                              {/* Editar y eliminar requerimiento */}
-                              {!isReadOnly && (
-                                <>
-                                  <button
-                                    onClick={() => abrirEditarReq(r.requerimiento_id)}
-                                    className="p-1 rounded hover:bg-[#f0f0f0] text-[#aaa] hover:text-[#555] transition-colors"
-                                    title="Editar requerimiento"
-                                  >
-                                    <Pencil className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    onClick={() => setReqDeleteId(r.requerimiento_id)}
-                                    className="p-1 rounded hover:bg-red-50 text-[#aaa] hover:text-red-500 transition-colors"
-                                    title="Eliminar requerimiento"
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </button>
-                                  <button
-                                    onClick={() => setReqFitOpen(r)}
-                                    className="p-1 rounded hover:bg-blue-50 text-[#aaa] hover:text-blue-500 transition-colors"
-                                    title="Asignar persona"
-                                  >
-                                    <Plus className="w-3.5 h-3.5" />
-                                  </button>
-                                </>
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Asignaciones del requerimiento */}
-                          {asigs.length > 0 && (
-                            <div className="mt-3 ml-6 space-y-2">
-                              {asigs.map((a) => {
-                                const { bg: abg, text: atext } = colorOcupacion(a.pct_dedicacion);
-                                return (
-                                  <div key={a.id}
-                                    className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[#f9f9f9] border border-[#f0f0f0]">
-                                    <User className="w-3.5 h-3.5 text-[#aaa] flex-shrink-0" />
-                                    <div className="flex-1 min-w-0">
-                                      <p className="text-xs font-medium text-[#1a1a1a]">{a.persona_nombre}</p>
-                                      {a.cargo_al_momento && (
-                                        <p className="text-[10px] text-[#888]">{a.cargo_al_momento}</p>
-                                      )}
-                                    </div>
-                                    {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
-                                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
-                                        style={{ background: abg, color: atext }}>
-                                        {formatPct(a.pct_dedicacion)}
-                                      </span>
-                                    )}
-                                    <span className="text-[10px] text-[#aaa] flex-shrink-0">
-                                      {format(fLocal(a.fecha_inicio), "d MMM", { locale: es })}
-                                      {a.fecha_fin
-                                        ? ` → ${format(fLocal(a.fecha_fin), "d MMM yy", { locale: es })}`
-                                        : " →"}
-                                    </span>
-                                    {!isReadOnly && (
-                                      <button
-                                        onClick={() => setQuitarAsigId(a.id)}
-                                        className="p-1 rounded hover:bg-red-50 text-[#ccc] hover:text-red-400 transition-colors flex-shrink-0"
-                                        title="Quitar asignación"
-                                      >
-                                        <X className="w-3 h-3" />
-                                      </button>
-                                    )}
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                          {asigs.length === 0 && !cubierto && (
-                            <p className="mt-2 ml-6 text-xs text-[#aaa] italic">
-                              Sin asignaciones activas para este requerimiento.
-                            </p>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              ))
-          ) : (
-            <div className="bg-white rounded-xl border border-[#e8e8e8] p-8 text-center">
-              <p className="text-sm text-[#888] mb-3">
-                Este engagement no tiene requerimientos definidos aún.
-              </p>
-              {!isReadOnly && (
-                <Button size="sm" onClick={abrirNuevoReq}>
-                  <Plus className="w-3.5 h-3.5" />
-                  Agregar primer requerimiento
-                </Button>
-              )}
-            </div>
-          )}
-        </div>}
-
         {/* ── Talleres y Viajes ──────────────────────────────────── */}
         {actividades.length > 0 && (
           <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
@@ -679,37 +585,55 @@ export function EngagementDetail({ id }: Props) {
           </div>
         )}
 
-        {/* Asignaciones sin requerimiento */}
-        {asignacionesSinReq.length > 0 && (
+        {/* Equipo del proyecto — consolidado por persona, agrupado jerárquicamente por cargo */}
+        {equipoPorGrupo.size > 0 && (
           <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
             <div className="px-5 py-3 bg-[#f9f9f9] border-b border-[#e8e8e8]">
-              <p className="font-semibold text-sm text-[#888]">Asignaciones sin requerimiento vinculado</p>
+              <p className="font-semibold text-sm text-[#888]">Equipo del proyecto</p>
             </div>
             <div className="divide-y divide-[#f5f5f5]">
-              {asignacionesSinReq.map((a) => {
-                const { bg, text } = colorOcupacion(a.pct_dedicacion);
-                return (
-                  <div key={a.id} className="flex items-center gap-3 px-5 py-3">
-                    <User className="w-3.5 h-3.5 text-[#aaa] flex-shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium">{a.persona_nombre}</p>
-                      {a.cargo_al_momento && <p className="text-xs text-[#888]">{a.cargo_al_momento}</p>}
+              {[...equipoPorGrupo.entries()]
+                .sort(([a], [b]) => compararGrupoCargo(a, b))
+                .map(([grupo, personas]) => (
+                  <div key={grupo} className="px-5 py-3">
+                    <p className="text-[10px] font-bold text-[#aaa] uppercase tracking-wide mb-2">{grupo}</p>
+                    <div className="space-y-2">
+                      {[...personas]
+                        .sort((a, b) => a.persona_nombre.localeCompare(b.persona_nombre, "es"))
+                        .map((p) => {
+                          const { bg, text } = colorOcupacion(p.pct_dedicacion);
+                          return (
+                            <div key={p.persona_id} className="rounded-lg bg-[#f9f9f9] border border-[#f0f0f0] px-3 py-2">
+                              <div className="flex items-center gap-2">
+                                <User className="w-3.5 h-3.5 text-[#aaa] flex-shrink-0" />
+                                <span className="text-sm font-medium flex-1 min-w-0 truncate">{p.persona_nombre}</span>
+                                {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
+                                  <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
+                                    style={{ background: bg, color: text }}>
+                                    {formatPct(p.pct_dedicacion)}
+                                  </span>
+                                )}
+                              </div>
+                              {/* Timeline: tramos activos intercalados cronológicamente con ausencias */}
+                              <div className="mt-1.5 ml-5 flex flex-wrap items-center gap-1.5">
+                                {p.tramos.map((t, i) => (
+                                  <span key={i}
+                                    className={`text-[10px] px-2 py-0.5 rounded-full font-medium whitespace-nowrap ${
+                                      t.tipo === "ausencia" ? "bg-amber-100 text-amber-700" : "bg-[#eaf4ff] text-[#1a5276]"
+                                    }`}>
+                                    {t.tipo === "ausencia" && "(ausencia) "}
+                                    {format(fLocal(t.inicio), "d MMM", { locale: es })}
+                                    {" → "}
+                                    {t.fin ? format(fLocal(t.fin), "d MMM", { locale: es }) : "hoy"}
+                                  </span>
+                                ))}
+                              </div>
+                            </div>
+                          );
+                        })}
                     </div>
-                    {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
-                      <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
-                        style={{ background: bg, color: text }}>
-                        {formatPct(a.pct_dedicacion)}
-                      </span>
-                    )}
-                    <span className="text-xs text-[#aaa] flex-shrink-0">
-                      {format(fLocal(a.fecha_inicio), "d MMM", { locale: es })}
-                      {a.fecha_fin
-                        ? ` → ${format(fLocal(a.fecha_fin), "d MMM yy", { locale: es })}`
-                        : " →"}
-                    </span>
                   </div>
-                );
-              })}
+                ))}
             </div>
           </div>
         )}

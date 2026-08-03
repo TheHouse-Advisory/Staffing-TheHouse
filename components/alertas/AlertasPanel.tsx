@@ -108,8 +108,13 @@ function TarjetaAniversario({
       <div className="flex-1">
         {esHoy ? (
           <p className={`font-semibold text-[#1a1a2e] ${checked ? "line-through text-gray-400" : ""}`}>
-            🎉 Felicita a <span className={checked ? "" : "text-[#4a90e2]"}>{p.nombre} {p.apellido}</span>{" "}
-            por cumplir <span className="font-bold">{p.años} {p.años === 1 ? "año" : "años"}</span> en la empresa
+            {p.años === 0 ? (
+              <>🎉 Dale la bienvenida a <span className={checked ? "" : "text-[#4a90e2]"}>{p.nombre} {p.apellido}</span>{" "}
+              — ¡hoy es su primer día en la empresa!</>
+            ) : (
+              <>🎉 Felicita a <span className={checked ? "" : "text-[#4a90e2]"}>{p.nombre} {p.apellido}</span>{" "}
+              por cumplir <span className="font-bold">{p.años} {p.años === 1 ? "año" : "años"}</span> en la empresa</>
+            )}
           </p>
         ) : (
           <p className={`font-semibold text-[#1a1a2e] ${checked ? "line-through text-gray-400" : ""}`}>
@@ -274,7 +279,12 @@ function TarjetaEPP({
 
 // ── Panel principal ──────────────────────────────────────────────
 
-export function AlertasPanel() {
+interface AlertasPanelProps {
+  /** Id de la persona (usuario logueado). Si se provee, marca la vista de hoy como "vista" — oculta el badge rojo del sidebar solo para este usuario. */
+  personaId?: string;
+}
+
+export function AlertasPanel({ personaId }: AlertasPanelProps) {
   const [anivHoy, setAnivHoy] = useState<PersonaAniversario[]>([]);
   const [anivProximos, setAnivProximos] = useState<PersonaAniversario[]>([]);
   const [cumpleHoy, setCumpleHoy] = useState<PersonaCumpleanos[]>([]);
@@ -285,6 +295,19 @@ export function AlertasPanel() {
   const [historialAbierto, setHistorialAbierto] = useState(false);
 
   useEffect(() => { setChecks(leerChecks()); }, []);
+
+  // Marca "vista hoy" para ESTE usuario → el badge rojo de Alertas en el sidebar
+  // deja de mostrarse solo para él; otros usuarios que no hayan entrado lo siguen viendo.
+  // El query builder de supabase-js es "thenable": si no se hace await/.then() la
+  // petición nunca se dispara — por eso el update se envuelve en una función async.
+  useEffect(() => {
+    if (!personaId) return;
+    (async () => {
+      const hoyStr = format(new Date(), "yyyy-MM-dd");
+      const sb = createAnyClient();
+      await (sb as any).from("persona").update({ alertas_vista_en: hoyStr }).eq("id", personaId);
+    })();
+  }, [personaId]);
 
   useEffect(() => {
     async function load() {
@@ -329,14 +352,13 @@ export function AlertasPanel() {
         if (p.fecha_ingreso) {
           const fechaAniversario = proximoAniversario(p.fecha_ingreso, ahora);
           const años = añosEn(p.fecha_ingreso, fechaAniversario);
-          if (años > 0) {
-            const entrada: PersonaAniversario = { ...p, fecha_ingreso: p.fecha_ingreso, años, fechaAniversario };
-            if (isSameDay(fechaAniversario, ahora)) {
-              anivHoyArr.push(entrada);
-            } else {
-              const diff = diffDiasEntre(ahora, fechaAniversario);
-              if (diff <= 30) anivProxArr.push(entrada);
-            }
+          const entrada: PersonaAniversario = { ...p, fecha_ingreso: p.fecha_ingreso, años, fechaAniversario };
+          if (isSameDay(fechaAniversario, ahora)) {
+            // Incluye años=0 (ingresó hoy mismo) como alerta de bienvenida
+            anivHoyArr.push(entrada);
+          } else if (años > 0) {
+            const diff = diffDiasEntre(ahora, fechaAniversario);
+            if (diff <= 30) anivProxArr.push(entrada);
           }
         }
         if (p.fecha_nacimiento) {
@@ -388,7 +410,7 @@ export function AlertasPanel() {
           continue;
         }
 
-        const personaIds = asigPorEng.get(eng.id) ?? [];
+        const personaIds = [...new Set(asigPorEng.get(eng.id) ?? [])];
         const personasEng = personaIds
           .map((pid) => personaMap.get(pid))
           .filter(Boolean) as typeof personas;

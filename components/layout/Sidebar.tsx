@@ -1,8 +1,10 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { format, isSameDay, parseISO } from "date-fns";
+import { createAnyClient } from "@/lib/supabase/client";
 import {
   LayoutDashboard,
   Briefcase,
@@ -30,6 +32,8 @@ interface SidebarProps {
   nombreCompleto: string;
   cargo: string | null;
   rol: RolSistema | null;
+  /** Última fecha (YYYY-MM-DD) en que ESTE usuario vio la vista de Alertas. Oculta su badge rojo si es hoy. */
+  alertasVistaEn: string | null;
   onSignOut: () => void;
   isCollapsed: boolean;
   setIsCollapsed: (v: boolean) => void;
@@ -72,6 +76,7 @@ export function Sidebar({
   nombreCompleto,
   cargo,
   rol,
+  alertasVistaEn,
   onSignOut,
   isCollapsed,
   setIsCollapsed,
@@ -79,6 +84,47 @@ export function Sidebar({
   const pathname = usePathname();
   const router = useRouter();
   const [engDrawerOpen, setEngDrawerOpen] = useState(false);
+
+  // "Vista hoy" para este usuario: ya lo dice la BD (alertasVistaEn), o está en este momento
+  // navegando /alertas (feedback optimista sin esperar el round-trip de la escritura).
+  const hoyStr = format(new Date(), "yyyy-MM-dd");
+  const alertasVistasPorMi = alertasVistaEn === hoyStr || pathname.startsWith("/alertas");
+
+  // Badge "Alertas": aniversarios, cumpleaños y EPP (fin de proyecto) que caen HOY
+  const [alertasHoy, setAlertasHoy] = useState(0);
+  useEffect(() => {
+    async function cargarAlertasHoy() {
+      const sb = createAnyClient();
+      const hoy = new Date();
+      const hoyStr = format(hoy, "yyyy-MM-dd");
+
+      const [personasRes, engRes] = await Promise.all([
+        sb.from("persona").select("id, fecha_ingreso, fecha_nacimiento").eq("activo", true),
+        sb.from("engagement").select("id, fecha_fin_estimada, fecha_fin_real, estado"),
+      ]);
+
+      let count = 0;
+      for (const p of (personasRes.data ?? []) as { fecha_ingreso: string | null; fecha_nacimiento: string | null }[]) {
+        if (p.fecha_ingreso) {
+          const ingreso = parseISO(p.fecha_ingreso);
+          const aniv = new Date(hoy.getFullYear(), ingreso.getMonth(), ingreso.getDate());
+          // Incluye años=0 (ingresó hoy mismo) como alerta de bienvenida
+          if (isSameDay(aniv, hoy)) count++;
+        }
+        if (p.fecha_nacimiento) {
+          const nac = parseISO(p.fecha_nacimiento);
+          const cumple = new Date(hoy.getFullYear(), nac.getMonth(), nac.getDate());
+          if (isSameDay(cumple, hoy)) count++;
+        }
+      }
+      for (const e of (engRes.data ?? []) as { fecha_fin_estimada: string | null; fecha_fin_real: string | null; estado: string }[]) {
+        if (e.fecha_fin_real === hoyStr) count++;
+        else if (e.estado === "activo" && e.fecha_fin_estimada === hoyStr) count++;
+      }
+      setAlertasHoy(count);
+    }
+    cargarAlertasHoy();
+  }, []);
 
   const initiales = nombreCompleto
     .split(" ")
@@ -150,7 +196,16 @@ export function Sidebar({
                     )}
                   >
                     <Icon className="w-4 h-4 flex-shrink-0" />
-                    {!isCollapsed && <span>{item.label}</span>}
+                    {!isCollapsed && (
+                      <span className="flex justify-between items-center w-full min-w-0">
+                        <span className="truncate">{item.label}</span>
+                        {item.href === "/alertas" && alertasHoy > 0 && !alertasVistasPorMi && (
+                          <span className="ml-2 flex-shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">
+                            {alertasHoy}
+                          </span>
+                        )}
+                      </span>
+                    )}
                   </Link>
                   {showPlus && (
                     <button

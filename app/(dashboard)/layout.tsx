@@ -70,6 +70,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
         }
         cargo={persona?.cargo_actual ?? null}
         rol={persona?.rol_sistema as RolSistema | null}
+        alertasVistaEn={persona?.alertas_vista_en ?? null}
         onSignOut={handleSignOut}
         isCollapsed={isCollapsed}
         setIsCollapsed={setIsCollapsed}

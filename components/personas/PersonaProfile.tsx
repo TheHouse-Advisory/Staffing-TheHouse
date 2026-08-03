@@ -8,8 +8,11 @@ import { es } from "date-fns/locale";
 import { getDetailedPersonAbsences, type DetalleAusenciasPersona, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 import { getIniciales } from "@/lib/utils/iniciales";
 import { calculateBusinessDays } from "@/lib/utils/date-utils";
+import { type ExperienciaDinamica, type EngagementExperienciaRow } from "@/lib/queries/personas";
+import { sincronizarExperienciaPersona } from "@/lib/queries/engagements";
 import { ProyectosPersonaDetalle } from "./ProyectosPersonaDetalle";
 import { Button } from "@/components/ui/Button";
+import { Modal } from "@/components/ui/Modal";
 import { PersonaForm } from "./PersonaForm";
 import { TalentMatrix, getTalentBoxName } from "./TalentMatrix";
 import { EngagementDetalleModal } from "./EngagementDetalleModal";
@@ -39,18 +42,6 @@ interface HistorialItem {
   fechaRef: string; // para ordenamiento desc
   activo: boolean;
 }
-
-interface TagItem {
-  id: string;
-  nombre: string;
-  nivel?: string | null;
-}
-
-const NIVEL_LABEL: Record<string, string> = {
-  basico: "básico",
-  intermedio: "intermedio",
-  avanzado: "avanzado",
-};
 
 // ── Desarrollo de Carrera ─────────────────────────────────────
 const ESCALONES_SENIORITY = [
@@ -111,12 +102,28 @@ function colorOcupacion(pct: number) {
   return { bg: "#ffd4d4", text: "#c02020" };
 }
 
+/** Botón discreto de colapsar/expandir sección, con flecha que rota según el estado. */
+function BotonColapsarSeccion({ colapsada, onClick }: { colapsada: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      title={colapsada ? "Expandir sección" : "Colapsar sección"}
+      className="p-1 rounded hover:bg-[#f5f5f5] text-[#bbb] hover:text-[#555] transition-colors flex-shrink-0"
+    >
+      <ChevronDown
+        className="w-4 h-4"
+        style={{ transform: colapsada ? "rotate(-90deg)" : "none", transition: "transform 0.2s" }}
+      />
+    </button>
+  );
+}
+
 export function PersonaProfile({ id }: Props) {
   const [persona, setPersona] = useState<Persona | null>(null);
   const [rolActual, setRolActual] = useState<string | null>(null);
-  const [industrias, setIndustrias] = useState<TagItem[]>([]);
-  const [capacidades, setCapacidades] = useState<TagItem[]>([]);
-  const [tematicas, setTematicas] = useState<TagItem[]>([]);
+  const [experiencia, setExperiencia] = useState<ExperienciaDinamica>({ industrias: [], capacidades: [], tematicas: [] });
+  const [modalTag, setModalTag] = useState<{ tipo: string; nombre: string; engagements: EngagementExperienciaRow[] } | null>(null);
   const [asignaciones, setAsignaciones] = useState<AsignacionActiva[]>([]);
   const [mentor, setMentor] = useState<Persona | null>(null);
   const [mentoreados, setMentoreados] = useState<Persona[]>([]);
@@ -132,26 +139,36 @@ export function PersonaProfile({ id }: Props) {
   const [detalleEngId,     setDetalleEngId]     = useState<string | null>(null);
   const [historialCargosDB, setHistorialCargosDB] = useState<CargoDBRow[]>([]);
 
+  // Secciones colapsadas — persistidas en localStorage por persona, para recordar la
+  // preferencia del usuario al recargar o volver a esta página.
+  const [seccionesColapsadas, setSeccionesColapsadas] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    try {
+      const guardado = localStorage.getItem(`persona_profile_collapsed_${id}`);
+      setSeccionesColapsadas(guardado ? new Set(JSON.parse(guardado)) : new Set());
+    } catch {
+      setSeccionesColapsadas(new Set());
+    }
+  }, [id]);
+
+  function toggleSeccion(seccion: string) {
+    setSeccionesColapsadas((prev) => {
+      const next = new Set(prev);
+      if (next.has(seccion)) next.delete(seccion); else next.add(seccion);
+      if (typeof window !== "undefined") {
+        localStorage.setItem(`persona_profile_collapsed_${id}`, JSON.stringify([...next]));
+      }
+      return next;
+    });
+  }
+
   const load = async () => {
     const supabase = createAnyClient();
 
-    const [pRes, indRes, capRes, temRes, asigRes, mentoreRes, histRes, cargosRes] = await Promise.all([
+    const [pRes, asigRes, mentoreRes, histRes, cargosRes] = await Promise.all([
       supabase.from("persona").select("*").eq("id", id).single(),
-
-      supabase
-        .from("persona_industria")
-        .select("industria_id, cat_industria(id, nombre)")
-        .eq("persona_id", id),
-
-      supabase
-        .from("persona_capacidad")
-        .select("capacidad_id, nivel, cat_capacidad(id, nombre)")
-        .eq("persona_id", id),
-
-      supabase
-        .from("persona_tematica")
-        .select("tematica_id, cat_tematica(id, nombre)")
-        .eq("persona_id", id),
 
       supabase
         .from("asignacion")
@@ -203,31 +220,6 @@ export function PersonaProfile({ id }: Props) {
       }
     }
 
-    setIndustrias(
-      (indRes.data ?? []).map((r: any) => ({
-        id: r.industria_id,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        nombre: (r.cat_industria as any)?.nombre ?? r.industria_id,
-      }))
-    );
-
-    setCapacidades(
-      (capRes.data ?? []).map((r: any) => ({
-        id: r.capacidad_id,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        nombre: (r.cat_capacidad as any)?.nombre ?? r.capacidad_id,
-        nivel: r.nivel,
-      }))
-    );
-
-    setTematicas(
-      (temRes.data ?? []).map((r: any) => ({
-        id: r.tematica_id,
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        nombre: (r.cat_tematica as any)?.nombre ?? r.tematica_id,
-      }))
-    );
-
     setAsignaciones(
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (asigRes.data ?? []).map((r: any) => ({
@@ -242,8 +234,15 @@ export function PersonaProfile({ id }: Props) {
     );
 
     setMentoreados((mentoreRes.data ?? []) as Persona[]);
-    const ausencias = await getDetailedPersonAbsences(supabase, id);
+    // Preferencias y experiencia: recalculada retroactivamente a partir de TODOS los
+    // engagements pasados (solo cuentan los de más de 10 días hábiles sin ausencias) y
+    // sincronizada de forma persistente al perfil (persona_industria/capacidad/tematica).
+    const [ausencias, experienciaData] = await Promise.all([
+      getDetailedPersonAbsences(supabase, id),
+      sincronizarExperienciaPersona(supabase, id),
+    ]);
     setAusenciasDetalle(ausencias);
+    setExperiencia(experienciaData);
 
     // ── Procesa historial: agrupa por engagement y suma días ──
     const hoy = new Date();
@@ -416,7 +415,11 @@ export function PersonaProfile({ id }: Props) {
 
         {/* ── Info ───────────────────────────────────────────── */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
-          <h3 className="font-semibold mb-4">Información</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold">Información</h3>
+            <BotonColapsarSeccion colapsada={seccionesColapsadas.has("informacion")} onClick={() => toggleSeccion("informacion")} />
+          </div>
+          {!seccionesColapsadas.has("informacion") && (
           <dl className="grid grid-cols-2 gap-x-6 gap-y-4 text-sm">
             <div>
               <dt className="text-[#888]">Email</dt>
@@ -468,16 +471,23 @@ export function PersonaProfile({ id }: Props) {
               </div>
             )}
           </dl>
+          )}
         </div>
 
         {/* ── Matriz de Talento 9-Box ──────────────────────── */}
         {rolActual !== "planificador" && rolActual !== "GyD" && rolActual !== "AySr" && <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold">Matriz de Talento</h3>
+            <BotonColapsarSeccion colapsada={seccionesColapsadas.has("matriz-talento")} onClick={() => toggleSeccion("matriz-talento")} />
+          </div>
+          {!seccionesColapsadas.has("matriz-talento") && (
+          <>
+          <div className="flex items-center justify-between mb-4">
             <button
               onClick={() => setShowMatriz((s) => !s)}
               className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
             >
-              <h3 className="font-semibold">Matriz de Talento</h3>
+              <span className="text-sm font-medium text-[#555]">Ver matriz 9-box</span>
               <ChevronDown
                 className="w-4 h-4 text-gray-400"
                 style={{ transform: showMatriz ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}
@@ -529,37 +539,47 @@ export function PersonaProfile({ id }: Props) {
               onUpdate={(p, d) => setTalentDraft({ p, d })}
             />
           )}
+          </>
+          )}
         </div>}
 
         {/* ── Proyectos activos y futuros ───────────────────── */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold">Proyectos activos y futuros</h3>
-            {pctTotal > 0 && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (() => {
-              const { bg, text } = colorOcupacion(pctTotal);
-              return (
-                <span
-                  className="text-xs font-semibold px-2.5 py-1 rounded-full"
-                  style={{ background: bg, color: text }}
-                >
-                  {pctTotal}% ocupado
-                </span>
-              );
-            })()}
+            <div className="flex items-center gap-2">
+              {pctTotal > 0 && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (() => {
+                const { bg, text } = colorOcupacion(pctTotal);
+                return (
+                  <span
+                    className="text-xs font-semibold px-2.5 py-1 rounded-full"
+                    style={{ background: bg, color: text }}
+                  >
+                    {pctTotal}% ocupado
+                  </span>
+                );
+              })()}
+              <BotonColapsarSeccion colapsada={seccionesColapsadas.has("proyectos-activos")} onClick={() => toggleSeccion("proyectos-activos")} />
+            </div>
           </div>
-          <ProyectosPersonaDetalle personaId={id} ocultarCarga={rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo"} />
+          {!seccionesColapsadas.has("proyectos-activos") && (
+            <ProyectosPersonaDetalle personaId={id} ocultarCarga={rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo"} />
+          )}
         </div>
 
         {/* ── Historial de proyectos ──────────────────────── */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold">Historial de proyectos</h3>
-            {historial.length > 0 && (
-              <span className="text-xs text-[#888]">{historial.length} {historial.length === 1 ? "engagement" : "engagements"}</span>
-            )}
+            <div className="flex items-center gap-2">
+              {historial.length > 0 && (
+                <span className="text-xs text-[#888]">{historial.length} {historial.length === 1 ? "engagement" : "engagements"}</span>
+              )}
+              <BotonColapsarSeccion colapsada={seccionesColapsadas.has("historial-proyectos")} onClick={() => toggleSeccion("historial-proyectos")} />
+            </div>
           </div>
 
-          {historial.length === 0 ? (
+          {!seccionesColapsadas.has("historial-proyectos") && (historial.length === 0 ? (
             <p className="text-sm text-[#ccc] italic">Sin proyectos registrados.</p>
           ) : (
             <div className="divide-y divide-[#f0f0f0]">
@@ -602,7 +622,7 @@ export function PersonaProfile({ id }: Props) {
                 </div>
               ))}
             </div>
-          )}
+          ))}
 
           {/* ── Pop-up de confirmación de borrado ── */}
           {deletingEngId && (() => {
@@ -642,13 +662,16 @@ export function PersonaProfile({ id }: Props) {
           <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
             <div className="flex items-center justify-between mb-5">
               <h3 className="font-semibold">Ausencias</h3>
-              <div className="text-right">
-                <span className="text-3xl font-bold text-[#1a1a2e]">{ausenciasDetalle.totalDiasAnioActual}</span>
-                <p className="text-xs text-[#888] mt-0.5">días utilizados {new Date().getFullYear()}</p>
+              <div className="flex items-center gap-3">
+                <div className="text-right">
+                  <span className="text-3xl font-bold text-[#1a1a2e]">{ausenciasDetalle.totalDiasAnioActual}</span>
+                  <p className="text-xs text-[#888] mt-0.5">días utilizados {new Date().getFullYear()}</p>
+                </div>
+                <BotonColapsarSeccion colapsada={seccionesColapsadas.has("ausencias")} onClick={() => toggleSeccion("ausencias")} />
               </div>
             </div>
 
-            {ausenciasDetalle.ausenciasFuturas.length === 0 && ausenciasDetalle.ausenciasPasadasAnioActual.length === 0 ? (
+            {!seccionesColapsadas.has("ausencias") && (ausenciasDetalle.ausenciasFuturas.length === 0 && ausenciasDetalle.ausenciasPasadasAnioActual.length === 0 ? (
               <p className="text-sm text-[#ccc] italic">Sin ausencias registradas este año.</p>
             ) : (
               <div className="space-y-5">
@@ -716,31 +739,37 @@ export function PersonaProfile({ id }: Props) {
                   </div>
                 )}
               </div>
-            )}
+            ))}
           </div>
         )}
 
         {/* ── Preferencias y experiencia ─────────────────────── */}
         {!ocultarAusenciasYPreferencias && (
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
-          <h3 className="font-semibold mb-4">Preferencias y experiencia</h3>
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold">Preferencias y experiencia</h3>
+            <BotonColapsarSeccion colapsada={seccionesColapsadas.has("preferencias")} onClick={() => toggleSeccion("preferencias")} />
+          </div>
+          {!seccionesColapsadas.has("preferencias") && (
           <div className="space-y-5">
 
             <div>
               <p className="text-xs font-semibold text-[#888] uppercase tracking-widest mb-2">
                 Industrias
               </p>
-              {industrias.length === 0 ? (
+              {experiencia.industrias.length === 0 ? (
                 <p className="text-sm text-[#ccc] italic">Sin industrias definidas</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
-                  {industrias.map((t) => (
-                    <span
+                  {experiencia.industrias.map((t) => (
+                    <button
                       key={t.id}
-                      className="text-xs px-2.5 py-1 rounded-full bg-[#eaf4ff] text-[#1a5276] font-medium"
+                      type="button"
+                      onClick={() => setModalTag({ tipo: "Industria", nombre: t.nombre, engagements: t.engagements })}
+                      className="text-xs px-2.5 py-1 rounded-full bg-[#eaf4ff] text-[#1a5276] font-medium hover:bg-[#d7ebff] transition-colors cursor-pointer"
                     >
                       {t.nombre}
-                    </span>
+                    </button>
                   ))}
                 </div>
               )}
@@ -750,22 +779,19 @@ export function PersonaProfile({ id }: Props) {
               <p className="text-xs font-semibold text-[#888] uppercase tracking-widest mb-2">
                 Capacidades
               </p>
-              {capacidades.length === 0 ? (
+              {experiencia.capacidades.length === 0 ? (
                 <p className="text-sm text-[#ccc] italic">Sin capacidades definidas</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
-                  {capacidades.map((t) => (
-                    <span
+                  {experiencia.capacidades.map((t) => (
+                    <button
                       key={t.id}
-                      className="text-xs px-2.5 py-1 rounded-full bg-[#f0f9f4] text-[#1e7e45] font-medium"
+                      type="button"
+                      onClick={() => setModalTag({ tipo: "Capacidad", nombre: t.nombre, engagements: t.engagements })}
+                      className="text-xs px-2.5 py-1 rounded-full bg-[#f0f9f4] text-[#1e7e45] font-medium hover:bg-[#dcf5e7] transition-colors cursor-pointer"
                     >
                       {t.nombre}
-                      {t.nivel && (
-                        <span className="ml-1 opacity-60">
-                          · {NIVEL_LABEL[t.nivel] ?? t.nivel}
-                        </span>
-                      )}
-                    </span>
+                    </button>
                   ))}
                 </div>
               )}
@@ -775,23 +801,26 @@ export function PersonaProfile({ id }: Props) {
               <p className="text-xs font-semibold text-[#888] uppercase tracking-widest mb-2">
                 Temáticas
               </p>
-              {tematicas.length === 0 ? (
+              {experiencia.tematicas.length === 0 ? (
                 <p className="text-sm text-[#ccc] italic">Sin temáticas definidas</p>
               ) : (
                 <div className="flex flex-wrap gap-2">
-                  {tematicas.map((t) => (
-                    <span
+                  {experiencia.tematicas.map((t) => (
+                    <button
                       key={t.id}
-                      className="text-xs px-2.5 py-1 rounded-full bg-[#fdf4ff] text-[#6b21a8] font-medium"
+                      type="button"
+                      onClick={() => setModalTag({ tipo: "Temática", nombre: t.nombre, engagements: t.engagements })}
+                      className="text-xs px-2.5 py-1 rounded-full bg-[#fdf4ff] text-[#6b21a8] font-medium hover:bg-[#f5e4ff] transition-colors cursor-pointer"
                     >
                       {t.nombre}
-                    </span>
+                    </button>
                   ))}
                 </div>
               )}
             </div>
 
           </div>
+          )}
         </div>
         )}
         {/* ── Desarrollo de Carrera ───────────────────────── */}
@@ -812,9 +841,12 @@ export function PersonaProfile({ id }: Props) {
               >
                 <Pencil className="w-3.5 h-3.5" />
               </button>
+              <BotonColapsarSeccion colapsada={seccionesColapsadas.has("desarrollo-carrera")} onClick={() => toggleSeccion("desarrollo-carrera")} />
             </div>
           </div>
 
+          {!seccionesColapsadas.has("desarrollo-carrera") && (
+          <>
           {/* Escalones horizontales */}
           <div className="overflow-x-auto pb-2">
             <div className="flex items-start gap-0 min-w-max">
@@ -999,6 +1031,8 @@ export function PersonaProfile({ id }: Props) {
               </div>
             )}
           </div>
+          </>
+          )}
         </div>}
 
         {/* ── Notebook de Desarrollo ──────────────────────── */}
@@ -1006,9 +1040,14 @@ export function PersonaProfile({ id }: Props) {
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold">Notebook de Desarrollo</h3>
-            <span className="text-[10px] text-slate-400 font-medium">Anotaciones privadas del colaborador</span>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-slate-400 font-medium">Anotaciones privadas del colaborador</span>
+              <BotonColapsarSeccion colapsada={seccionesColapsadas.has("notebook")} onClick={() => toggleSeccion("notebook")} />
+            </div>
           </div>
-          <NotebookPanel personaId={id} personaNombre={`${persona.nombre} ${persona.apellido}`} />
+          {!seccionesColapsadas.has("notebook") && (
+            <NotebookPanel personaId={id} personaNombre={`${persona.nombre} ${persona.apellido}`} />
+          )}
         </div>
         )}
 
@@ -1038,6 +1077,40 @@ export function PersonaProfile({ id }: Props) {
           onClose={() => setDetalleEngId(null)}
         />
       )}
+
+      {/* Modal de engagements asociados a una industria/capacidad/temática */}
+      <Modal
+        open={!!modalTag}
+        onClose={() => setModalTag(null)}
+        title={modalTag?.nombre ?? ""}
+      >
+        {modalTag && (
+          modalTag.engagements.length === 0 ? (
+            <p className="text-sm text-[#ccc] italic">Sin engagements asociados.</p>
+          ) : (
+            <div className="space-y-1 max-h-96 overflow-y-auto">
+              {[...modalTag.engagements]
+                .sort((a, b) => b.fecha_inicio.localeCompare(a.fecha_inicio))
+                .map((e) => (
+                  <div key={e.engagement_id} className="flex items-center justify-between gap-3 py-2.5 border-b border-[#f0f0f0] last:border-0">
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium text-[#1a1a2e] truncate">{e.nombre}</p>
+                      {e.cliente && <p className="text-xs text-[#888] truncate">{e.cliente}</p>}
+                    </div>
+                    <div className="text-right flex-shrink-0">
+                      <p className="text-xs text-[#555] whitespace-nowrap">
+                        {format(new Date(e.fecha_inicio + "T00:00:00"), "d MMM", { locale: es })}
+                        {" → "}
+                        {e.fecha_fin ? format(new Date(e.fecha_fin + "T00:00:00"), "d MMM", { locale: es }) : "Presente"}
+                      </p>
+                      <p className="text-[11px] text-[#aaa] whitespace-nowrap mt-0.5">({e.diasHabiles} días hábiles)</p>
+                    </div>
+                  </div>
+                ))}
+            </div>
+          )
+        )}
+      </Modal>
     </>
   );
 }
