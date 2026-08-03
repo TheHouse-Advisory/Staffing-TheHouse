@@ -2,6 +2,8 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
+import { format } from "date-fns";
+import { es } from "date-fns/locale";
 import { Plus, Trash2, ChevronDown, ChevronUp, Users, CalendarDays, Pencil } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
@@ -10,6 +12,8 @@ import { Modal } from "@/components/ui/Modal";
 import { FieldWrapper, Input, Select, Textarea } from "@/components/ui/FormField";
 import { MultiSelect } from "@/components/ui/MultiSelect";
 import { CARGOS_OPTIONS } from "@/lib/constants";
+import { fLocal } from "@/lib/utils";
+import { fetchAsignacionesEngagement, fetchAusenciasPersonas, construirEventosTimelineForm } from "@/lib/queries/engagements";
 
 // Normaliza cargo_requerido de la BD al value exacto de CARGOS_OPTIONS.
 // Reqs creados via drag-drop guardan cargos individuales ("Director de Proyectos")
@@ -37,6 +41,14 @@ const OPTION_TO_CARGO: Record<string, string> = {
 function fromCargoOption(option: string): string {
   return OPTION_TO_CARGO[option] ?? option;
 }
+// Orden jerárquico de "Equipo del proyecto": Socio > Director/Gerente > Asociado/Consultor Senior >
+// Consultor de Proyectos > Consultor Analista > Trainee > Desarrollo (mismo orden de CARGOS_OPTIONS).
+// Sin cargo asignado ("Cualquier cargo") queda al final.
+const ORDEN_CARGOS_EQUIPO = CARGOS_OPTIONS.map((o) => o.value);
+function ordenCargoEquipo(cargo: string): number {
+  const idx = ORDEN_CARGOS_EQUIPO.indexOf(cargo);
+  return idx === -1 ? ORDEN_CARGOS_EQUIPO.length : idx;
+}
 import type { Engagement, RequerimientoEngagement } from "@/lib/types/database";
 import { ExtenderProyecto } from "./ExtenderProyecto";
 
@@ -52,6 +64,10 @@ interface ReqRow {
   persona_nombre?: string;
   /** Solo en simulación: períodos de ausencia dentro del rango (para badge informativo) */
   ausenciasPeriodo?: { desde: string; hasta: string }[];
+  /** Si viene de una asignación directa sin requerimiento_engagement vinculado: id de esa
+   * asignación (para editarla/eliminarla directo) y de la persona. */
+  asignacionId?: string;
+  personaId?: string;
 }
 
 interface ActividadRow {
@@ -135,10 +151,15 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   const [editingActividadIdx, setEditingActividadIdx] = useState<number | null>(null);
   // Acordeón de requerimientos: set de índices colapsados
   const [reqsColapsados, setReqsColapsados] = useState<Set<number>>(new Set());
+  // Ids de asignaciones directas (sin requerimiento_engagement) que el usuario quitó de la lista
+  const [asignacionesAEliminar, setAsignacionesAEliminar] = useState<string[]>([]);
+  // Ausencias por persona, para intercalarlas cronológicamente en su tarjeta de "Equipo del proyecto"
+  const [ausenciasPorPersona, setAusenciasPorPersona] = useState<Map<string, { inicio: string; fin: string; tipo: string }[]>>(new Map());
 
   useEffect(() => {
     if (!open) {
       setForm({ ...EMPTY_ENG }); setReqs([]); setErrors({}); setServerError(null);
+      setAsignacionesAEliminar([]); setAusenciasPorPersona(new Map());
       setExtOpen(false); setActividades([]); setActividadOpen(false); setNuevaActividad({ ...EMPTY_ACTIVIDAD }); setEditingActividadIdx(null);
       return;
     }
@@ -154,33 +175,37 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       setTematicasOpts((temData.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
 
       if (engagement) {
-        const [{ data: reqData }, { data: ecData }, { data: etData }, { data: asigData }] = await Promise.all([
+        const [{ data: reqData }, { data: ecData }, { data: etData }, asigResult] = await Promise.all([
           supabase.from("requerimiento_engagement").select("*").eq("engagement_id", engagement.id).order("fase_nombre"),
           (supabase as any).from("engagement_capacidad").select("capacidad_id").eq("engagement_id", engagement.id),
           (supabase as any).from("engagement_tematica").select("tematica_id").eq("engagement_id", engagement.id),
-          (supabase as any).from("asignacion")
-            .select("requerimiento_id, persona:persona_id(nombre, apellido, cargo_actual)")
-            .eq("engagement_id", engagement.id)
-            .eq("estado", "activa"),
+          fetchAsignacionesEngagement(supabase, engagement.id),
         ]);
 
-        // Mapa requerimiento_id → nombre (match exacto)
-        type AsigRow = { requerimiento_id: string | null; persona: { nombre: string; apellido: string; cargo_actual?: string } | null };
-        const asigRows = (asigData ?? []) as AsigRow[];
-        const personaPorReq = new Map<string, string>(
+        // TODAS las asignaciones activas del engagement (con o sin requerimiento vinculado)
+        const asigRows = asigResult.data;
+        // Mapa requerimiento_id → { nombre, personaId } (match exacto)
+        const personaPorReq = new Map<string, { nombre: string; personaId: string }>(
           asigRows
             .filter((a) => a.requerimiento_id && a.persona)
-            .map((a) => [a.requerimiento_id!, `${a.persona!.nombre} ${a.persona!.apellido}`])
+            .map((a) => [a.requerimiento_id!, { nombre: `${a.persona!.nombre} ${a.persona!.apellido}`, personaId: a.persona_id }])
         );
-        // Mapa cargo_normalizado → nombre — fallback para asignaciones antiguas sin requerimiento_id
-        const normCargoEF = (s: string) => s.trim().toLowerCase();
-        const cargoContieneEF = (cargoPersona: string, cargoReq: string) => {
-          const cp = normCargoEF(cargoPersona);
-          const cr = normCargoEF(cargoReq);
-          return cp === cr || cr.includes(cp) || cp.includes(cr);
-        };
-        // Solo las asignaciones sin requerimiento_id vinculado
-        const asigSinReq = asigRows.filter((a) => !a.requerimiento_id && a.persona);
+        // Asignaciones directas SIN requerimiento_engagement vinculado: se muestran como
+        // filas propias de "Equipo del proyecto", editables (cargo/fechas/%) y eliminables,
+        // pero guardan haciendo UPDATE directo sobre la fila `asignacion` (no crean un requerimiento nuevo).
+        const reqsDeAsignacionesDirectas: ReqRow[] = asigRows
+          .filter((a) => !a.requerimiento_id && a.persona)
+          .map((a) => ({
+            asignacionId: a.id,
+            personaId: a.persona_id,
+            fase_nombre: "",
+            cargo_requerido: toCargoOption(a.cargo_al_momento ?? a.persona!.cargo_actual ?? ""),
+            descripcion: "",
+            pct_dedicacion: String(a.pct_dedicacion),
+            fecha_inicio: a.fecha_inicio,
+            fecha_fin: a.fecha_fin ?? "",
+            persona_nombre: `${a.persona!.nombre} ${a.persona!.apellido}`,
+          }));
         setForm({
           codigo: engagement.codigo ?? "",
           nombre: engagement.nombre,
@@ -246,22 +271,34 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           }
           setReqs(consolidados);
         } else {
-          setReqs((reqData ?? []).map((r: RequerimientoEngagement) => ({
-            id: r.id,
-            fase_nombre: r.fase_nombre ?? "",
-            cargo_requerido: toCargoOption(r.cargo_requerido),
-            descripcion: r.descripcion ?? "",
-            pct_dedicacion: String(r.pct_dedicacion),
-            fecha_inicio: r.fecha_inicio ?? "",
-            fecha_fin: r.fecha_fin ?? "",
-            persona_nombre: r.id
-              ? (personaPorReq.get(r.id) ??
-                  (() => {
-                    const m = asigSinReq.find((a) => cargoContieneEF(a.persona!.cargo_actual ?? "", r.cargo_requerido ?? ""));
-                    return m ? `${m.persona!.nombre} ${m.persona!.apellido}` : undefined;
-                  })())
-              : undefined,
-          })));
+          const reqsDeRequerimientos: ReqRow[] = (reqData ?? []).map((r: RequerimientoEngagement) => {
+            const asignado = r.id ? personaPorReq.get(r.id) : undefined;
+            return {
+              id: r.id,
+              fase_nombre: r.fase_nombre ?? "",
+              cargo_requerido: toCargoOption(r.cargo_requerido),
+              descripcion: r.descripcion ?? "",
+              pct_dedicacion: String(r.pct_dedicacion),
+              fecha_inicio: r.fecha_inicio ?? "",
+              fecha_fin: r.fecha_fin ?? "",
+              persona_nombre: asignado?.nombre,
+              personaId: asignado?.personaId,
+            };
+          });
+          const todosLosReqs = [...reqsDeRequerimientos, ...reqsDeAsignacionesDirectas];
+          setReqs(todosLosReqs);
+
+          // Ausencias de todas las personas con tramo en este engagement, para intercalar
+          // cronológicamente dentro de la tarjeta consolidada de cada persona.
+          const personaIds = [...new Set(todosLosReqs.map((r) => r.personaId).filter(Boolean))] as string[];
+          const { data: ausenciasData } = await fetchAusenciasPersonas(supabase, personaIds);
+          const mapaAusencias = new Map<string, { inicio: string; fin: string; tipo: string }[]>();
+          for (const a of ausenciasData) {
+            const arr = mapaAusencias.get(a.persona_id) ?? [];
+            arr.push({ inicio: a.fecha_inicio, fin: a.fecha_fin, tipo: a.tipo });
+            mapaAusencias.set(a.persona_id, arr);
+          }
+          setAusenciasPorPersona(mapaAusencias);
         }
         // En simulación: usar actividades del snapshot local
         if (simulationMode && simulationActividades) {
@@ -441,7 +478,39 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   };
 
   const removeReq = (idx: number) =>
-    setReqs((r) => r.filter((_, i) => i !== idx));
+    setReqs((r) => {
+      const target = r[idx];
+      if (target?.asignacionId) {
+        setAsignacionesAEliminar((prev) => [...prev, target.asignacionId!]);
+      }
+      return r.filter((_, i) => i !== idx);
+    });
+
+  /** Agrega un tramo nuevo a la tarjeta consolidada de una persona (sin requerimiento vinculado). */
+  const addTramoParaPersona = (personaId: string, personaNombre: string) => {
+    setReqs((r) => {
+      const tramosPersona = r.filter((row) => row.personaId === personaId);
+      const ultimoFin = tramosPersona.reduce((max, row) => (row.fecha_fin && row.fecha_fin > max ? row.fecha_fin : max), "");
+      const ultimo = tramosPersona[tramosPersona.length - 1];
+      let nuevaFechaInicio = form.fecha_inicio;
+      if (ultimoFin) {
+        const d = new Date(ultimoFin + "T00:00:00");
+        d.setDate(d.getDate() + 1);
+        nuevaFechaInicio = d.toISOString().split("T")[0];
+      }
+      const nuevo: ReqRow = {
+        personaId,
+        persona_nombre: personaNombre,
+        fase_nombre: "",
+        cargo_requerido: ultimo?.cargo_requerido ?? "",
+        descripcion: "",
+        pct_dedicacion: ultimo?.pct_dedicacion ?? "100",
+        fecha_inicio: nuevaFechaInicio,
+        fecha_fin: fechaFinEfectiva,
+      };
+      return [...r, nuevo];
+    });
+  };
 
   const setReqField = (idx: number, field: keyof ReqRow) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>
@@ -569,7 +638,47 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       );
     }
 
+    // Asignaciones directas que el usuario quitó de "Equipo del proyecto": se eliminan tal cual
+    // (no tenían requerimiento_engagement vinculado, así que no hay nada más que limpiar).
+    if (asignacionesAEliminar.length > 0) {
+      await supabase.from("asignacion").delete().in("id", asignacionesAEliminar);
+    }
+
     for (const [i, r] of reqs.entries()) {
+      // Fila de asignación directa (sin requerimiento_engagement): actualiza esa asignación
+      // puntual en lugar de crear/editar un requerimiento.
+      if (r.asignacionId) {
+        const { error: asigErr } = await supabase
+          .from("asignacion")
+          .update({
+            cargo_al_momento: r.cargo_requerido ? fromCargoOption(r.cargo_requerido) : null,
+            pct_dedicacion: Number(r.pct_dedicacion),
+            fecha_inicio: r.fecha_inicio,
+            fecha_fin: r.fecha_fin || null,
+          })
+          .eq("id", r.asignacionId);
+        if (asigErr) { setServerError(`Error al actualizar asignación de ${r.persona_nombre ?? "persona"}: ${asigErr.message}`); setLoading(false); return; }
+        continue;
+      }
+
+      // Tramo nuevo agregado desde "Equipo del proyecto" para una persona ya asignada
+      // (sin requerimiento_engagement): crea la asignación directa, no un requerimiento.
+      if (!r.id && r.personaId) {
+        const { error: insAsigErr } = await (supabase as any).from("asignacion").insert({
+          engagement_id: engId,
+          persona_id: r.personaId,
+          requerimiento_id: null,
+          cargo_al_momento: r.cargo_requerido ? fromCargoOption(r.cargo_requerido) : null,
+          pct_dedicacion: Number(r.pct_dedicacion),
+          fecha_inicio: r.fecha_inicio,
+          fecha_fin: r.fecha_fin || null,
+          estado: "activa",
+          estado_staffing: "CONFIRMADO",
+        });
+        if (insAsigErr) { setServerError(`Error al crear tramo de ${r.persona_nombre ?? "persona"}: ${insAsigErr.message}`); setLoading(false); return; }
+        continue;
+      }
+
       const reqPayload = {
         engagement_id: engId,
         fase_nombre: r.fase_nombre.trim() || null,
@@ -729,6 +838,26 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   // Límites de fecha para requerimientos (usa fecha_fin_real como fallback)
   const minReqDate = form.fecha_inicio || undefined;
   const maxReqDate = form.fecha_fin_estimada || (engagement as any)?.fecha_fin_real || undefined;
+
+  // ── Agrupación de "Equipo del proyecto" por persona: nunca se repite un nombre en
+  // varias tarjetas — todos sus tramos (con o sin requerimiento) viven en una sola ficha.
+  // Los requerimientos aún sin nadie asignado (slots abiertos) se muestran aparte, como antes.
+  const sinPersonaReqs: { r: ReqRow; idx: number }[] = [];
+  const porPersonaReqs = new Map<string, { nombre: string; tramos: { r: ReqRow; idx: number }[] }>();
+  reqs.forEach((r, idx) => {
+    if (r.personaId) {
+      const grupo = porPersonaReqs.get(r.personaId) ?? { nombre: r.persona_nombre ?? "—", tramos: [] };
+      if (r.persona_nombre) grupo.nombre = r.persona_nombre;
+      grupo.tramos.push({ r, idx });
+      porPersonaReqs.set(r.personaId, grupo);
+    } else {
+      sinPersonaReqs.push({ r, idx });
+    }
+  });
+  const gruposPersonaOrdenados = [...porPersonaReqs.entries()].sort(([, a], [, b]) => {
+    const diff = ordenCargoEquipo(a.tramos[0]?.r.cargo_requerido ?? "") - ordenCargoEquipo(b.tramos[0]?.r.cargo_requerido ?? "");
+    return diff !== 0 ? diff : a.nombre.localeCompare(b.nombre, "es");
+  });
 
   return (
     <Drawer
@@ -1058,7 +1187,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <div>
-                <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">Requerimientos</p>
+                <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">Equipo del proyecto</p>
                 {(minReqDate || maxReqDate) && (
                   <p className="text-[10px] text-[#aaa] mt-0.5">
                     Las fechas deben estar dentro del rango del engagement
@@ -1095,15 +1224,16 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           )}
 
           <div className="space-y-4">
-            {reqs.map((r, i) => {
-              const colapsado = reqsColapsados.has(i);
+            {/* Requerimientos aún sin persona asignada (slots abiertos) — una tarjeta por requerimiento, igual que antes */}
+            {sinPersonaReqs.map(({ r, idx }) => {
+              const colapsado = reqsColapsados.has(idx);
               const toggleReq = () => setReqsColapsados((prev) => {
                 const next = new Set(prev);
-                if (next.has(i)) next.delete(i); else next.add(i);
+                if (next.has(idx)) next.delete(idx); else next.add(idx);
                 return next;
               });
               return (
-                <div key={i} id={`req-card-${i}`} className="border border-[#e8e8e8] rounded-xl overflow-hidden">
+                <div key={idx} id={`req-card-${idx}`} className="border border-[#e8e8e8] rounded-xl overflow-hidden">
                   {/* Cabecera siempre visible */}
                   <div
                     className="flex items-center justify-between px-4 py-3 cursor-pointer select-none hover:bg-[#fafafa] transition-colors"
@@ -1111,12 +1241,9 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                   >
                     <div className="flex flex-col gap-0.5">
                       <span className="text-xs font-semibold text-[#888]">
-                        Requerimiento {i + 1}
+                        Requerimiento
                         {r.fase_nombre && <span className="ml-1.5 font-normal text-[#aaa]">· {r.fase_nombre}</span>}
                         {r.cargo_requerido && <span className="ml-1.5 font-normal text-[#aaa]">· {r.cargo_requerido}</span>}
-                        {r.persona_nombre && (
-                          <span className="ml-1.5 font-normal text-[#4a90e2]">· {r.persona_nombre}</span>
-                        )}
                       </span>
                       {/* Badge de ausencias en simulación */}
                       {r.ausenciasPeriodo && r.ausenciasPeriodo.length > 0 && (
@@ -1138,7 +1265,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                       </button>
                       <button
                         type="button"
-                        onClick={(e) => { e.stopPropagation(); removeReq(i); }}
+                        onClick={(e) => { e.stopPropagation(); removeReq(idx); }}
                         className="text-[#aaa] hover:text-red-500 transition-colors"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
@@ -1150,31 +1277,134 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                     <div className="px-4 pb-4 pt-1 space-y-3 border-t border-[#f0f0f0]">
                       <div className="grid grid-cols-2 gap-3">
                         <FieldWrapper label="Nombre de fase">
-                          <Input value={r.fase_nombre} onChange={setReqField(i, "fase_nombre")} placeholder="Diagnóstico" />
+                          <Input value={r.fase_nombre} onChange={setReqField(idx, "fase_nombre")} placeholder="Diagnóstico" />
                         </FieldWrapper>
                         <FieldWrapper label="Cargo requerido">
-                          <Select value={r.cargo_requerido} onChange={setReqField(i, "cargo_requerido")}
+                          <Select value={r.cargo_requerido} onChange={setReqField(idx, "cargo_requerido")}
                             options={CARGOS_OPTIONS} placeholder="Cualquier cargo" />
                         </FieldWrapper>
-                        <FieldWrapper label="% Dedicación" required error={errors[`req_${i}_pct`]}>
+                        <FieldWrapper label="% Dedicación" required error={errors[`req_${idx}_pct`]}>
                           <Input type="number" min="1" max="100" step="0.5" value={r.pct_dedicacion}
-                            onChange={setReqField(i, "pct_dedicacion")} placeholder="100"
-                            error={!!errors[`req_${i}_pct`]} />
+                            onChange={setReqField(idx, "pct_dedicacion")} placeholder="100"
+                            error={!!errors[`req_${idx}_pct`]} />
                         </FieldWrapper>
                         <FieldWrapper label="Descripción del rol">
-                          <Input value={r.descripcion} onChange={setReqField(i, "descripcion")} placeholder="Líder de proyecto" />
+                          <Input value={r.descripcion} onChange={setReqField(idx, "descripcion")} placeholder="Líder de proyecto" />
                         </FieldWrapper>
-                        <FieldWrapper label="Fecha inicio" required error={errors[`req_${i}_inicio`]}>
-                          <Input type="date" value={r.fecha_inicio} onChange={setReqField(i, "fecha_inicio")}
-                            min={minReqDate} max={maxReqDate} error={!!errors[`req_${i}_inicio`]} />
+                        <FieldWrapper label="Fecha inicio" required error={errors[`req_${idx}_inicio`]}>
+                          <Input type="date" value={r.fecha_inicio} onChange={setReqField(idx, "fecha_inicio")}
+                            min={minReqDate} max={maxReqDate} error={!!errors[`req_${idx}_inicio`]} />
                         </FieldWrapper>
-                        <FieldWrapper label="Fecha fin" required error={errors[`req_${i}_fin`]}>
-                          <Input type="date" value={r.fecha_fin} onChange={setReqField(i, "fecha_fin")}
-                            min={r.fecha_inicio || minReqDate} max={maxReqDate} error={!!errors[`req_${i}_fin`]} />
+                        <FieldWrapper label="Fecha fin" required error={errors[`req_${idx}_fin`]}>
+                          <Input type="date" value={r.fecha_fin} onChange={setReqField(idx, "fecha_fin")}
+                            min={r.fecha_inicio || minReqDate} max={maxReqDate} error={!!errors[`req_${idx}_fin`]} />
                         </FieldWrapper>
                       </div>
                     </div>
                   )}
+                </div>
+              );
+            })}
+
+            {/* Personas consolidadas: una sola tarjeta por persona, con sus tramos y ausencias intercalados cronológicamente */}
+            {gruposPersonaOrdenados.map(([personaId, grupo]) => {
+              const tramosOrdenados = [...grupo.tramos].sort((a, b) => a.r.fecha_inicio.localeCompare(b.r.fecha_inicio));
+              // Solo ausencias dentro del rango del engagement (Fecha inicio → Fecha fin estimada/real):
+              // se excluyen tanto las anteriores al inicio del proyecto como las posteriores a su fin.
+              const ausenciasEnRango = (ausenciasPorPersona.get(personaId) ?? []).filter((a) =>
+                (!form.fecha_inicio || a.fin >= form.fecha_inicio) &&
+                (!fechaFinEfectiva || a.inicio <= fechaFinEfectiva)
+              );
+              const eventos = construirEventosTimelineForm(
+                tramosOrdenados.map((t) => ({ idx: t.idx, inicio: t.r.fecha_inicio })),
+                ausenciasEnRango
+              );
+              return (
+                <div key={personaId} className="border border-[#e8e8e8] rounded-xl overflow-hidden">
+                  <div className="flex items-center justify-between px-4 py-3 bg-[#fafafa] border-b border-[#f0f0f0]">
+                    <span className="text-sm font-semibold text-[#1a1a1a]">{grupo.nombre}</span>
+                    <button
+                      type="button"
+                      onClick={() => addTramoParaPersona(personaId, grupo.nombre)}
+                      className="flex items-center gap-1 text-[11px] text-[#4a90e2] hover:text-[#2563eb] font-medium transition-colors"
+                    >
+                      <Plus className="w-3 h-3" /> Agregar tramo
+                    </button>
+                  </div>
+                  <div className="divide-y divide-[#f0f0f0]">
+                    {eventos.map((ev, evIdx) => {
+                      if (ev.tipo === "ausencia") {
+                        return (
+                          <div key={`aus-${evIdx}`} className="px-4 py-2 bg-amber-50">
+                            <p className="text-[11px] font-semibold text-amber-700 text-center tracking-tight">
+                              ----- ausencia: {format(fLocal(ev.inicio), "d MMM", { locale: es })} al {format(fLocal(ev.fin), "d MMM yyyy", { locale: es })} - ({ev.diasHabiles} días) -----
+                            </p>
+                          </div>
+                        );
+                      }
+
+                      const idx = ev.tramoIdx;
+                      const r = reqs[idx];
+                      const colapsado = reqsColapsados.has(idx);
+                      const toggleReq = () => setReqsColapsados((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(idx)) next.delete(idx); else next.add(idx);
+                        return next;
+                      });
+                      return (
+                        <div key={idx} id={`req-card-${idx}`} className="px-4 py-3">
+                          <div
+                            className="flex items-center justify-between cursor-pointer select-none"
+                            onClick={toggleReq}
+                          >
+                            <span className="text-xs font-semibold text-[#888]">
+                              {r.cargo_requerido || "Cualquier cargo"}
+                              <span className="ml-1.5 font-normal text-[#aaa]">
+                                · {r.fecha_inicio} → {r.fecha_fin || "hoy"}
+                              </span>
+                            </span>
+                            <div className="flex items-center gap-2">
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); toggleReq(); }}
+                                className="text-[#ccc] hover:text-[#4a90e2] transition-colors"
+                              >
+                                {colapsado ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); removeReq(idx); }}
+                                className="text-[#aaa] hover:text-red-500 transition-colors"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </div>
+                          </div>
+                          {!colapsado && (
+                            <div className="grid grid-cols-2 gap-3 mt-3">
+                              <FieldWrapper label="Cargo">
+                                <Select value={r.cargo_requerido} onChange={setReqField(idx, "cargo_requerido")}
+                                  options={CARGOS_OPTIONS} placeholder="Cualquier cargo" />
+                              </FieldWrapper>
+                              <FieldWrapper label="% Dedicación" required error={errors[`req_${idx}_pct`]}>
+                                <Input type="number" min="1" max="100" step="0.5" value={r.pct_dedicacion}
+                                  onChange={setReqField(idx, "pct_dedicacion")} placeholder="100"
+                                  error={!!errors[`req_${idx}_pct`]} />
+                              </FieldWrapper>
+                              <FieldWrapper label="Fecha inicio" required error={errors[`req_${idx}_inicio`]}>
+                                <Input type="date" value={r.fecha_inicio} onChange={setReqField(idx, "fecha_inicio")}
+                                  min={minReqDate} max={maxReqDate} error={!!errors[`req_${idx}_inicio`]} />
+                              </FieldWrapper>
+                              <FieldWrapper label="Fecha fin" required error={errors[`req_${idx}_fin`]}>
+                                <Input type="date" value={r.fecha_fin} onChange={setReqField(idx, "fecha_fin")}
+                                  min={r.fecha_inicio || minReqDate} max={maxReqDate} error={!!errors[`req_${idx}_fin`]} />
+                              </FieldWrapper>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               );
             })}

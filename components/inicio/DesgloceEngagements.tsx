@@ -238,6 +238,9 @@ interface Props {
   /** Título mostrado al inicio de la fila de controles (ej. "TABLERO"). Junto con `onVistaResumidaChange` habilita el toggle Vista Resumida/Detallada dentro de esta misma fila. */
   titulo?: string;
   onVistaResumidaChange?: (v: boolean) => void;
+  /** Si se provee, muestra un botón para expandir/restaurar este cuadrante completo (ej. colapsa el cuadrante Resumen en Inicio). */
+  cuadranteExpandido?: boolean;
+  onToggleCuadrante?: () => void;
 }
 
 export interface SimAsigPayload {
@@ -257,7 +260,7 @@ type UndoEntry =
   | { type: "color_semana"; engId: string; label: string; fecha: string; fecha_fin: string; prevEntry: { fecha: string; fecha_fin: string | null; intensidad: string } | null }
   | { type: "edit_reqs";   engId: string; label: string; engNombre: string; prevReqs: ReqData[]; prevPersonas: PersonaAsig[] };
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest, ocultarPctEquipo = false, isAdmin = false, vistaResumida = false, titulo, onVistaResumidaChange }: Props) {
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest, ocultarPctEquipo = false, isAdmin = false, vistaResumida = false, titulo, onVistaResumidaChange, cuadranteExpandido = false, onToggleCuadrante }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
   const [baseInterna, setBaseInterna] = useState<Date>(() => startOfISOWeek(new Date()));
 
@@ -1784,12 +1787,25 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           </div>
         </div>
       )}
-      {/* Header superior: fila de "última actualización" (arriba, alineada a la derecha) + fila de controles */}
+      {/* Header superior: fila de "última actualización" + botón de expandir cuadrante (arriba, alineada a la derecha) + fila de controles */}
       <div className="flex flex-col gap-1 w-full flex-shrink-0">
-        {ultimaActualizacion && (
-          <p className="text-xs text-gray-400 self-end whitespace-nowrap">
-            Última actualización: {fmtUltimaActualizacion(ultimaActualizacion)}
-          </p>
+        {(ultimaActualizacion || onToggleCuadrante) && (
+          <div className="flex items-center justify-end gap-2 self-end">
+            {ultimaActualizacion && (
+              <p className="text-xs text-gray-400 whitespace-nowrap">
+                Última actualización: {fmtUltimaActualizacion(ultimaActualizacion)}
+              </p>
+            )}
+            {onToggleCuadrante && (
+              <button
+                onClick={onToggleCuadrante}
+                title={cuadranteExpandido ? "Restaurar" : "Expandir Tablero"}
+                className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors flex-shrink-0"
+              >
+                {cuadranteExpandido ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
+            )}
+          </div>
         )}
 
         {/* Fila única de controles: TODO en un mismo flex, sin sub-contenedores con justify-between */}

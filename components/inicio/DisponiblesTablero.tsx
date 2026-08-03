@@ -17,6 +17,11 @@ interface Props {
   personas: Persona[];
   asignaciones: AsigDetalle[];
   ausencias?: AusenciaItem[];
+  /** Si se provee (junto con onToggleExpanded), el estado expandido/colapsado lo controla el padre */
+  expanded?: boolean;
+  onToggleExpanded?: () => void;
+  /** Vista "disponibles-expanded": la tarjeta se estira a flex-1/h-full y la lista hace scroll con max-h-full */
+  fillHeight?: boolean;
 }
 
 type Estado = "libre" | "pronto" | "comercial";
@@ -39,8 +44,14 @@ const BADGE: Record<Estado, { bg: string; text: string; label: (d?: number) => s
   pronto:    { bg: "#fff7ed", text: "#c2410c", label: (d) => d === 0 ? "Hoy" : `En ${d}d` },
 };
 
-export function DisponiblesTablero({ personas, asignaciones, ausencias = [] }: Props) {
-  const [colapsado, setColapsado] = useState(false);
+export function DisponiblesTablero({ personas, asignaciones, ausencias = [], expanded, onToggleExpanded, fillHeight = false }: Props) {
+  const isControlled = expanded !== undefined;
+  const [colapsadoInterno, setColapsadoInterno] = useState(false);
+  const colapsado = isControlled ? !expanded : colapsadoInterno;
+  function toggleColapso() {
+    if (isControlled) onToggleExpanded?.();
+    else setColapsadoInterno((v) => !v);
+  }
 
   const disponibles = useMemo((): DisponibleItem[] => {
     const hoy = new Date();
@@ -92,7 +103,7 @@ export function DisponiblesTablero({ personas, asignaciones, ausencias = [] }: P
   }, [personas, asignaciones, ausencias]);
 
   return (
-    <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col flex-shrink-0">
+    <div className={`bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col ${fillHeight ? "flex-1 h-full min-h-0" : "flex-shrink-0"}`}>
       {/* Header con toggle */}
       <div className="flex items-center justify-between flex-shrink-0" style={{ marginBottom: colapsado ? 0 : 8 }}>
         <div className="flex items-center gap-2">
@@ -104,7 +115,7 @@ export function DisponiblesTablero({ personas, asignaciones, ausencias = [] }: P
           )}
         </div>
         <button
-          onClick={() => setColapsado((v) => !v)}
+          onClick={toggleColapso}
           className="p-1 rounded hover:bg-gray-100 text-gray-400 transition-colors"
           title={colapsado ? "Expandir" : "Colapsar"}
         >
@@ -117,8 +128,8 @@ export function DisponiblesTablero({ personas, asignaciones, ausencias = [] }: P
           <p className="text-xs text-gray-300 italic">Sin disponibilidades próximas.</p>
         ) : (
           <div
-            className="space-y-2 overflow-y-auto [&::-webkit-scrollbar]:hidden"
-            style={{ scrollbarWidth: "none", maxHeight: 180 }}
+            className={`space-y-2 overflow-y-auto [&::-webkit-scrollbar]:hidden ${fillHeight ? "flex-1 max-h-full" : ""}`}
+            style={fillHeight ? { scrollbarWidth: "none" } : { scrollbarWidth: "none", maxHeight: 180 }}
           >
             {disponibles.map(({ persona, estado, dias }) => {
               const b = BADGE[estado];

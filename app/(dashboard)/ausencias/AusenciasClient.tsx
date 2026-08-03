@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Plus, BarChart2, Loader2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, BarChart2, Loader2, Eye, EyeOff } from "lucide-react";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
 import type { RolSistema } from "@/lib/types/database";
 import { HeatmapAusencias } from "@/components/ausencias/HeatmapAusencias";
@@ -49,11 +49,17 @@ function formatWeekLabel(d: Date): string {
   return `${s} – ${e}`;
 }
 
+interface AusenciasClientProps {
+  isAdmin?: boolean;
+}
+
 // ── Página ─────────────────────────────────────────────────────
-export function AusenciasClient() {
+export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
   const now = new Date();
   const [rol, setRol] = useState<RolSistema | null>(null);
   const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD" || rol === "AySr";
+  // Vista limpia (solo admin): oculta insignias R/A y píldoras de días tomados en el Heatmap
+  const [showMetrics, setShowMetrics] = useState(true);
   const { tipos: tiposDB } = useTiposAusencia();
   // Leyenda = tipos de BD + feriado fijo al final
   const leyendaDinamica = [...tiposDB, LEYENDA_FERIADO];
@@ -206,6 +212,15 @@ export function AusenciasClient() {
 
           {/* Acciones */}
           <div className="flex items-center gap-2 flex-shrink-0">
+            {isAdmin && (
+              <button
+                onClick={() => setShowMetrics((s) => !s)}
+                title={showMetrics ? "Ocultar métricas" : "Mostrar métricas"}
+                className="w-7 h-7 flex items-center justify-center bg-white border border-[#e0e0e0] hover:bg-[#f5f5f5] rounded-md text-[#555] transition-colors flex-shrink-0"
+              >
+                {showMetrics ? <EyeOff className="w-3.5 h-3.5" /> : <Eye className="w-3.5 h-3.5" />}
+              </button>
+            )}
             {rol !== "planificador" && rol !== "GyD" && rol !== "AySr" && (
               <button
                 onClick={() => setResumenOpen(true)}
@@ -261,6 +276,7 @@ export function AusenciasClient() {
               onExternalModalClose={() => setModalOpen(false)}
               readOnly={isReadOnly}
               rolActual={rol}
+              showMetrics={showMetrics}
             />
           )}
 

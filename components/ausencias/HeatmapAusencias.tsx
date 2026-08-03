@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { X, Loader2, Plus, ChevronDown, ChevronRight, RotateCcw, Pencil, Trash2 } from "lucide-react";
+import { X, Loader2, Plus, ChevronDown, ChevronRight, RotateCcw, Pencil, Trash2, GripVertical } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -177,7 +177,7 @@ type FormSnapshot = { personaId: string; tipo: TipoAusencia; fechaInicio: string
 function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAusencia, onClose, onGuardado }: ModalProps) {
   const modoEdicion = !!editarAusencia;
   const [personaId, setPersonaId] = useState(personaInicial ?? "");
-  const [tipo, setTipo]           = useState<string>(editarAusencia?.tipo ?? "vacaciones_confirmadas");
+  const [tipo, setTipo]           = useState<string>(editarAusencia?.tipo ?? "vacaciones_por_confirmar");
   const [fechaInicio, setFechaInicio] = useState(editarAusencia?.fecha_inicio ?? fechaInicial ?? "");
   const [fechaFin, setFechaFin]       = useState(editarAusencia?.fecha_fin ?? fechaInicial ?? "");
   const [descripcion, setDescripcion] = useState(editarAusencia?.descripcion ?? "");
@@ -187,6 +187,15 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
 
   // Gestión dinámica de tipos
   const { tipos: tiposDinamicos, crearTipo, eliminarTipo } = useTiposAusencia();
+  // Orden del select: "Vacaciones por confirmar" siempre primero
+  const tiposOrdenados = useMemo(() => {
+    const idx = tiposDinamicos.findIndex((t) => t.id === "vacaciones_por_confirmar");
+    if (idx <= 0) return tiposDinamicos;
+    const arr = [...tiposDinamicos];
+    const [item] = arr.splice(idx, 1);
+    arr.unshift(item);
+    return arr;
+  }, [tiposDinamicos]);
   const [nuevoTipoInput, setNuevoTipoInput]   = useState("");
   const [nuevoTipoColor, setNuevoTipoColor]   = useState("#f43f5e");
   const [mostrarNuevoTipo, setMostrarNuevoTipo] = useState(false);
@@ -347,7 +356,7 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
                 onChange={(e) => { setTipoMsgError(null); setTipoMsgConfirm(null); pushAndSet(setTipo, e.target.value, { personaId, tipo: tipo as TipoAusencia, fechaInicio, fechaFin, descripcion }); }}
                 className="flex-1 border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] bg-white focus:outline-none focus:border-[#1a1a1a] transition-colors"
               >
-                {tiposDinamicos.map((t) => (
+                {tiposOrdenados.map((t) => (
                   <option key={t.id} value={t.id}>{t.label}</option>
                 ))}
               </select>
@@ -412,7 +421,6 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
               <input
                 type="date"
                 value={fechaFin}
-                min={fechaInicio}
                 onChange={(e) => pushAndSet(setFechaFin, e.target.value, { personaId, tipo: tipo as TipoAusencia, fechaInicio, fechaFin, descripcion })}
                 className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-[13px] text-[#1a1a1a] focus:outline-none focus:border-[#1a1a1a] transition-colors"
               />
@@ -505,6 +513,8 @@ interface HeatmapAusenciasProps {
   onExternalModalClose?: () => void;
   readOnly?: boolean;
   rolActual?: string | null;
+  /** Vista limpia (toggle de admin): oculta insignias R/A y píldoras de días ya tomados. */
+  showMetrics?: boolean;
 }
 
 export function HeatmapAusencias({
@@ -514,6 +524,7 @@ export function HeatmapAusencias({
   onExternalModalClose,
   readOnly = false,
   rolActual,
+  showMetrics = true,
 }: HeatmapAusenciasProps) {
   const { tipos: tiposDinamicos } = useTiposAusencia(); // para colorear tooltip con tipos dinámicos
   const ocultarPctResumen = rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador";
@@ -547,6 +558,12 @@ export function HeatmapAusencias({
   const [cargoColapsados, setCargoColapsados] = useState<Set<string>>(new Set());
   const [personaColapsados, setPersonaColapsados] = useState<Set<string>>(new Set());
 
+  // Orden manual (drag & drop) de personas dentro de su grupo de cargo — solo admin
+  const [ordenAusenciasMap, setOrdenAusenciasMap] = useState<Record<string, number | null>>({});
+  const [draggingPersonaId, setDraggingPersonaId] = useState<string | null>(null);
+  const [draggingCargo, setDraggingCargo]         = useState<string | null>(null);
+  const [dragOverPersonaId, setDragOverPersonaId] = useState<string | null>(null);
+
   function toggleCargo(cargo: string) {
     setCargoColapsados(prev => { const s = new Set(prev); s.has(cargo) ? s.delete(cargo) : s.add(cargo); return s; });
   }
@@ -570,20 +587,29 @@ export function HeatmapAusencias({
     const hoy        = new Date().toISOString().split("T")[0];
     const inicioAnio = `${new Date().getFullYear()}-01-01`;
 
-    // Carga del mes + totales anuales en paralelo
-    const [result, ausAnioRes] = await Promise.all([
+    // Carga del mes + totales anuales + orden manual de personas (drag & drop) en paralelo
+    const [result, ausAnioRes, ordenRes] = await Promise.all([
       fetchAusenciasMes(supabase, year, month),
       supabase
         .from("ausencia")
         .select("persona_id, fecha_inicio, fecha_fin")
         .gte("fecha_fin", inicioAnio)
         .lte("fecha_inicio", hoy),
+      (supabase as any).from("persona").select("id, orden_ausencias"),
     ]);
 
     setCargando(false);
     if (result.error) { setError(result.error); return; }
     setFilas(result.filas);
     setDias(result.dias);
+
+    if (ordenRes.data) {
+      const map: Record<string, number | null> = {};
+      for (const p of ordenRes.data as { id: string; orden_ausencias: number | null }[]) {
+        map[p.id] = p.orden_ausencias;
+      }
+      setOrdenAusenciasMap(map);
+    }
 
     // Calcular totales anuales por persona (días hábiles sin feriados)
     if (ausAnioRes.data) {
@@ -674,16 +700,47 @@ export function HeatmapAusencias({
       const ib = ORDEN_BLOQUES.indexOf(b);
       return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
     });
-    // Dentro de cada grupo: más antiguo primero (fecha_ingreso menor)
+    // Dentro de cada grupo: orden manual (drag & drop) si existe, si no más antiguo primero
     for (const [, filas] of entries) {
       filas.sort((a, b) => {
+        const oa = ordenAusenciasMap[a.persona.id];
+        const ob = ordenAusenciasMap[b.persona.id];
+        if (oa != null && ob != null) return oa - ob;
+        if (oa != null) return -1;
+        if (ob != null) return 1;
         const fa = a.persona.fecha_ingreso ?? "9999-12-31";
         const fb = b.persona.fecha_ingreso ?? "9999-12-31";
         return fa.localeCompare(fb);
       });
     }
     return entries;
-  }, [filas]);
+  }, [filas, ordenAusenciasMap]);
+
+  // Reordena por drag & drop dentro del mismo grupo de cargo y persiste orden_ausencias (solo admin)
+  async function handlePersonaReorder(cargo: string, fromId: string, toId: string) {
+    if (fromId === toId) return;
+    const grupo = grupos.find(([c]) => c === cargo);
+    if (!grupo) return;
+    const [, filasGrupo] = grupo;
+    const fromIdx = filasGrupo.findIndex((f) => f.persona.id === fromId);
+    const toIdx   = filasGrupo.findIndex((f) => f.persona.id === toId);
+    if (fromIdx === -1 || toIdx === -1) return;
+
+    const reordenado = [...filasGrupo];
+    const [moved] = reordenado.splice(fromIdx, 1);
+    reordenado.splice(toIdx, 0, moved);
+
+    // Optimistic: asigna orden secuencial 1..N a todo el grupo
+    const updates: Record<string, number> = {};
+    reordenado.forEach((f, i) => { updates[f.persona.id] = i + 1; });
+    setOrdenAusenciasMap((prev) => ({ ...prev, ...updates }));
+
+    await Promise.all(
+      Object.entries(updates).map(([id, orden]) =>
+        (supabase as any).from("persona").update({ orden_ausencias: orden }).eq("id", id)
+      )
+    );
+  }
 
   function colapsarTodo() { setCargoColapsados(new Set(grupos.map(([c]) => c))); }
   function expandirTodo()  { setCargoColapsados(new Set()); setPersonaColapsados(new Set()); }
@@ -862,8 +919,23 @@ export function HeatmapAusencias({
                     {/* ── Filas de personas (Nivel 2, visibles solo cuando cargo expandido) ── */}
                     {!estaColapsadoCargo && filasGrupo.map((fila, rowIdx) => {
                       const estaColapsadaPersona = personaColapsados.has(fila.persona.id);
+                      const puedeReordenar = rolActual === "admin";
+                      const esDragOver = dragOverPersonaId === fila.persona.id;
                       return (
-                        <tr key={fila.persona.id} className={rowIdx % 2 === 0 ? "bg-white" : "bg-[#fafafa]"}>
+                        <tr key={fila.persona.id}
+                          className={`${rowIdx % 2 === 0 ? "bg-white" : "bg-[#fafafa]"} ${esDragOver ? "outline outline-2 -outline-offset-2 outline-blue-400" : ""}`}
+                          style={{ opacity: draggingPersonaId === fila.persona.id ? 0.45 : 1, transition: "opacity 0.15s" }}
+                          draggable={puedeReordenar}
+                          onDragStart={(e) => { if (!puedeReordenar) { e.preventDefault(); return; } setDraggingPersonaId(fila.persona.id); setDraggingCargo(cargo); e.dataTransfer.effectAllowed = "move"; }}
+                          onDragOver={(e) => { if (!puedeReordenar || draggingCargo !== cargo) return; e.preventDefault(); setDragOverPersonaId(fila.persona.id); }}
+                          onDragLeave={() => setDragOverPersonaId((id) => id === fila.persona.id ? null : id)}
+                          onDrop={(e) => {
+                            e.preventDefault();
+                            if (puedeReordenar && draggingPersonaId && draggingCargo === cargo) handlePersonaReorder(cargo, draggingPersonaId, fila.persona.id);
+                            setDraggingPersonaId(null); setDraggingCargo(null); setDragOverPersonaId(null);
+                          }}
+                          onDragEnd={() => { setDraggingPersonaId(null); setDraggingCargo(null); setDragOverPersonaId(null); }}
+                        >
 
                           {/* Nombre + chevron persona */}
                           <td
@@ -871,12 +943,17 @@ export function HeatmapAusencias({
                             style={{ minWidth: 140, width: 140 }}
                           >
                             <div className="flex items-center gap-1">
+                              {puedeReordenar && (
+                                <span title="Arrastrar para reordenar dentro del cargo">
+                                  <GripVertical className="w-3 h-3 flex-shrink-0 text-gray-200 hover:text-gray-400 cursor-grab transition-colors" />
+                                </span>
+                              )}
                               <div className="min-w-0 flex-1 overflow-hidden">
                                 <div className="flex items-center gap-1.5">
-                                  {fila.persona.is_leverager && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
+                                  {showMetrics && fila.persona.is_leverager && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
                                     <span className="w-4 h-4 rounded-full bg-[#3b5bdb] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>A</span>
                                   )}
-                                  {rolActual === "admin" && fila.persona.referente && (
+                                  {showMetrics && rolActual === "admin" && fila.persona.referente && (
                                     <span className="w-4 h-4 rounded-full bg-[#e2884a] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>R</span>
                                   )}
                                   {ocultarPctResumen ? (
@@ -894,7 +971,7 @@ export function HeatmapAusencias({
                                     </button>
                                   )}
                                   {/* Badge días acumulados año actual */}
-                                  {!readOnly && (() => {
+                                  {showMetrics && !readOnly && (() => {
                                     const d = totalesAnio[fila.persona.id] ?? 0;
                                     if (d === 0) return null;
                                     const style: React.CSSProperties =
