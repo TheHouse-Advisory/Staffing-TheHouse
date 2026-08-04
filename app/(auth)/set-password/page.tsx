@@ -36,8 +36,8 @@ export default function SetPasswordPage() {
       return;
     }
 
-    // Sesión activa — redirigir al dashboard
-    window.location.assign("/inicio");
+    // Sesión activa — "/" deja que app/page.tsx decida el destino según el rol.
+    window.location.assign("/");
   }
 
   return (

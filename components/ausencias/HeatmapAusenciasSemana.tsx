@@ -320,6 +320,8 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
   const weekDays = useMemo(() => getWeekDays(selectedDate), [selectedDate]);
   const { tipos: tiposDinamicos } = useTiposAusencia();
   const ocultarPctResumen = rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador";
+  // AySr/Desarrollo/planificador/GyD no deben ver la tarjeta resumen de ausencias al clicar el nombre
+  const ocultarPopoverPersona = rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo";
 
   // Resuelve color de tipo dinámico > estático > fallback
   function colorDeTipo(tipo: string): { bg: string; label: string } {
@@ -546,14 +548,20 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                             <span className="w-4 h-4 rounded-full bg-[#e2884a] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>R</span>
                           )}
                           <div className="min-w-0 flex-1 overflow-hidden">
-                            <button
-                              type="button"
-                              onClick={(e) => { e.stopPropagation(); setPopoverPersona(fila.persona); }}
-                              className="text-[11px] font-medium leading-tight text-[#1a1a1a] truncate block w-full text-left cursor-pointer hover:underline hover:text-blue-600 transition-colors"
-                              title="Ver resumen de ausencias"
-                            >
-                              {fila.persona.nombre} {fila.persona.apellido}
-                            </button>
+                            {ocultarPopoverPersona ? (
+                              <p className="text-[11px] font-medium leading-tight text-[#1a1a1a] truncate">
+                                {fila.persona.nombre} {fila.persona.apellido}
+                              </p>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); setPopoverPersona(fila.persona); }}
+                                className="text-[11px] font-medium leading-tight text-[#1a1a1a] truncate block w-full text-left cursor-pointer hover:underline hover:text-blue-600 transition-colors"
+                                title="Ver resumen de ausencias"
+                              >
+                                {fila.persona.nombre} {fila.persona.apellido}
+                              </button>
+                            )}
                             {!estaColapsadaPersona && fila.persona.cargo_actual && (
                               <p className="text-[9px] leading-none text-[#999] truncate">{fila.persona.cargo_actual}</p>
                             )}

@@ -113,6 +113,18 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
   const [searchQuery, setSearchQuery] = useState("");
   const [esGYD, setEsGYD] = useState(false);
   const [ocultarVacacionesPorConfirmar, setOcultarVacacionesPorConfirmar] = useState(false);
+  const [refreshTick, setRefreshTick] = useState(0);
+
+  // Re-fetch cuando cambia una asignación o un engagement desde cualquier vista
+  useEffect(() => {
+    const bump = () => setRefreshTick((t) => t + 1);
+    window.addEventListener("asignacionChanged", bump);
+    window.addEventListener("engagementChanged", bump);
+    return () => {
+      window.removeEventListener("asignacionChanged", bump);
+      window.removeEventListener("engagementChanged", bump);
+    };
+  }, []);
 
   const pv = periodoVista ?? "dia";
 
@@ -250,7 +262,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
   // simulationSnapshot referencia cambia con cada render de SandboxInicioView,
   // usar JSON como dependencia evita re-fetches infinitos
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fechaInicio, fechaFin, simulationSnapshot]);
+  }, [fechaInicio, fechaFin, simulationSnapshot, refreshTick]);
 
   if (loading) return <p className="text-sm text-gray-300 p-2">Cargando...</p>;
   if (filas.length === 0) return <p className="text-sm text-gray-300 italic p-2">Sin actividad en este período.</p>;

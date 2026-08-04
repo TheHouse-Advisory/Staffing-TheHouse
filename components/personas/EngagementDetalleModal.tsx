@@ -201,18 +201,6 @@ export function EngagementDetalleModal({ engagementId, personaId, onClose }: Pro
                 </div>
               )}
 
-              {/* Capacidades */}
-              {data.capacidades.length > 0 && (
-                <div>
-                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">Capacidades</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {data.capacidades.map((c) => (
-                      <span key={c} className="text-[10px] px-2 py-0.5 rounded-full bg-[#f0f9f4] text-[#1e7e45] font-medium">{c}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-
               {/* Temáticas */}
               {data.tematicas.length > 0 && (
                 <div>

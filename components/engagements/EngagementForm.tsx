@@ -536,8 +536,6 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
         }
         if (!r.fecha_inicio) {
           e[`req_${i}_inicio`] = "Requerida";
-        } else if (form.fecha_inicio && r.fecha_inicio < form.fecha_inicio) {
-          e[`req_${i}_inicio`] = `No puede ser antes del ${form.fecha_inicio}`;
         } else if (maxFin && r.fecha_inicio > maxFin) {
           e[`req_${i}_inicio`] = `No puede ser después del ${maxFin}`;
         }
@@ -1037,41 +1035,6 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
         </FieldWrapper>
 
         <div className="grid grid-cols-2 gap-4">
-          {/* ── Capacidades ── */}
-          <FieldWrapper label="Capacidades" hint="Habilidades técnicas requeridas">
-            <MultiSelect
-              options={capacidadesOpts}
-              value={form.capacidades}
-              onChange={(v) => setForm((f) => ({ ...f, capacidades: v }))}
-              placeholder="Agregar capacidades..."
-            />
-            <div className="mt-1 flex items-center gap-3">
-              <button type="button" onClick={() => { setNuevaCapacidadNombre(""); setNuevaCapacidadError(null); setNuevaCapacidadOpen(true); }}
-                className="flex items-center gap-1 text-[11px] text-[#2563eb] hover:underline">
-                <Plus className="w-3 h-3" /> Nueva capacidad
-              </button>
-              {capacidadesOpts.length > 0 && (
-                <button type="button" onClick={() => setShowEliminarCapLista((s) => !s)}
-                  className="flex items-center gap-1 text-[11px] text-[#888] hover:text-red-500 hover:underline">
-                  <Trash2 className="w-3 h-3" /> Eliminar
-                </button>
-              )}
-            </div>
-            {showEliminarCapLista && (
-              <div className="mt-2 border border-[#e8e8e8] rounded-lg overflow-hidden max-h-44 overflow-y-auto">
-                {capacidadesOpts.map((opt) => (
-                  <div key={opt.value} className="flex items-center justify-between px-3 py-1.5 hover:bg-[#fafafa] border-b border-[#f0f0f0] last:border-0">
-                    <span className="text-[12px] text-[#333]">{opt.label}</span>
-                    <button type="button" onClick={() => abrirEliminarCapacidad(opt)}
-                      className="p-1 rounded hover:bg-[#fee2e2] text-[#ccc] hover:text-[#dc2626] transition-colors">
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </FieldWrapper>
-
           {/* ── Temáticas ── */}
           <FieldWrapper label="Temáticas" hint="Áreas temáticas del engagement">
             <MultiSelect
@@ -1107,43 +1070,6 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
             )}
           </FieldWrapper>
         </div>
-
-        {/* ── Modal nueva capacidad ── */}
-        <Modal open={nuevaCapacidadOpen} onClose={() => setNuevaCapacidadOpen(false)} title="Nueva capacidad"
-          footer={<>
-            <Button variant="secondary" onClick={() => setNuevaCapacidadOpen(false)} disabled={nuevaCapacidadLoading}>Cancelar</Button>
-            <Button onClick={guardarNuevaCapacidad} loading={nuevaCapacidadLoading}>Guardar</Button>
-          </>}>
-          <div className="space-y-2">
-            <label className="text-[11px] font-semibold text-[#888] uppercase tracking-wide">Nombre</label>
-            <input autoFocus type="text" value={nuevaCapacidadNombre}
-              onChange={(e) => setNuevaCapacidadNombre(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); guardarNuevaCapacidad(); } }}
-              placeholder="Ej. Análisis de datos"
-              className="w-full border border-[#e0e0e0] rounded-lg px-3 py-2 text-sm focus:outline-none focus:border-[#2563eb] focus:ring-1 focus:ring-[#2563eb]" />
-            {nuevaCapacidadError && <p className="text-[11px] text-red-500">{nuevaCapacidadError}</p>}
-          </div>
-        </Modal>
-
-        {/* ── Modal eliminar capacidad ── */}
-        <Modal open={!!eliminarCapCandidata} onClose={() => { if (!eliminarCapLoading) setEliminarCapCandidata(null); }} title="Eliminar capacidad"
-          footer={eliminarCapCheck.loading || eliminarCapCheck.count > 0
-            ? <Button variant="secondary" onClick={() => setEliminarCapCandidata(null)}>Cerrar</Button>
-            : <>
-                <Button variant="secondary" onClick={() => setEliminarCapCandidata(null)} disabled={eliminarCapLoading}>Cancelar</Button>
-                <Button variant="danger" onClick={confirmarEliminarCapacidad} loading={eliminarCapLoading}>Sí, eliminar</Button>
-              </>}>
-          {eliminarCapCheck.loading ? (
-            <p className="text-sm text-[#888]">Verificando usos...</p>
-          ) : eliminarCapCheck.count > 0 ? (
-            <div className="space-y-2">
-              <p className="text-sm font-semibold text-red-600">No se puede eliminar.</p>
-              <p className="text-sm text-[#555]">Hay <strong>{eliminarCapCheck.count}</strong> proyecto{eliminarCapCheck.count !== 1 ? "s" : ""} asociado{eliminarCapCheck.count !== 1 ? "s" : ""} a <strong>{eliminarCapCandidata?.label}</strong>.</p>
-            </div>
-          ) : (
-            <p className="text-sm text-[#555]">¿Estás seguro de eliminar <strong>{eliminarCapCandidata?.label}</strong>? Esta acción no se puede deshacer.</p>
-          )}
-        </Modal>
 
         {/* ── Modal nueva temática ── */}
         <Modal open={nuevaTematicaOpen} onClose={() => setNuevaTematicaOpen(false)} title="Nueva temática"

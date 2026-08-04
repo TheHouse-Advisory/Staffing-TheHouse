@@ -250,18 +250,6 @@ function PopupPerfil({ persona, resumen, loading, popupRef, onClose }: PopupPerf
                 ) : <p className="text-xs text-gray-300 italic">Sin industrias</p>}
               </div>
 
-              {/* Capacidades */}
-              <div>
-                <p className="text-gray-400 mb-1">Capacidades</p>
-                {resumen.capacidades.length > 0 ? (
-                  <div className="flex flex-wrap gap-1">
-                    {resumen.capacidades.map((c) => (
-                      <span key={c} className="text-xs px-2 py-0.5 rounded-full bg-[#f0f9f4] text-[#1e7e45]">{c}</span>
-                    ))}
-                  </div>
-                ) : <p className="text-xs text-gray-300 italic">Sin capacidades</p>}
-              </div>
-
               {/* Temáticas */}
               <div>
                 <p className="text-gray-400 mb-1">Temáticas</p>
@@ -752,7 +740,7 @@ export function PanelFitAsignacion({
                 const yaEnReq = req?.asignaciones.some((a) => a.persona_id === p.persona_id) ?? false;
                 const esteAsignando = asignando === p.persona_id;
                 const exp = p.experiencia;
-                const tieneExp = exp.industria || exp.capacidad || exp.tematica;
+                const tieneExp = exp.industria || exp.tematica;
 
                 return (
                   <div key={p.persona_id} className="px-5 py-4 hover:bg-[#fafafa] transition-colors">
@@ -788,11 +776,6 @@ export function PanelFitAsignacion({
                             {exp.industria && (
                               <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-600 font-semibold">
                                 Industria
-                              </span>
-                            )}
-                            {exp.capacidad && (
-                              <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-green-50 text-green-700 font-semibold">
-                                Capacidades
                               </span>
                             )}
                             {exp.tematica && (

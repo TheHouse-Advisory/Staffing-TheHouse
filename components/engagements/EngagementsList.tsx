@@ -42,8 +42,8 @@ const SECCIONES_DEF = [
   { tipo: "ayuda_interna", titulo: "Desarrollo interno",          color: "#27ae60", msgVacio: "No hay elementos de desarrollo interno que coincidan." },
 ] as const;
 
-const COLS_TABLA = ["Código","Proyecto","Cliente","Industria","Temáticas","Participantes","Capacidades","Inicio","Término","Descripción"] as const;
-const COLS_SOLO_DETALLE = new Set(["Cliente","Industria","Temáticas","Participantes","Capacidades","Inicio","Término","Descripción"]);
+const COLS_TABLA = ["Código","Proyecto","Cliente","Industria","Temáticas","Participantes","Inicio","Término","Descripción"] as const;
+const COLS_SOLO_DETALLE = new Set(["Cliente","Industria","Temáticas","Participantes","Inicio","Término","Descripción"]);
 
 function SeccionesTablaEngagements({
   engagements,
@@ -226,19 +226,6 @@ function SeccionesTablaEngagements({
                                 </div>
                               ) : <span className="text-[#ccc]">—</span>}
                             </td>
-                            {/* Capacidades — compacto: primeros 2 */}
-                            <td className={`px-3 py-3 min-w-[120px]${compact ? " hidden" : ""}`}>
-                              {ex?.capacidades.length ? (
-                                <div className="flex flex-wrap gap-1">
-                                  {(rowExpanded ? ex.capacidades : ex.capacidades.slice(0, 2)).map((cap) => (
-                                    <span key={cap} className="px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-medium whitespace-nowrap">{cap}</span>
-                                  ))}
-                                  {!rowExpanded && ex.capacidades.length > 2 && (
-                                    <span className="text-[10px] text-[#aaa]">+{ex.capacidades.length - 2}</span>
-                                  )}
-                                </div>
-                              ) : <span className="text-[#ccc]">—</span>}
-                            </td>
                             {/* Inicio */}
                             <td className={`px-3 py-3 text-[#555] whitespace-nowrap${compact ? " hidden" : ""}`}>{fmt(e.fecha_inicio)}</td>
                             {/* Término */}
@@ -354,7 +341,6 @@ function matchEngagement(e: { codigo?: string | null; nombre: string; cliente?: 
     case "descripcion":   return norm(e.descripcion ?? "").includes(q);
     case "industria":     return norm(resolveInd(ex)).includes(q);
     case "tematicas":     return norm(resolveTxt(ex?.tematicas)).includes(q);
-    case "capacidades":   return norm(resolveTxt(ex?.capacidades)).includes(q);
     case "participantes": return (ex?.participantes ?? []).some((p) => norm(`${p.nombre} ${p.apellido}`).includes(q));
     default:
       return (
@@ -364,7 +350,6 @@ function matchEngagement(e: { codigo?: string | null; nombre: string; cliente?: 
         norm(e.descripcion ?? "").includes(q) ||
         norm(resolveInd(ex)).includes(q) ||
         norm(resolveTxt(ex?.tematicas)).includes(q) ||
-        norm(resolveTxt(ex?.capacidades)).includes(q) ||
         (ex?.participantes ?? []).some((p) => norm(`${p.nombre} ${p.apellido}`).includes(q))
       );
   }
@@ -683,7 +668,6 @@ export function EngagementsList({ rolActual }: Props) {
               <option value="industria">Industria</option>
               <option value="tematicas">Temáticas</option>
               <option value="participantes">Participantes</option>
-              <option value="capacidades">Capacidades</option>
               <option value="descripcion">Descripción</option>
             </select>
             <div className="relative">
@@ -727,7 +711,7 @@ export function EngagementsList({ rolActual }: Props) {
           <table className="w-full text-xs border-collapse">
             <thead>
               <tr className="bg-[#f5f5f5] border-b border-[#e8e8e8]">
-                {["Código","Proyecto","Cliente","Industria","Temáticas","Participantes","Capacidades","Inicio","Término","Descripción"].map((h) => (
+                {["Código","Proyecto","Cliente","Industria","Temáticas","Participantes","Inicio","Término","Descripción"].map((h) => (
                   <th key={h} className="px-3 py-2.5 text-left text-[10px] font-bold text-[#888] uppercase tracking-wide whitespace-nowrap">{h}</th>
                 ))}
                 {isAdmin && <th className="px-3 py-2.5" />}
@@ -781,16 +765,6 @@ export function EngagementsList({ rolActual }: Props) {
                               </span>
                             );
                           })}
-                        </div>
-                      ) : <span className="text-[#ccc]">—</span>}
-                    </td>
-                    {/* Capacidades */}
-                    <td className="px-3 py-3 min-w-[120px]">
-                      {ex?.capacidades.length ? (
-                        <div className="flex flex-wrap gap-1">
-                          {ex.capacidades.map((c) => (
-                            <span key={c} className="px-1.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-medium whitespace-nowrap">{c}</span>
-                          ))}
                         </div>
                       ) : <span className="text-[#ccc]">—</span>}
                     </td>

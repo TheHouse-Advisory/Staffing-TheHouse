@@ -399,15 +399,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
               />
             </FieldWrapper>
 
-            <FieldWrapper label="Capacidades" hint="Habilidades técnicas">
-              <MultiSelect
-                options={capacidades}
-                value={form.capacidades}
-                onChange={(v) => set("capacidades")(v)}
-                placeholder="Agregar capacidades..."
-              />
-            </FieldWrapper>
-
             <FieldWrapper label="Temáticas" hint="Áreas de interés">
               <MultiSelect
                 options={tematicas}
