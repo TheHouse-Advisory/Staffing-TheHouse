@@ -6,7 +6,7 @@ import {
   format, isSameDay, parseISO, addDays, subDays,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell, BarChart2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Bell, BarChart2, Eye, EyeOff } from "lucide-react";
 import Link from "next/link";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
 import type { RolSistema } from "@/lib/types/database";
@@ -68,6 +68,8 @@ export function InicioClient() {
 
   // Estado cuadrante EQUIPO: colapsado strip | normal 200px | expandido flex-1
   const [equipoEstado, setEquipoEstado] = useState<"normal" | "colapsado" | "expandido">("normal");
+  // Oculta/muestra % de carga y badges R/A de las personas en el cuadrante Equipo
+  const [mostrarCarga, setMostrarCarga] = useState(true);
   // Vista compartida vertical entre EQUIPO y DISPONIBLES PRÓXIMAMENTE: al expandir una,
   // la otra se reduce a su versión compacta (header). "normal" = ambas comparten el espacio.
   const [vistaPanelIzq, setVistaPanelIzq] = useState<"normal" | "equipo-expanded" | "disponibles-expanded">("normal");
@@ -95,13 +97,14 @@ export function InicioClient() {
 
   // TABLERO quadrant — toggle Vista Resumida / Detallada
   const [vistaResumida, setVistaResumida] = useState(true);
-  // Default por rol: todos los roles (admin y solo lectura) arrancan en Detallada.
+  // Default por rol: AySr/GyD/Desarrollo arrancan en Resumida (equipo colapsado + tablero
+  // expandido, ver más abajo); el resto de roles arranca en Detallada.
   // Solo se aplica una vez, al cargar el rol.
   const defaultVistaAplicadoRef = useRef(false);
   useEffect(() => {
     if (rol === null || defaultVistaAplicadoRef.current) return;
     defaultVistaAplicadoRef.current = true;
-    setVistaResumida(false);
+    setVistaResumida(rol === "AySr" || rol === "GyD" || rol === "Desarrollo");
   }, [rol]);
 
   // RESÚMEN quadrant
@@ -154,11 +157,12 @@ export function InicioClient() {
         sb.from("persona")
           .select("id, nombre, apellido, iniciales, cargo_actual, is_leverager, referente, fecha_ingreso")
           .eq("activo", true).order("cargo_actual").order("apellido"),
-        sb.from("asignacion")
-          .select("persona_id, pct_dedicacion")
+        (sb as any).from("asignacion")
+          .select("persona_id, pct_dedicacion, engagement:engagement_id!inner(tipo)")
           .eq("estado", "activa")
           .lte("fecha_inicio", hoy)
-          .gte("fecha_fin", hoy),
+          .gte("fecha_fin", hoy)
+          .neq("engagement.tipo", "posibles_proyectos"),
         (sb as any).from("asignacion")
           .select("persona_id, fecha_fin, engagement:engagement_id(tipo)")
           .eq("estado", "activa")
@@ -209,11 +213,12 @@ export function InicioClient() {
   const refreshOcupacion = useCallback(async () => {
     const sb = createAnyClient();
     const hoy = format(new Date(), "yyyy-MM-dd");
-    const { data } = await sb.from("asignacion")
-      .select("persona_id, pct_dedicacion")
+    const { data } = await (sb as any).from("asignacion")
+      .select("persona_id, pct_dedicacion, engagement:engagement_id!inner(tipo)")
       .eq("estado", "activa")
       .lte("fecha_inicio", hoy)
-      .gte("fecha_fin", hoy);
+      .gte("fecha_fin", hoy)
+      .neq("engagement.tipo", "posibles_proyectos");
     const map: Record<string, number> = {};
     for (const a of (data ?? []) as { persona_id: string; pct_dedicacion: number }[]) {
       map[a.persona_id] = (map[a.persona_id] ?? 0) + Number(a.pct_dedicacion);
@@ -221,10 +226,14 @@ export function InicioClient() {
     setOcupacionMap(map);
   }, []);
 
-  // Escucha cambios de asignación desde cualquier componente (tablero, formularios, etc.)
+  // Escucha cambios de asignación/engagement desde cualquier componente (tablero, formularios, etc.)
   useEffect(() => {
     window.addEventListener("asignacionChanged", refreshOcupacion);
-    return () => window.removeEventListener("asignacionChanged", refreshOcupacion);
+    window.addEventListener("engagementChanged", refreshOcupacion);
+    return () => {
+      window.removeEventListener("asignacionChanged", refreshOcupacion);
+      window.removeEventListener("engagementChanged", refreshOcupacion);
+    };
   }, [refreshOcupacion]);
 
   // Escucha aprobación de plan de simulación → fuerza re-fetch completo del Tablero
@@ -319,7 +328,16 @@ export function InicioClient() {
         ) : (
         <div className={`w-full ${equipoCompacto ? "h-auto" : "h-full"} bg-white rounded-xl border border-gray-100 shadow-sm p-4 flex flex-col overflow-hidden relative`}>
           <div className="flex items-center justify-between mb-3 flex-shrink-0">
-            <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Equipo</p>
+            <div className="flex items-center gap-1.5">
+              <p className="text-xs font-bold text-gray-400 uppercase tracking-widest">Equipo</p>
+              <button
+                onClick={() => setMostrarCarga((s) => !s)}
+                title={mostrarCarga ? "Ocultar % de carga" : "Mostrar % de carga"}
+                className="w-6 h-6 flex items-center justify-center bg-white border border-[#e0e0e0] hover:bg-[#f5f5f5] rounded-md text-[#555] transition-colors flex-shrink-0"
+              >
+                {mostrarCarga ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
+              </button>
+            </div>
             <div className="flex items-center gap-0.5">
               {equipoEstado === "expandido" ? (
                 /* Expandido: un solo botón vuelve a normal */
@@ -399,18 +417,18 @@ export function InicioClient() {
                               >
                                 {iniciales(p.nombre, p.apellido, p.iniciales)}
                               </div>
-                              {!isReadOnly && p.is_leverager && (
+                              {mostrarCarga && !isReadOnly && p.is_leverager && (
                                 <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#3b5bdb] border-2 border-white flex items-center justify-center text-white font-bold leading-none" style={{ fontSize: 7 }}>
                                   A
                                 </span>
                               )}
-                              {rol === "admin" && p.referente && (
+                              {mostrarCarga && rol === "admin" && p.referente && (
                                 <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#e2884a] border-2 border-white flex items-center justify-center text-white font-bold leading-none" style={{ fontSize: 7 }}>
                                   R
                                 </span>
                               )}
                             </div>
-                            {rol !== "GyD" && rol !== "AySr" && (
+                            {mostrarCarga && rol !== "GyD" && rol !== "AySr" && (
                               <span
                                 className="text-[9px] font-bold px-1 py-0.5 rounded-full leading-none"
                                 style={{ background: oc.bg, color: oc.text }}

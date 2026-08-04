@@ -33,8 +33,9 @@ function LoginForm() {
   const [error, setError] = useState<string | null>(null);
 
   // Valida que sea ruta interna — evita open redirect vía ?redirectTo=//evil.com
+  // Sin redirectTo explícito, cae a "/" para que app/page.tsx decida destino según rol.
   const rawRedirect = searchParams.get("redirectTo") ?? "";
-  const redirectTo = rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") ? rawRedirect : "/tablero";
+  const redirectTo = rawRedirect.startsWith("/") && !rawRedirect.startsWith("//") ? rawRedirect : "/";
 
   const errorMsg = searchParams.get("error");
   const errorMessages: Record<string, string> = {

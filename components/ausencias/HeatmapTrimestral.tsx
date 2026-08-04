@@ -191,6 +191,8 @@ export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasDat
 
   // Popover de resumen de ausencias — mismo componente que usan las vistas mes/semana
   const [popoverPersona, setPopoverPersona] = useState<PersonaTrimestral | null>(null);
+  // AySr/Desarrollo/planificador/GyD no deben ver la tarjeta resumen de ausencias al clicar el nombre
+  const ocultarPopoverPersona = rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo";
 
   // Columnas continuas del trimestre completo, con marca de inicio de mes/semana/feriado para los bordes y estilos
   const columnas = useMemo(
@@ -395,14 +397,20 @@ export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasDat
                               R
                             </span>
                           )}
-                          <button
-                            type="button"
-                            onClick={() => setPopoverPersona(p)}
-                            className="text-[8px] font-medium text-[#1a1a1a] truncate block min-w-0 flex-1 text-left cursor-pointer hover:underline hover:text-blue-600 transition-colors"
-                            title="Ver resumen de ausencias"
-                          >
-                            {p.nombre} {p.apellido}
-                          </button>
+                          {ocultarPopoverPersona ? (
+                            <p className="text-[8px] font-medium text-[#1a1a1a] truncate min-w-0 flex-1">
+                              {p.nombre} {p.apellido}
+                            </p>
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => setPopoverPersona(p)}
+                              className="text-[8px] font-medium text-[#1a1a1a] truncate block min-w-0 flex-1 text-left cursor-pointer hover:underline hover:text-blue-600 transition-colors"
+                              title="Ver resumen de ausencias"
+                            >
+                              {p.nombre} {p.apellido}
+                            </button>
+                          )}
                         </div>
                       </td>
                       {columnas.map((col) => {

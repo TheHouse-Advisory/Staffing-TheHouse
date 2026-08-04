@@ -24,9 +24,16 @@ function iniciales(n: string, a: string, custom?: string | null) {
 }
 function diasEnEmpresa(f: string | null | undefined): string | null {
   if (!f) return null;
-  const d = Math.floor((Date.now() - new Date(f + "T00:00:00").getTime()) / 86_400_000);
-  if (d < 0) return null;
-  return d < 365 ? `${d} días` : `${Math.floor(d / 365)} ${Math.floor(d / 365) === 1 ? "año" : "años"} y ${d % 365} días`;
+  const total = Math.floor((Date.now() - new Date(f + "T00:00:00").getTime()) / 86_400_000);
+  if (total < 0) return null;
+  const years = Math.floor(total / 365);
+  const months = Math.floor((total % 365) / 30);
+  const days = (total % 365) % 30;
+  const partes: string[] = [];
+  if (years > 0) partes.push(`${years} ${years === 1 ? "año" : "años"}`);
+  if (months > 0) partes.push(`${months} ${months === 1 ? "mes" : "meses"}`);
+  if (days > 0 || partes.length === 0) partes.push(`${days} ${days === 1 ? "día" : "días"}`);
+  return partes.length === 1 ? partes[0] : partes.slice(0, -1).join(", ") + " y " + partes[partes.length - 1];
 }
 
 // ── Tipos internos ────────────────────────────────────────────────
@@ -405,23 +412,13 @@ export function ColaboradorModal({
                     <ProyectosPersonaDetalle personaId={persona.id} compact />
                   </div>
 
-                  {/* Tags industrias / capacidades / temáticas */}
+                  {/* Tags industrias / temáticas */}
                   {resumen.industrias.length > 0 && (
                     <div>
                       <p className="text-gray-400 mb-1 text-xs">Industrias</p>
                       <div className="flex flex-wrap gap-1">
                         {resumen.industrias.map((i) => (
                           <span key={i} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#eaf4ff] text-[#1a5276]">{i}</span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                  {resumen.capacidades.length > 0 && (
-                    <div>
-                      <p className="text-gray-400 mb-1 text-xs">Capacidades</p>
-                      <div className="flex flex-wrap gap-1">
-                        {resumen.capacidades.map((c) => (
-                          <span key={c} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#f0f9f4] text-[#1e7e45]">{c}</span>
                         ))}
                       </div>
                     </div>

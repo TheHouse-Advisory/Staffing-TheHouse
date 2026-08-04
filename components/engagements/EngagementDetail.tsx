@@ -510,7 +510,7 @@ export function EngagementDetail({ id }: Props) {
         </div>
 
         {/* ── Características del proyecto ────────────────────── */}
-        {(caracteristicas.industria || caracteristicas.capacidades.length > 0 || caracteristicas.tematicas.length > 0) && (
+        {(caracteristicas.industria || caracteristicas.tematicas.length > 0) && (
           <div className="bg-white rounded-xl border border-[#e8e8e8] p-5 space-y-4">
             <h3 className="font-semibold text-[15px]">Características del proyecto</h3>
             <div className="space-y-3">
@@ -520,16 +520,6 @@ export function EngagementDetail({ id }: Props) {
                   <span className="text-[11px] px-2.5 py-1 rounded-full bg-[#eaf4ff] text-[#1a5276] font-medium">
                     {caracteristicas.industria}
                   </span>
-                </div>
-              )}
-              {caracteristicas.capacidades.length > 0 && (
-                <div>
-                  <p className="text-[#888] text-xs mb-1.5">Capacidades</p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {caracteristicas.capacidades.map((c) => (
-                      <span key={c} className="text-[11px] px-2.5 py-1 rounded-full bg-[#f0f9f4] text-[#1e7e45] font-medium">{c}</span>
-                    ))}
-                  </div>
                 </div>
               )}
               {caracteristicas.tematicas.length > 0 && (

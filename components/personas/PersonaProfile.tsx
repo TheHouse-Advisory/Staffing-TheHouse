@@ -777,28 +777,6 @@ export function PersonaProfile({ id }: Props) {
 
             <div>
               <p className="text-xs font-semibold text-[#888] uppercase tracking-widest mb-2">
-                Capacidades
-              </p>
-              {experiencia.capacidades.length === 0 ? (
-                <p className="text-sm text-[#ccc] italic">Sin capacidades definidas</p>
-              ) : (
-                <div className="flex flex-wrap gap-2">
-                  {experiencia.capacidades.map((t) => (
-                    <button
-                      key={t.id}
-                      type="button"
-                      onClick={() => setModalTag({ tipo: "Capacidad", nombre: t.nombre, engagements: t.engagements })}
-                      className="text-xs px-2.5 py-1 rounded-full bg-[#f0f9f4] text-[#1e7e45] font-medium hover:bg-[#dcf5e7] transition-colors cursor-pointer"
-                    >
-                      {t.nombre}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div>
-              <p className="text-xs font-semibold text-[#888] uppercase tracking-widest mb-2">
                 Temáticas
               </p>
               {experiencia.tematicas.length === 0 ? (

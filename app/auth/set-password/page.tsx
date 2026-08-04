@@ -93,8 +93,9 @@ export default function SetPasswordPage() {
     setLoading(false);
 
     // Pequeño delay para que el usuario vea la confirmación.
+    // "/" deja que app/page.tsx decida el destino según el rol.
     setTimeout(() => {
-      window.location.assign("/tablero");
+      window.location.assign("/");
     }, 1200);
   }
 

@@ -37,6 +37,12 @@ function iniciales(n: string, a: string, custom?: string | null) {
   return `${n[0] ?? ""}${a[0] ?? ""}`.toUpperCase();
 }
 
+function pctBadgeStyle(pct: number): React.CSSProperties {
+  if (pct >= 100) return { background: "#ffd4d4", color: "#c02020" };
+  if (pct >= 50)  return { background: "#fff4d4", color: "#8a6200" };
+  return { background: "#dbeafe", color: "#1d4ed8" };
+}
+
 function diasEnEmpresa(f: string | null | undefined): string | null {
   if (!f) return null;
   const total = Math.floor((Date.now() - new Date(f + "T00:00:00").getTime()) / 86_400_000);
@@ -310,10 +316,16 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                     <div className="space-y-1.5">
                       {simData.proyectos.map((eng) => {
                         const { dias, esFuturo, diasRestantes } = calcDiasCard(eng.fecha_inicio, eng.fecha_fin);
+                        const pct = eng.personas.find((p) => p.id === persona.id)?.pct ?? 0;
                         return (
                           <div key={eng.id} className="px-2 py-1 rounded-lg bg-amber-50 border border-amber-100">
                             <div className="flex items-baseline justify-between gap-2">
                               <div className="min-w-0 flex items-baseline gap-1.5">
+                                {!ocultarDiasProyecto && (
+                                  <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0" style={pctBadgeStyle(pct)}>
+                                    {pct}%
+                                  </span>
+                                )}
                                 <span className="text-[11px] font-semibold text-slate-800 truncate">{eng.nombre}</span>
                                 {eng.cliente && <span className="text-[9px] text-gray-400 truncate">{eng.cliente}</span>}
                               </div>
@@ -377,16 +389,6 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
                   <div className="flex flex-wrap gap-1">
                     {resumen.industrias.map((i) => (
                       <span key={i} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#eaf4ff] text-[#1a5276]">{i}</span>
-                    ))}
-                  </div>
-                </div>
-              )}
-              {!ocultarInfoRestringida && resumen.capacidades.length > 0 && (
-                <div>
-                  <p className="text-gray-400 mb-1 text-xs">Capacidades</p>
-                  <div className="flex flex-wrap gap-1">
-                    {resumen.capacidades.map((c) => (
-                      <span key={c} className="text-[10px] px-1.5 py-0.5 rounded-full bg-[#f0f9f4] text-[#1e7e45]">{c}</span>
                     ))}
                   </div>
                 </div>

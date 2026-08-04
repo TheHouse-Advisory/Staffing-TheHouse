@@ -205,6 +205,11 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
             {/* Fila única: nombre+cliente · fecha */}
             <div className="flex items-baseline justify-between gap-2">
               <div className="min-w-0 flex items-baseline gap-1.5">
+                {!ocultarCarga && (
+                  <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0" style={pctBadgeStyle(a.pct)}>
+                    {a.pct}%
+                  </span>
+                )}
                 <span className="text-[11px] font-semibold text-slate-800 truncate leading-tight">{a.engagementNombre}</span>
                 {a.engagementCliente && <span className="text-[9px] text-gray-400 truncate">{a.engagementCliente}</span>}
               </div>

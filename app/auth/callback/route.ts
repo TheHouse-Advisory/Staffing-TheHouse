@@ -26,7 +26,8 @@ function rutaInterna(next: string | null): string {
   if (next && next.startsWith("/") && !next.startsWith("//")) {
     return next;
   }
-  return "/tablero";
+  // "/" deja que app/page.tsx decida el destino según el rol.
+  return "/";
 }
 
 export async function GET(request: NextRequest) {
