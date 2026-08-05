@@ -322,6 +322,13 @@ interface AusRow {
   fechaInicio: string; fechaFin: string; numDias: number;
 }
 
+/** Atajo de selección rápida de período en el modal de confirmación (Período Base / Extensión N) */
+interface PeriodoChip {
+  label: string;
+  fechaInicio: string;
+  fechaFin: string;
+}
+
 interface Props {
   reqId: string;
   engagementId: string;
@@ -354,6 +361,8 @@ export function PanelFitAsignacion({
   const [pendingConfirm, setPendingConfirm] = useState<{
     persona: PersonaFit; fechaInicio: string; fechaFin: string;
   } | null>(null);
+  // Chips de atajo (Período Base / Extensión N) para el modal de confirmación
+  const [periodos, setPeriodos] = useState<PeriodoChip[]>([]);
 
   // Popup de perfil
   const [perfilAbierto, setPerfilAbierto] = useState<PersonaFit | null>(null);
@@ -454,7 +463,7 @@ export function PanelFitAsignacion({
       const sb = createAnyClient();
       const hoy = today();
 
-      const [{ data: reqData }, { data: asigData }, { data: dcData }] = await Promise.all([
+      const [{ data: reqData }, { data: asigData }, { data: dcData }, { data: engData }, { data: extData }] = await Promise.all([
         sb.from("requerimiento_engagement")
           .select("id, engagement_id, cargo_requerido, pct_dedicacion, fecha_inicio, fecha_fin, fase_nombre")
           .eq("id", reqId)
@@ -466,9 +475,28 @@ export function PanelFitAsignacion({
         (sb as any).from("dia_critico")
           .select("fecha")
           .eq("engagement_id", engagementId),
+        sb.from("engagement").select("fecha_inicio, fecha_fin_estimada, fecha_fin_real").eq("id", engagementId).single(),
+        (sb as any).from("engagement_extension").select("id, fecha_inicio, fecha_fin").eq("engagement_id", engagementId).order("fecha_inicio"),
       ]);
 
       if (!reqData) { setLoading(false); return; }
+
+      // Chips de atajo: solo si el engagement tiene extensiones registradas
+      if (extData && extData.length > 0) {
+        const eng = engData as { fecha_inicio: string; fecha_fin_estimada: string | null; fecha_fin_real: string | null } | null;
+        setPeriodos([
+          {
+            label: "Período Base",
+            fechaInicio: eng?.fecha_inicio ?? reqData.fecha_inicio,
+            fechaFin: eng?.fecha_fin_estimada ?? eng?.fecha_fin_real ?? reqData.fecha_fin,
+          },
+          ...(extData as { fecha_inicio: string; fecha_fin: string }[]).map((e, i) => ({
+            label: `Extensión ${i + 1}`,
+            fechaInicio: e.fecha_inicio,
+            fechaFin: e.fecha_fin,
+          })),
+        ]);
+      }
 
       const reqEstado: ReqConEstado = {
         id: reqData.id,
@@ -546,6 +574,11 @@ export function PanelFitAsignacion({
     });
   }
 
+  /** Aplica un chip de atajo (Período Base / Extensión N) a las fechas pendientes de confirmar */
+  function aplicarPeriodo(p: PeriodoChip) {
+    setPendingConfirm((prev) => prev ? { ...prev, fechaInicio: p.fechaInicio, fechaFin: p.fechaFin } : prev);
+  }
+
   // Ejecuta la inserción real tras confirmar fechas en el modal
   async function confirmAsignar() {
     if (!req || !pendingConfirm) return;
@@ -612,6 +645,20 @@ export function PanelFitAsignacion({
               <p className="text-xs text-gray-400">{engagementNombre} · {engagementCliente}</p>
             </div>
             <div className="flex flex-col gap-2">
+              {periodos.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  {periodos.map((p) => (
+                    <button
+                      key={p.label}
+                      type="button"
+                      onClick={() => aplicarPeriodo(p)}
+                      className="text-[10px] font-medium px-2 py-1 rounded-full border border-[#c7d9f4] bg-[#f8fbff] text-[#2563eb] hover:bg-[#eaf2ff] transition-colors"
+                    >
+                      {p.label}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div className="flex flex-col gap-0.5">
                 <label className="text-[11px] text-gray-400 font-medium">Fecha inicio</label>
                 <input

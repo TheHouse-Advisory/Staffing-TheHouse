@@ -454,6 +454,49 @@ export async function fetchAsignacionesEngagement(
   return { data: (data ?? []) as AsignacionEngagementRow[], error: null };
 }
 
+/**
+ * Crea un alargue (engagement_extension) y las asignaciones del equipo para ese
+ * período, enlazadas vía extension_id. Reemplaza la lógica antes inline en
+ * ExtenderProyecto.tsx (guardar()) para centralizarla aquí.
+ */
+export async function crearExtensionEngagement(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  params: {
+    engagementId: string;
+    fechaInicio: string;
+    fechaFin: string;
+    personas: { personaId: string; cargo: string; pct: number; requerimientoId: string | null }[];
+  }
+): Promise<{ error: string | null }> {
+  const { data: ext, error: extErr } = await sb
+    .from("engagement_extension")
+    .insert({ engagement_id: params.engagementId, fecha_inicio: params.fechaInicio, fecha_fin: params.fechaFin })
+    .select("id")
+    .single();
+  if (extErr) return { error: extErr.message };
+
+  if (params.personas.length > 0) {
+    const { error: asigErr } = await sb.from("asignacion").insert(
+      params.personas.map((p) => ({
+        engagement_id: params.engagementId,
+        persona_id: p.personaId,
+        requerimiento_id: p.requerimientoId,
+        extension_id: ext.id,
+        cargo_al_momento: p.cargo,
+        pct_dedicacion: p.pct,
+        fecha_inicio: params.fechaInicio,
+        fecha_fin: params.fechaFin,
+        estado: "activa",
+        estado_staffing: "CONFIRMADO",
+      }))
+    );
+    if (asigErr) return { error: asigErr.message };
+  }
+
+  return { error: null };
+}
+
 // ─────────────────────────────────────────────────────────────────
 //  Equipo consolidado del detalle de engagement: agrupación por cargo
 //  + timeline por persona (tramos activos intercalados con ausencias)

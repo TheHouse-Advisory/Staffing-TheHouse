@@ -260,6 +260,7 @@ export interface Asignacion {
   persona_id: string;
   engagement_id: string;
   requerimiento_id: string | null;
+  extension_id: string | null;        // FK a engagement_extension, si la asignación nació de un alargue
   cargo_al_momento: string;           // NOT NULL en schema
   pct_dedicacion: number;
   fecha_inicio: string;

@@ -13,7 +13,7 @@ import { FieldWrapper, Input, Select, Textarea } from "@/components/ui/FormField
 import { MultiSelect } from "@/components/ui/MultiSelect";
 import { CARGOS_OPTIONS } from "@/lib/constants";
 import { fLocal } from "@/lib/utils";
-import { fetchAsignacionesEngagement, fetchAusenciasPersonas, construirEventosTimelineForm } from "@/lib/queries/engagements";
+import { fetchAsignacionesEngagement, fetchAusenciasPersonas, construirEventosTimelineForm, crearExtensionEngagement } from "@/lib/queries/engagements";
 
 // Normaliza cargo_requerido de la BD al value exacto de CARGOS_OPTIONS.
 // Reqs creados via drag-drop guardan cargos individuales ("Director de Proyectos")
@@ -118,6 +118,12 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   const [tematicasOpts, setTematicasOpts] = useState<{ value: string; label: string }[]>([]);
 
   const [extOpen, setExtOpen] = useState(false);
+  // Switch rápido de extensión (bajo Descripción): alternativa simple a "Extender Proyecto"
+  const [mostrarExtension, setMostrarExtension] = useState(false);
+  const [extFechaInicio, setExtFechaInicio] = useState("");
+  const [extFechaFin, setExtFechaFin] = useState("");
+  // id de la extensión ya guardada en BD (si existe) — determina update vs insert al guardar
+  const [extId, setExtId] = useState<string | null>(null);
   const [nuevaIndustriaOpen, setNuevaIndustriaOpen] = useState(false);
   const [nuevaIndustriaNombre, setNuevaIndustriaNombre] = useState("");
   const [nuevaIndustriaLoading, setNuevaIndustriaLoading] = useState(false);
@@ -161,6 +167,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       setForm({ ...EMPTY_ENG }); setReqs([]); setErrors({}); setServerError(null);
       setAsignacionesAEliminar([]); setAusenciasPorPersona(new Map());
       setExtOpen(false); setActividades([]); setActividadOpen(false); setNuevaActividad({ ...EMPTY_ACTIVIDAD }); setEditingActividadIdx(null);
+      setMostrarExtension(false); setExtFechaInicio(""); setExtFechaFin(""); setExtId(null);
       return;
     }
     async function load() {
@@ -175,12 +182,24 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       setTematicasOpts((temData.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
 
       if (engagement) {
-        const [{ data: reqData }, { data: ecData }, { data: etData }, asigResult] = await Promise.all([
+        const [{ data: reqData }, { data: ecData }, { data: etData }, asigResult, { data: extRows }] = await Promise.all([
           supabase.from("requerimiento_engagement").select("*").eq("engagement_id", engagement.id).order("fase_nombre"),
           (supabase as any).from("engagement_capacidad").select("capacidad_id").eq("engagement_id", engagement.id),
           (supabase as any).from("engagement_tematica").select("tematica_id").eq("engagement_id", engagement.id),
           fetchAsignacionesEngagement(supabase, engagement.id),
+          (supabase as any).from("engagement_extension")
+            .select("id, fecha_inicio, fecha_fin")
+            .eq("engagement_id", engagement.id)
+            .order("created_at", { ascending: false })
+            .limit(1),
         ]);
+
+        // Hidrata el switch de extensión rápida con el registro más reciente (si existe)
+        const ext = ((extRows ?? []) as { id: string; fecha_inicio: string; fecha_fin: string }[])[0];
+        setMostrarExtension(!!ext);
+        setExtId(ext?.id ?? null);
+        setExtFechaInicio(ext?.fecha_inicio ?? "");
+        setExtFechaFin(ext?.fecha_fin ?? "");
 
         // TODAS las asignaciones activas del engagement (con o sin requerimiento vinculado)
         const asigRows = asigResult.data;
@@ -825,6 +844,28 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       }
     }
 
+    // Switch de extensión rápida: update si ya existía, insert si es nueva, delete si se apagó
+    if (mostrarExtension && extFechaInicio && extFechaFin) {
+      if (extId) {
+        const { error: extErr } = await supabase
+          .from("engagement_extension")
+          .update({ fecha_inicio: extFechaInicio, fecha_fin: extFechaFin })
+          .eq("id", extId);
+        if (extErr) { setServerError(`Error al actualizar extensión: ${extErr.message}`); setLoading(false); return; }
+      } else {
+        const { error: extErr } = await crearExtensionEngagement(supabase, {
+          engagementId: engId,
+          fechaInicio: extFechaInicio,
+          fechaFin: extFechaFin,
+          personas: [],
+        });
+        if (extErr) { setServerError(`Error al crear extensión: ${extErr}`); setLoading(false); return; }
+      }
+    } else if (!mostrarExtension && extId) {
+      const { error: extErr } = await supabase.from("engagement_extension").delete().eq("id", extId);
+      if (extErr) { setServerError(`Error al eliminar extensión: ${extErr.message}`); setLoading(false); return; }
+    }
+
     setLoading(false);
     // Invalida caché del router de Next.js (evita datos stale tras guardar requerimientos)
     router.refresh();
@@ -1033,6 +1074,51 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
         <FieldWrapper label="Descripción">
           <Textarea value={form.descripcion} onChange={setField("descripcion")} placeholder="Contexto del engagement..." />
         </FieldWrapper>
+
+        {/* Switch rápido de extensión: alternativa simple a "Extender Proyecto" (sin equipo) */}
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-semibold text-[#888] uppercase tracking-widest">¿Quieres extender el proyecto?</span>
+          <button
+            type="button"
+            role="switch"
+            aria-checked={mostrarExtension}
+            onClick={() => {
+              const next = !mostrarExtension;
+              setMostrarExtension(next);
+              if (next && !extFechaInicio) {
+                const base = fechaFinEfectiva || form.fecha_inicio;
+                const inicio = base ? shiftDate(base, 1) : "";
+                setExtFechaInicio(inicio);
+                setExtFechaFin(inicio);
+              }
+            }}
+            className={`relative w-9 h-5 rounded-full transition-colors flex-shrink-0 ${mostrarExtension ? "bg-[#2563eb]" : "bg-[#d0d0d0]"}`}
+          >
+            <span className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${mostrarExtension ? "translate-x-4" : ""}`} />
+          </button>
+        </div>
+
+        {mostrarExtension && (
+          <div className="border border-[#c7d9f4] bg-[#f8fbff] rounded-xl p-3 space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <FieldWrapper label="Inicio del alargue">
+                <Input
+                  type="date"
+                  value={extFechaInicio}
+                  onChange={(e) => setExtFechaInicio(e.target.value)}
+                />
+              </FieldWrapper>
+              <FieldWrapper label="Fin del alargue">
+                <Input
+                  type="date"
+                  value={extFechaFin}
+                  onChange={(e) => setExtFechaFin(e.target.value)}
+                  min={extFechaInicio || undefined}
+                />
+              </FieldWrapper>
+            </div>
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-4">
           {/* ── Temáticas ── */}
