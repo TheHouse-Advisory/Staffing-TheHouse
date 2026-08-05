@@ -3204,6 +3204,27 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               Staffear <span className="font-semibold text-slate-700">{pendingDrop.nombre} {pendingDrop.apellido}</span> en <span className="font-semibold text-slate-700">{pendingDrop.eng.nombre}</span>
             </p>
             <div className="space-y-3 mb-5">
+              {pendingDrop.eng.extensiones.length > 0 && (
+                <div className="flex flex-wrap gap-1.5">
+                  <button
+                    type="button"
+                    onClick={() => setPendingDropFechas({ inicio: pendingDrop.eng.fecha_inicio, fin: pendingDrop.eng.fecha_fin ?? pendingDrop.eng.fecha_inicio })}
+                    className="text-[10px] font-medium px-2 py-1 rounded-full border border-[#c7d9f4] bg-[#f8fbff] text-[#2563eb] hover:bg-[#eaf2ff] transition-colors"
+                  >
+                    Período Base
+                  </button>
+                  {pendingDrop.eng.extensiones.map((ex, i) => (
+                    <button
+                      key={ex.id}
+                      type="button"
+                      onClick={() => setPendingDropFechas({ inicio: ex.fecha_inicio, fin: ex.fecha_fin })}
+                      className="text-[10px] font-medium px-2 py-1 rounded-full border border-[#c7d9f4] bg-[#f8fbff] text-[#2563eb] hover:bg-[#eaf2ff] transition-colors"
+                    >
+                      Extensión {i + 1}
+                    </button>
+                  ))}
+                </div>
+              )}
               <div>
                 <label className="block text-[11px] font-medium text-slate-500 mb-1">Fecha Inicio</label>
                 <input
