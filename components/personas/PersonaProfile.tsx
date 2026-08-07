@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Pencil, Trash2, ChevronDown } from "lucide-react";
+import { Pencil, ChevronDown } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { format, intervalToDuration } from "date-fns";
 import { es } from "date-fns/locale";
@@ -10,7 +10,7 @@ import { getIniciales } from "@/lib/utils/iniciales";
 import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import { type ExperienciaDinamica, type EngagementExperienciaRow } from "@/lib/queries/personas";
 import { sincronizarExperienciaPersona } from "@/lib/queries/engagements";
-import { ProyectosPersonaDetalle } from "./ProyectosPersonaDetalle";
+import { HistorialProyectosAccordion } from "./ProyectosPersonaDetalle";
 import { Button } from "@/components/ui/Button";
 import { Modal } from "@/components/ui/Modal";
 import { PersonaForm } from "./PersonaForm";
@@ -32,15 +32,6 @@ interface AsignacionActiva {
   cargo_al_momento: string;
   engagement_id: string;
   engagement_nombre: string;
-}
-
-interface HistorialItem {
-  engagement_id: string;
-  nombre: string;
-  cliente: string;
-  dias: number;
-  fechaRef: string; // para ordenamiento desc
-  activo: boolean;
 }
 
 // ── Desarrollo de Carrera ─────────────────────────────────────
@@ -134,8 +125,6 @@ export function PersonaProfile({ id }: Props) {
   const [showMatriz, setShowMatriz] = useState(false);
   const [talentDraft, setTalentDraft] = useState<{ p: number | null; d: number | null }>({ p: null, d: null });
   const [ausenciasDetalle, setAusenciasDetalle] = useState<DetalleAusenciasPersona | null>(null);
-  const [historial,        setHistorial]        = useState<HistorialItem[]>([]);
-  const [deletingEngId,    setDeletingEngId]    = useState<string | null>(null);
   const [detalleEngId,     setDetalleEngId]     = useState<string | null>(null);
   const [historialCargosDB, setHistorialCargosDB] = useState<CargoDBRow[]>([]);
 
@@ -167,7 +156,7 @@ export function PersonaProfile({ id }: Props) {
   const load = async () => {
     const supabase = createAnyClient();
 
-    const [pRes, asigRes, mentoreRes, histRes, cargosRes] = await Promise.all([
+    const [pRes, asigRes, mentoreRes, cargosRes] = await Promise.all([
       supabase.from("persona").select("*").eq("id", id).single(),
 
       supabase
@@ -185,16 +174,6 @@ export function PersonaProfile({ id }: Props) {
         .eq("mentor_id", id)
         .eq("activo", true)
         .order("apellido"),
-
-      // Historial: solo asignaciones YA FINALIZADAS (fecha_fin < hoy)
-      supabase
-        .from("asignacion")
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .select("id, fecha_inicio, fecha_fin, engagement:engagement_id(id, nombre, cliente)" as any)
-        .eq("persona_id", id)
-        .not("fecha_fin", "is", null)
-        .lt("fecha_fin", new Date().toISOString().slice(0, 10))
-        .order("fecha_inicio", { ascending: false }),
 
       // Historial de cargos (Desarrollo de Carrera)
       supabase
@@ -244,33 +223,6 @@ export function PersonaProfile({ id }: Props) {
     setAusenciasDetalle(ausencias);
     setExperiencia(experienciaData);
 
-    // ── Procesa historial: agrupa por engagement y suma días ──
-    const hoy = new Date();
-    const histMap = new Map<string, HistorialItem>();
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    (histRes.data ?? []).forEach((r: any) => {
-      const engId  = r.engagement?.id ?? "";
-      const ini    = new Date((r.fecha_inicio as string) + "T00:00:00");
-      const fin    = r.fecha_fin ? new Date((r.fecha_fin as string) + "T00:00:00") : hoy;
-      const dias   = Math.max(0, Math.floor((fin.getTime() - ini.getTime()) / 86_400_000));
-      const prev   = histMap.get(engId);
-      if (prev) {
-        prev.dias += dias;
-        if ((r.fecha_inicio as string) > prev.fechaRef) prev.fechaRef = r.fecha_inicio as string;
-        if (!r.fecha_fin) prev.activo = true;
-      } else {
-        histMap.set(engId, {
-          engagement_id: engId,
-          nombre:        r.engagement?.nombre  ?? "—",
-          cliente:       r.engagement?.cliente ?? "",
-          dias,
-          fechaRef:      r.fecha_inicio as string,
-          activo:        !r.fecha_fin,
-        });
-      }
-    });
-    setHistorial([...histMap.values()].sort((a, b) => b.fechaRef.localeCompare(a.fechaRef)));
-
     setHistorialCargosDB(
       ((cargosRes.data ?? []) as { cargo: string; fecha_inicio: string; fecha_fin: string | null; es_apalancador: boolean | null; es_referente: boolean | null }[]).map(
         (r) => ({
@@ -299,14 +251,6 @@ export function PersonaProfile({ id }: Props) {
     })();
   }, [id]);
 
-  async function handleDeleteHistorial(engId: string) {
-    // Optimistic: quita del estado antes del fetch
-    setHistorial((prev) => prev.filter((h) => h.engagement_id !== engId));
-    setDeletingEngId(null);
-    const supabase = createAnyClient();
-    await supabase.from("asignacion").delete().eq("persona_id", id).eq("engagement_id", engId);
-  }
-
   if (loading) return (
     <div className="p-6 animate-pulse">
       <div className="flex items-center gap-4 mb-6">
@@ -334,6 +278,7 @@ export function PersonaProfile({ id }: Props) {
   const { bg: bgOcp, text: textOcp } = colorOcupacion(pctTotal);
   const cargoColor = CARGO_COLORS[persona.cargo_actual ?? ""] ?? CARGO_COLOR_DEFAULT;
   const talentBoxName = getTalentBoxName(persona.talento_potencial, persona.talento_desempeno);
+
 
   return (
     <>
@@ -543,118 +488,21 @@ export function PersonaProfile({ id }: Props) {
           )}
         </div>}
 
-        {/* ── Proyectos activos y futuros ───────────────────── */}
-        <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold">Proyectos activos y futuros</h3>
-            <div className="flex items-center gap-2">
-              {pctTotal > 0 && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (() => {
-                const { bg, text } = colorOcupacion(pctTotal);
-                return (
-                  <span
-                    className="text-xs font-semibold px-2.5 py-1 rounded-full"
-                    style={{ background: bg, color: text }}
-                  >
-                    {pctTotal}% ocupado
-                  </span>
-                );
-              })()}
-              <BotonColapsarSeccion colapsada={seccionesColapsadas.has("proyectos-activos")} onClick={() => toggleSeccion("proyectos-activos")} />
-            </div>
-          </div>
-          {!seccionesColapsadas.has("proyectos-activos") && (
-            <ProyectosPersonaDetalle personaId={id} ocultarCarga={rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo"} />
-          )}
-        </div>
-
-        {/* ── Historial de proyectos ──────────────────────── */}
+        {/* ── Historial de proyectos: acordeón por año ──────── */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-4">
             <h3 className="font-semibold">Historial de proyectos</h3>
-            <div className="flex items-center gap-2">
-              {historial.length > 0 && (
-                <span className="text-xs text-[#888]">{historial.length} {historial.length === 1 ? "engagement" : "engagements"}</span>
-              )}
-              <BotonColapsarSeccion colapsada={seccionesColapsadas.has("historial-proyectos")} onClick={() => toggleSeccion("historial-proyectos")} />
-            </div>
+            <BotonColapsarSeccion colapsada={seccionesColapsadas.has("historial-proyectos")} onClick={() => toggleSeccion("historial-proyectos")} />
           </div>
 
-          {!seccionesColapsadas.has("historial-proyectos") && (historial.length === 0 ? (
-            <p className="text-sm text-[#ccc] italic">Sin proyectos registrados.</p>
-          ) : (
-            <div className="divide-y divide-[#f0f0f0]">
-              {historial.map((h) => (
-                <div key={h.engagement_id} className="flex items-center justify-between py-3 first:pt-0 last:pb-0 gap-3 group">
-                  <div className="min-w-0 flex-1">
-                    {/* Nombre clickeable → modal de detalle */}
-                    <button
-                      onClick={() => setDetalleEngId(h.engagement_id)}
-                      className="text-sm font-medium text-[#1a1a2e] hover:underline hover:text-[#4a90e2] truncate text-left w-full transition-colors"
-                    >
-                      {h.nombre}
-                    </button>
-                    {h.cliente && (
-                      <p className="text-xs text-[#888] mt-0.5">{h.cliente}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 flex-shrink-0">
-                    {h.activo && (
-                      <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#dcf5e7] text-[#1e7e45]">
-                        Activo
-                      </span>
-                    )}
-                    {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador") && (
-                    <span className="text-xs font-medium px-2.5 py-1 rounded bg-[#eff6ff] text-[#1d4ed8]">
-                      {h.dias} {h.dias === 1 ? "día" : "días"}
-                    </span>
-                    )}
-                    {/* Botón eliminar — solo roles con permiso */}
-                    {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
-                      <button
-                        onClick={() => setDeletingEngId(h.engagement_id)}
-                        className="opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-50 text-slate-300 hover:text-red-500"
-                        title="Eliminar del historial"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          ))}
-
-          {/* ── Pop-up de confirmación de borrado ── */}
-          {deletingEngId && (() => {
-            const h = historial.find(x => x.engagement_id === deletingEngId)!;
-            return (
-              <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50">
-                <div className="bg-white rounded-xl shadow-2xl border border-gray-100 p-6 w-full max-w-sm mx-4">
-                  <p className="text-[14px] font-semibold text-[#1a1a2e] mb-2">¿Eliminar proyecto del historial?</p>
-                  <p className="text-[12px] text-amber-600 font-medium leading-relaxed mb-3">
-                    ⚠️ Atención: Esta acción eliminará permanentemente el registro histórico de staffing. ¿Deseas continuar?
-                  </p>
-                  <p className="text-[12px] text-slate-500 leading-relaxed mb-5">
-                    Se eliminarán todas las asignaciones de <span className="font-semibold text-slate-700">{persona.nombre} {persona.apellido}</span> en <span className="font-semibold text-slate-700">{h?.nombre}</span>. Esta operación no se puede deshacer.
-                  </p>
-                  <div className="flex gap-2 justify-end">
-                    <button
-                      onClick={() => setDeletingEngId(null)}
-                      className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      onClick={() => handleDeleteHistorial(deletingEngId)}
-                      className="px-4 py-2 text-[12px] font-bold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                </div>
-              </div>
-            );
-          })()}
+          {!seccionesColapsadas.has("historial-proyectos") && (
+            <HistorialProyectosAccordion
+              personaId={id}
+              personaNombreCompleto={`${persona.nombre} ${persona.apellido}`}
+              rolActual={rolActual}
+              onVerDetalle={setDetalleEngId}
+            />
+          )}
         </div>
 
         {/* ── Historial de Ausencias ───────────────────────── */}

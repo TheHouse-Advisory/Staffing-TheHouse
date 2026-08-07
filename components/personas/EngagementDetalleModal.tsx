@@ -28,6 +28,25 @@ interface EngagementDetalle {
   capacidades: string[];
   tematicas: string[];
   asignaciones: { fecha_inicio: string; fecha_fin: string | null; cargo: string | null; pct: number }[];
+  equipo: EquipoItem[];
+}
+
+interface EquipoItem {
+  personaId: string;
+  nombre: string;
+  cargo: string | null;
+  fecha_inicio: string;
+  fecha_fin: string | null;
+}
+
+/** Agrupa las participaciones del equipo por persona, preservando cada período con su cargo */
+function agruparEquipoPorPersona(equipo: EquipoItem[]) {
+  const map = new Map<string, { personaId: string; nombre: string; periodos: EquipoItem[] }>();
+  equipo.forEach((e) => {
+    if (!map.has(e.personaId)) map.set(e.personaId, { personaId: e.personaId, nombre: e.nombre, periodos: [] });
+    map.get(e.personaId)!.periodos.push(e);
+  });
+  return [...map.values()].sort((a, b) => a.nombre.localeCompare(b.nombre));
 }
 
 function fmtDate(d: string | null | undefined): string {
@@ -44,7 +63,7 @@ export function EngagementDetalleModal({ engagementId, personaId, onClose }: Pro
     let cancelled = false;
     async function load() {
       const sb = createAnyClient();
-      const [engRes, capRes, temRes, asigRes] = await Promise.all([
+      const [engRes, capRes, temRes, asigRes, equipoRes] = await Promise.all([
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (sb as any).from("engagement")
           .select("id, codigo, nombre, cliente, tipo, estado, fecha_inicio, fecha_fin_estimada, fecha_fin_real, descripcion, color, industria:industria_id(nombre)")
@@ -62,6 +81,12 @@ export function EngagementDetalleModal({ engagementId, personaId, onClose }: Pro
           .select("fecha_inicio, fecha_fin, cargo_al_momento, pct_dedicacion")
           .eq("engagement_id", engagementId)
           .eq("persona_id", personaId)
+          .order("fecha_inicio"),
+        // Equipo: todas las personas que participaron en este engagement, con su cargo a esa fecha
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (sb as any).from("asignacion")
+          .select("persona_id, fecha_inicio, fecha_fin, cargo_al_momento, persona:persona_id(nombre, apellido)")
+          .eq("engagement_id", engagementId)
           .order("fecha_inicio"),
       ]);
       if (cancelled) return;
@@ -88,6 +113,13 @@ export function EngagementDetalleModal({ engagementId, personaId, onClose }: Pro
           cargo:        r.cargo_al_momento ?? null,
           pct:          Number(r.pct_dedicacion),
         })),
+        equipo: ((equipoRes.data ?? []) as any[]).map((r: any) => ({
+          personaId:    r.persona_id,
+          nombre:       r.persona ? `${r.persona.nombre} ${r.persona.apellido}` : "—",
+          cargo:        r.cargo_al_momento ?? null,
+          fecha_inicio: r.fecha_inicio,
+          fecha_fin:    r.fecha_fin ?? null,
+        })),
       });
       setLoading(false);
     }
@@ -106,6 +138,7 @@ export function EngagementDetalleModal({ engagementId, personaId, onClose }: Pro
 
   const accentColor = data?.color ?? "#4a90e2";
   const finLabel = data?.fecha_fin_real ?? data?.fecha_fin_estimada;
+  const equipoAgrupado = data ? agruparEquipoPorPersona(data.equipo) : [];
 
   return (
     <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50">
@@ -218,6 +251,30 @@ export function EngagementDetalleModal({ engagementId, personaId, onClose }: Pro
                 <div>
                   <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-1.5">Descripción</p>
                   <p className="text-[12px] text-slate-600 leading-relaxed">{data.descripcion}</p>
+                </div>
+              )}
+
+              {/* Equipo: personas que estuvieron en este engagement con su cargo a esa fecha */}
+              {equipoAgrupado.length > 0 && (
+                <div>
+                  <p className="text-[10px] font-semibold text-slate-400 uppercase tracking-widest mb-2">Equipo</p>
+                  <div className="space-y-1.5">
+                    {equipoAgrupado.map((persona) => (
+                      <div key={persona.personaId} className="bg-slate-50 rounded-lg px-3 py-2">
+                        <p className="text-[11px] font-semibold text-slate-700">{persona.nombre}</p>
+                        <div className="mt-1 space-y-0.5">
+                          {persona.periodos.map((p, i) => (
+                            <div key={i} className="flex items-center justify-between gap-2">
+                              <p className="text-[10px] text-slate-500 truncate">{p.cargo ?? "—"}</p>
+                              <p className="text-[10px] text-slate-400 flex-shrink-0 whitespace-nowrap">
+                                {fmtDate(p.fecha_inicio)} → {p.fecha_fin ? fmtDate(p.fecha_fin) : "actualidad"}
+                              </p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </>

@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { format, isWeekend } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronDown, Trash2 } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { expandirRango } from "@/lib/queries/ausencias";
+import { calculateBusinessDays } from "@/lib/utils/date-utils";
 
 // ── Días hábiles ──────────────────────────────────────────────
 function diasHabiles(desde: string, hasta: string): number {
@@ -464,6 +465,188 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Historial de proyectos: acordeón por año ────────────────────
+interface HistorialEngRow {
+  id: string;            // id de la asignación (key de fila)
+  engagementId: string;
+  nombre: string;
+  cliente: string;
+  cargo: string;
+  fechaInicio: string;
+  fechaFin: string;
+  diasHabiles: number;
+}
+
+interface HistorialAccordionProps {
+  personaId: string;
+  personaNombreCompleto: string;
+  rolActual: string | null;
+  onVerDetalle: (engagementId: string) => void;
+}
+
+/** Roles sin visibilidad de días/carga (mismos que en ProyectosPersonaDetalle) */
+function rolSinDias(rol: string | null) {
+  return rol === "GyD" || rol === "AySr" || rol === "planificador";
+}
+function rolSinBorrar(rol: string | null) {
+  return rolSinDias(rol) || rol === "Desarrollo";
+}
+
+export function HistorialProyectosAccordion({ personaId, personaNombreCompleto, rolActual, onVerDetalle }: HistorialAccordionProps) {
+  const [rows,       setRows]       = useState<HistorialEngRow[]>([]);
+  const [loading,    setLoading]    = useState(true);
+  const [openYear,   setOpenYear]   = useState<string | null>(null);
+  const [deletingEng, setDeletingEng] = useState<{ engagementId: string; nombre: string } | null>(null);
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      const sb = createAnyClient();
+      const hoy = new Date().toISOString().slice(0, 10);
+      // Solo asignaciones YA FINALIZADAS (fecha_fin < hoy) — igual criterio que antes
+      const { data } = await (sb as any)
+        .from("asignacion")
+        .select("id, fecha_inicio, fecha_fin, cargo_al_momento, engagement:engagement_id(id, nombre, cliente)")
+        .eq("persona_id", personaId)
+        .not("fecha_fin", "is", null)
+        .lt("fecha_fin", hoy)
+        .order("fecha_inicio", { ascending: false });
+
+      setRows(
+        ((data ?? []) as any[]).map((r) => ({
+          id:           r.id,
+          engagementId: r.engagement?.id ?? "",
+          nombre:       r.engagement?.nombre  ?? "—",
+          cliente:      r.engagement?.cliente ?? "",
+          cargo:        r.cargo_al_momento ?? "",
+          fechaInicio:  r.fecha_inicio,
+          fechaFin:     r.fecha_fin,
+          diasHabiles:  calculateBusinessDays(r.fecha_inicio, r.fecha_fin),
+        }))
+      );
+      setLoading(false);
+    }
+    load();
+  }, [personaId]);
+
+  // Agrupa por año (según fecha_inicio) → años desc; dentro de cada año, cronológico Ene→Dic
+  const porAnio = new Map<string, HistorialEngRow[]>();
+  rows.forEach((r) => {
+    const anio = r.fechaInicio.slice(0, 4);
+    (porAnio.get(anio) ?? porAnio.set(anio, []).get(anio)!).push(r);
+  });
+  const anios = [...porAnio.keys()].sort((a, b) => b.localeCompare(a));
+  anios.forEach((a) => porAnio.get(a)!.sort((x, y) => x.fechaInicio.localeCompare(y.fechaInicio)));
+
+  async function confirmarEliminar() {
+    if (!deletingEng) return;
+    const { engagementId } = deletingEng;
+    setRows((prev) => prev.filter((r) => r.engagementId !== engagementId)); // optimista
+    setDeletingEng(null);
+    const sb = createAnyClient();
+    await sb.from("asignacion").delete().eq("persona_id", personaId).eq("engagement_id", engagementId);
+  }
+
+  if (loading) return <p className="text-xs text-gray-300">Cargando historial...</p>;
+  if (anios.length === 0) return <p className="text-sm text-[#ccc] italic">Sin proyectos registrados.</p>;
+
+  return (
+    <div>
+      <div className="divide-y divide-[#f0f0f0]">
+        {anios.map((anio) => {
+          const items = porAnio.get(anio)!;
+          const abierto = openYear === anio;
+          return (
+            <div key={anio}>
+              <button
+                onClick={() => setOpenYear(abierto ? null : anio)}
+                className="w-full flex items-center justify-between py-3 first:pt-0 text-left"
+              >
+                <span className="text-sm font-semibold text-[#1a1a2e]">{anio}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs text-[#888]">{items.length} {items.length === 1 ? "proyecto" : "proyectos"}</span>
+                  <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${abierto ? "rotate-180" : ""}`} />
+                </div>
+              </button>
+
+              {abierto && (
+                <div className="pb-3 space-y-2">
+                  {items.map((h) => (
+                    <div key={h.id} className="flex items-center justify-between gap-4 p-3 bg-gray-50 border border-gray-100 rounded-lg group">
+                      {/* Columna izquierda: info del engagement */}
+                      <div className="flex-1 min-w-0">
+                        <button
+                          onClick={() => onVerDetalle(h.engagementId)}
+                          className="block w-full font-medium text-gray-900 truncate text-left hover:underline hover:text-[#4a90e2] transition-colors"
+                        >
+                          {h.nombre}
+                        </button>
+                        {h.cargo && <p className="text-xs text-gray-500 mt-0.5">{h.cargo}</p>}
+                      </div>
+
+                      {/* Columna derecha: metadatos y acciones — shrink-0 evita que se solape */}
+                      <div className="flex items-center gap-3 shrink-0">
+                        <span className="text-xs text-gray-500 whitespace-nowrap">
+                          {format(new Date(h.fechaInicio + "T00:00:00"), "d MMM yyyy", { locale: es })}
+                          {" al "}
+                          {format(new Date(h.fechaFin + "T00:00:00"), "d MMM yyyy", { locale: es })}
+                        </span>
+                        {!rolSinDias(rolActual) && (
+                          <span className="px-2.5 py-1 text-xs font-semibold text-blue-600 bg-blue-50 rounded-md whitespace-nowrap">
+                            {h.diasHabiles} {h.diasHabiles === 1 ? "día hábil trabajado" : "días hábiles trabajados"}
+                          </span>
+                        )}
+                        {!rolSinBorrar(rolActual) && (
+                          <button
+                            onClick={() => setDeletingEng({ engagementId: h.engagementId, nombre: h.nombre })}
+                            className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity p-1 rounded hover:bg-red-50 text-slate-300 hover:text-red-500"
+                            title="Eliminar del historial"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── Pop-up de confirmación de borrado ── */}
+      {deletingEng && (
+        <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50">
+          <div className="bg-white rounded-xl shadow-2xl border border-gray-100 p-6 w-full max-w-sm mx-4">
+            <p className="text-[14px] font-semibold text-[#1a1a2e] mb-2">¿Eliminar proyecto del historial?</p>
+            <p className="text-[12px] text-amber-600 font-medium leading-relaxed mb-3">
+              ⚠️ Atención: Esta acción eliminará permanentemente el registro histórico de staffing. ¿Deseas continuar?
+            </p>
+            <p className="text-[12px] text-slate-500 leading-relaxed mb-5">
+              Se eliminarán todas las asignaciones de <span className="font-semibold text-slate-700">{personaNombreCompleto}</span> en <span className="font-semibold text-slate-700">{deletingEng.nombre}</span>. Esta operación no se puede deshacer.
+            </p>
+            <div className="flex gap-2 justify-end">
+              <button
+                onClick={() => setDeletingEng(null)}
+                className="px-4 py-2 text-[12px] font-medium text-slate-600 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmarEliminar}
+                className="px-4 py-2 text-[12px] font-bold text-white bg-red-500 hover:bg-red-600 rounded-lg transition-colors"
+              >
+                Eliminar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
