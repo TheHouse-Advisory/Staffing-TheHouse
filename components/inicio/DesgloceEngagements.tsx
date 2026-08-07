@@ -3238,10 +3238,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 <label className="block text-[11px] font-medium text-slate-500 mb-1">Fecha Fin</label>
                 <input
                   type="date"
+                  min={pendingDropFechas.inicio || undefined}
                   value={pendingDropFechas.fin}
                   onChange={(e) => setPendingDropFechas((f) => ({ ...f, fin: e.target.value }))}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
                 />
+                {pendingDropFechas.inicio && pendingDropFechas.fin && pendingDropFechas.fin < pendingDropFechas.inicio && (
+                  <p className="text-[10px] text-red-500 mt-1">La fecha fin no puede ser anterior a la fecha inicio.</p>
+                )}
               </div>
               <div>
                 <label className="block text-[11px] font-medium text-slate-500 mb-1">Porcentaje de Carga Asignada (%)</label>
@@ -3267,7 +3271,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               </button>
               <button
                 onClick={() => confirmDrop("PLAN")}
-                disabled={!pendingDropFechas.inicio || !pendingDropFechas.fin}
+                disabled={!pendingDropFechas.inicio || !pendingDropFechas.fin || pendingDropFechas.fin < pendingDropFechas.inicio}
                 className="px-4 py-2 text-[12px] font-bold text-white bg-[#1a1a2e] hover:bg-[#2d2d4e] rounded-lg transition-colors disabled:opacity-40"
               >
                 Confirmar asignación
