@@ -508,12 +508,14 @@ export function HistorialProyectosAccordion({ personaId, personaNombreCompleto, 
       const sb = createAnyClient();
       const hoy = new Date().toISOString().slice(0, 10);
       // Solo asignaciones YA FINALIZADAS (fecha_fin < hoy) — igual criterio que antes
+      // !inner + exclusión de "posibles_proyectos": no deben contarse como historial real
       const { data } = await (sb as any)
         .from("asignacion")
-        .select("id, fecha_inicio, fecha_fin, cargo_al_momento, engagement:engagement_id(id, nombre, cliente)")
+        .select("id, fecha_inicio, fecha_fin, cargo_al_momento, engagement:engagement_id!inner(id, nombre, cliente, tipo)")
         .eq("persona_id", personaId)
         .not("fecha_fin", "is", null)
         .lt("fecha_fin", hoy)
+        .neq("engagement.tipo", "posibles_proyectos")
         .order("fecha_inicio", { ascending: false });
 
       setRows(
