@@ -2,7 +2,7 @@
  * Queries para Engagements y cobertura.
  * Consume la vista cobertura_engagement del schema de Supabase.
  */
-import { startOfISOWeek, format } from "date-fns";
+import { startOfISOWeek, addDays, format } from "date-fns";
 import type { TypedSupabaseClient } from "@/lib/supabase/types";
 import type { Engagement, CoberturaEngagement, TipoEngagement } from "@/lib/types/database";
 import { calculateBusinessDays } from "@/lib/utils/date-utils";
@@ -184,6 +184,107 @@ export async function cambiarEstadoEngagement(
     .update({ estado: nuevoEstado } as never)
     .eq("id", id);
   return { error: error?.message ?? null };
+}
+
+/**
+ * Ajusta en cascada las asignaciones activas y los requerimientos del equipo a la misma
+ * fecha límite — evita que el equipo quede staffeado fuera del rango real del proyecto.
+ * `field` es el campo del ENGAGEMENT que cambió ("fecha_inicio" | "fecha_fin_real" | "fecha_fin_estimada");
+ * se traduce a la columna equivalente en asignacion/requerimiento_engagement ("fecha_inicio" | "fecha_fin").
+ */
+export async function sincronizarFechasEquipoEngagement(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  engagementId: string,
+  field: "fecha_inicio" | "fecha_fin_real" | "fecha_fin_estimada",
+  newDate: string
+): Promise<{ error: string | null }> {
+  const columna = field === "fecha_inicio" ? "fecha_inicio" : "fecha_fin";
+  const [{ error: asigErr }, { error: reqErr }] = await Promise.all([
+    supabase.from("asignacion").update({ [columna]: newDate }).eq("engagement_id", engagementId).eq("estado", "activa"),
+    supabase.from("requerimiento_engagement").update({ [columna]: newDate }).eq("engagement_id", engagementId),
+  ]);
+  return { error: asigErr?.message ?? reqErr?.message ?? null };
+}
+
+/**
+ * Mutación única para extender/redimensionar un engagement desde el tablero (drag/resize):
+ * 1. Persiste la nueva fecha en `engagement`.
+ * 2. Cascada a `asignacion` y `requerimiento_engagement` vía sincronizarFechasEquipoEngagement.
+ * El estado local (EngagementForm, DesgloceEngagements) se sincroniza después vía refresh()/load(),
+ * que vuelve a leer estas mismas tablas — no hay estado duplicado que reconciliar a mano.
+ */
+export async function redimensionarEngagementConEquipo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  engagementId: string,
+  field: "fecha_inicio" | "fecha_fin_real" | "fecha_fin_estimada",
+  newDate: string
+): Promise<{ error: string | null }> {
+  const { error: engErr } = await supabase.from("engagement").update({ [field]: newDate }).eq("id", engagementId);
+  if (engErr) return { error: engErr.message };
+  return sincronizarFechasEquipoEngagement(supabase, engagementId, field, newDate);
+}
+
+/**
+ * Desplaza (+/- N días) fecha_inicio y fecha_fin de todas las asignaciones activas y
+ * requerimientos de un engagement, preservando la duración y el desfase relativo de cada
+ * tramo — a diferencia de sincronizarFechasEquipoEngagement (que fija un mismo borde para
+ * todos), este desplazamiento es uniforme: cada fila se mueve por el mismo delta.
+ */
+export async function desplazarFechasEquipoEngagement(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  engagementId: string,
+  deltaDays: number
+): Promise<{ error: string | null }> {
+  if (!deltaDays) return { error: null };
+  const desplazar = (fecha: string) => format(addDays(new Date(fecha + "T00:00:00"), deltaDays), "yyyy-MM-dd");
+
+  const [{ data: asigs, error: asigFetchErr }, { data: reqs, error: reqFetchErr }] = await Promise.all([
+    supabase.from("asignacion").select("id, fecha_inicio, fecha_fin").eq("engagement_id", engagementId).eq("estado", "activa"),
+    supabase.from("requerimiento_engagement").select("id, fecha_inicio, fecha_fin").eq("engagement_id", engagementId),
+  ]);
+  if (asigFetchErr) return { error: asigFetchErr.message };
+  if (reqFetchErr) return { error: reqFetchErr.message };
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const results = await Promise.all([
+    ...((asigs ?? []) as any[]).map((a) =>
+      supabase.from("asignacion").update({
+        fecha_inicio: desplazar(a.fecha_inicio),
+        fecha_fin: a.fecha_fin ? desplazar(a.fecha_fin) : null,
+      }).eq("id", a.id)
+    ),
+    ...((reqs ?? []) as any[]).map((r) =>
+      supabase.from("requerimiento_engagement").update({
+        fecha_inicio: r.fecha_inicio ? desplazar(r.fecha_inicio) : null,
+        fecha_fin: r.fecha_fin ? desplazar(r.fecha_fin) : null,
+      }).eq("id", r.id)
+    ),
+  ]);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const primerError = results.find((r: any) => r.error)?.error;
+  return { error: primerError?.message ?? null };
+}
+
+/**
+ * Mutación única para mover (drag del cuerpo) un engagement en el tablero: conserva su
+ * duración pero desplaza todo el bloque en el tiempo. Persiste fecha_inicio/fin del
+ * engagement y desplaza en cascada al equipo (asignaciones + requerimientos) por el mismo delta.
+ */
+export async function moverEngagementConEquipo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  engagementId: string,
+  params: { nuevaFechaInicio: string; finField: "fecha_fin_real" | "fecha_fin_estimada"; nuevaFechaFin: string; deltaDays: number }
+): Promise<{ error: string | null }> {
+  const { error: engErr } = await supabase
+    .from("engagement")
+    .update({ fecha_inicio: params.nuevaFechaInicio, [params.finField]: params.nuevaFechaFin })
+    .eq("id", engagementId);
+  if (engErr) return { error: engErr.message };
+  return desplazarFechasEquipoEngagement(supabase, engagementId, params.deltaDays);
 }
 
 /**

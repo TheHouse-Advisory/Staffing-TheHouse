@@ -16,7 +16,8 @@ import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import type { Engagement } from "@/lib/types/database";
 import { COLOR_AUSENCIA } from "@/lib/queries/ausencias";
-import { cambiarEstadoEngagement, cambiarTipoEngagement, fetchUltimaActualizacionReal } from "@/lib/queries/engagements";
+import { cambiarEstadoEngagement, cambiarTipoEngagement, fetchUltimaActualizacionReal, redimensionarEngagementConEquipo, moverEngagementConEquipo } from "@/lib/queries/engagements";
+import { obtenerViernesSemanaHabil } from "@/lib/utils/date-utils";
 import { useCargosColapsados } from "@/components/providers/CargosColapsadosContext";
 import { VistaResumidaEngagements } from "./VistaResumidaEngagements";
 
@@ -256,7 +257,7 @@ type UndoEntry =
   | { type: "desasignar";  engId: string; label: string; asig: { engagement_id: string; requerimiento_id: string; persona_id: string; cargo_al_momento: string | null; pct_dedicacion: number | null; estado: string; estado_staffing: string; fecha_inicio: string; fecha_fin: string } }
   | { type: "resize";      engId: string; label: string; asignacionId: string; edge: "start" | "end"; prevDate: string }
   | { type: "resize_eng";  engId: string; label: string; field: string; prevDate: string }
-  | { type: "move_eng";    engId: string; label: string; prevInicio: string; prevFin: string; finField: string }
+  | { type: "move_eng";    engId: string; label: string; prevInicio: string; prevFin: string; finField: string; deltaDays: number }
   | { type: "color_semana"; engId: string; label: string; fecha: string; fecha_fin: string; prevEntry: { fecha: string; fecha_fin: string | null; intensidad: string } | null }
   | { type: "edit_reqs";   engId: string; label: string; engNombre: string; prevReqs: ReqData[]; prevPersonas: PersonaAsig[] };
 
@@ -510,15 +511,16 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         .update({ [last.edge === "start" ? "fecha_inicio" : "fecha_fin"]: last.prevDate })
         .eq("id", last.asignacionId);
     } else if (last.type === "resize_eng") {
-      // Restaurar fecha de barra del engagement
-      await (sb as any).from("engagement")
-        .update({ [last.field]: last.prevDate })
-        .eq("id", last.engId);
+      // Restaurar fecha de barra del engagement + revertir la cascada al equipo/requerimientos
+      await redimensionarEngagementConEquipo(sb, last.engId, last.field as any, last.prevDate);
     } else if (last.type === "move_eng") {
-      // Restaurar posición completa del engagement
-      await (sb as any).from("engagement")
-        .update({ fecha_inicio: last.prevInicio, [last.finField]: last.prevFin })
-        .eq("id", last.engId);
+      // Restaurar posición completa del engagement + revertir el desplazamiento del equipo
+      await moverEngagementConEquipo(sb, last.engId, {
+        nuevaFechaInicio: last.prevInicio,
+        finField: last.finField as any,
+        nuevaFechaFin: last.prevFin,
+        deltaDays: -last.deltaDays,
+      });
     } else if (last.type === "color_semana") {
       // Eliminar color actual y restaurar el previo (si existía)
       await sb.from("dia_critico").delete().eq("engagement_id", last.engId).eq("fecha", last.fecha);
@@ -1067,6 +1069,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       fechaFin = eng.fecha_fin ?? eng.fecha_inicio;
     }
 
+    // Propuesta Comercial ("Frente comercial"): el fin por defecto siempre es el viernes
+    // hábil que garantiza cubrir la semana completa (mín. 5 días hábiles) — sin importar
+    // si el requerimiento u engagement traían su propia fecha_fin (ej. 31-12 placeholder).
+    if (eng.tipo === "propuesta") {
+      fechaFin = format(obtenerViernesSemanaHabil(new Date(fechaInicio + "T00:00:00")), "yyyy-MM-dd");
+    }
+
     // Abre modal de confirmación — el insert real ocurre en confirmDrop
     setPendingDrop({ eng, personaId: data.personaId, nombre: data.nombre, apellido: data.apellido, cargo_actual: data.cargo_actual, fechaInicio, fechaFin, reqMatch, cargoRequerido });
     setPendingDropFechas({ inicio: fechaInicio, fin: fechaFin });
@@ -1089,6 +1098,14 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
     if (reqMatch) {
       reqId = reqMatch.id;
+      // Sincroniza el requerimiento reutilizado con las fechas confirmadas en el modal —
+      // EngagementForm muestra fecha_inicio/fecha_fin del requerimiento, no de la asignación,
+      // así que si no se actualiza queda descalzado (ej. Frente comercial con fin placeholder).
+      if (reqMatch.fecha_inicio !== fechaInicio || reqMatch.fecha_fin !== fechaFin) {
+        await (sb as any).from("requerimiento_engagement")
+          .update({ fecha_inicio: fechaInicio, fecha_fin: fechaFin })
+          .eq("id", reqId);
+      }
     } else {
       const { data: newReq, error: reqErr } = await (sb as any)
         .from("requerimiento_engagement")
@@ -1547,7 +1564,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
             setUndoStack(s => [...s.slice(-2), {
               type: "move_eng" as const,
               engId: eng.id, label: `Mover "${eng.nombre}"`,
-              prevInicio: eng.fecha_inicio, prevFin, finField,
+              prevInicio: eng.fecha_inicio, prevFin, finField, deltaDays,
             }]);
             // ── SIMULACIÓN: personas y reqs adoptan exactamente las fechas del engagement ──
             if (simulationMode) {
@@ -1560,9 +1577,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 }
               ));
             } else {
-              await (sb as any).from("engagement")
-                .update({ fecha_inicio: newInicio, [finField]: newFin })
-                .eq("id", eng.id);
+              // Persiste el engagement + desplaza en cascada al equipo/requerimientos por el mismo delta
+              await moverEngagementConEquipo(sb, eng.id, {
+                nuevaFechaInicio: newInicio,
+                finField,
+                nuevaFechaFin: newFin,
+                deltaDays,
+              });
               refresh(eng.id);
             }
             // ─────────────────────────────────────────────────────────────
@@ -1616,7 +1637,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           }));
           if (prevDate) pushUndo({ type: "resize_eng", engId: resizingEng.eng.id, label: `Cambio fechas "${resizingEng.eng.nombre}"`, field, prevDate });
         } else {
-          await (sb as any).from("engagement").update({ [field]: newDate }).eq("id", resizingEng.eng.id);
+          // Persiste el engagement + cascada al equipo/requerimientos en una sola mutación
+          await redimensionarEngagementConEquipo(sb, resizingEng.eng.id, field, newDate);
           if (prevDate) {
             setUndoStack(s => [...s.slice(-2), {
               type: "resize_eng" as const,
@@ -3230,7 +3252,18 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 <input
                   type="date"
                   value={pendingDropFechas.inicio}
-                  onChange={(e) => setPendingDropFechas((f) => ({ ...f, inicio: e.target.value }))}
+                  onChange={(e) => {
+                    const nuevoInicio = e.target.value;
+                    // Frente comercial: recalcula el fin (viernes hábil) al cambiar el inicio manualmente
+                    if (pendingDrop.eng.tipo === "propuesta" && nuevoInicio) {
+                      setPendingDropFechas({
+                        inicio: nuevoInicio,
+                        fin: format(obtenerViernesSemanaHabil(new Date(nuevoInicio + "T00:00:00")), "yyyy-MM-dd"),
+                      });
+                    } else {
+                      setPendingDropFechas((f) => ({ ...f, inicio: nuevoInicio }));
+                    }
+                  }}
                   className="w-full border border-gray-200 rounded-lg px-3 py-2 text-[13px] focus:outline-none focus:ring-2 focus:ring-[#4a90e2]"
                 />
               </div>

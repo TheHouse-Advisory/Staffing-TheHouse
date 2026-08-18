@@ -27,6 +27,30 @@ export function calcularDiasHabilesEnCargo(fechaInicio: string, fechaFin: string
   return calculateBusinessDays(fechaInicio, fechaFin);
 }
 
+/**
+ * Dado un día de inicio, calcula el viernes hábil que garantiza cubrir al menos 5 días
+ * hábiles desde ese inicio — regla de staffing para engagements tipo "Propuesta Comercial".
+ * Si el inicio cae lunes (o domingo), el viernes de esa misma semana ya cubre los 5 días
+ * hábiles exactos. Cualquier otro día (martes a viernes, o sábado) no alcanza a cubrir la
+ * semana completa, así que se usa el viernes de la semana siguiente. Si ese viernes cae en
+ * feriado, se sigue avanzando de a una semana hasta encontrar un viernes hábil.
+ */
+export function obtenerViernesSemanaHabil(fechaInicio: Date): Date {
+  const dow = fechaInicio.getDay(); // 0=dom … 6=sáb
+  const viernes = new Date(fechaInicio);
+  viernes.setDate(fechaInicio.getDate() + (5 - dow)); // viernes de la semana calendario de inicio
+
+  const inicioISO = fechaInicio.toISOString().split("T")[0];
+  const viernesISO = viernes.toISOString().split("T")[0];
+  const cubreSemana = viernesISO >= inicioISO && calculateBusinessDays(inicioISO, viernesISO) >= 5;
+  if (!cubreSemana) viernes.setDate(viernes.getDate() + 7);
+
+  while (isHoliday(viernes.toISOString().split("T")[0])) {
+    viernes.setDate(viernes.getDate() + 7);
+  }
+  return viernes;
+}
+
 /** Igual que expandirRango pero excluye feriados además de fines de semana */
 export function expandirRangoHabil(inicio: string, fin: string): string[] {
   const result: string[] = [];
