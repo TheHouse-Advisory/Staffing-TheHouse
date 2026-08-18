@@ -377,6 +377,10 @@ export function EngagementsList({ rolActual }: Props) {
   const [principalColumna, setPrincipalColumna] = useState("todas");
   const [principalExtra, setPrincipalExtra] = useState<Map<string, EngExtra>>(new Map());
 
+  // Búsqueda en tab Archivo Histórico
+  const [archivoBusqueda, setArchivoBusqueda] = useState("");
+  const [archivoColumna, setArchivoColumna] = useState("todas");
+
   // Confirmaciones
   const [confirmPapelera, setConfirmPapelera] = useState<{ id: string; nombre: string } | null>(null);
   const [confirmDefinitivo, setConfirmDefinitivo] = useState<{ id: string; nombre: string } | null>(null);
@@ -459,6 +463,13 @@ export function EngagementsList({ rolActual }: Props) {
     if (!q) return engagements;
     return engagements.filter((e) => matchEngagement(e, principalExtra.get(e.id), principalColumna, q));
   }, [principalBusqueda, principalColumna, engagements, principalExtra]);
+
+  // Filtro client-side tab Archivo Histórico
+  const archivadosFiltrados = useMemo(() => {
+    const q = norm(archivoBusqueda.trim());
+    if (!q) return archivados;
+    return archivados.filter((e) => matchEngagement(e, archivadosExtra.get(e.id), archivoColumna, q));
+  }, [archivoBusqueda, archivoColumna, archivados, archivadosExtra]);
 
   // Enriquecer datos del Archivo Histórico (industria, tematicas, capacidades, participantes)
   useEffect(() => {
@@ -626,7 +637,9 @@ export function EngagementsList({ rolActual }: Props) {
           <div className="flex items-center gap-3 flex-wrap">
             <p className="text-sm text-[#888]">
               {tabPrincipal === "archivado"
-                ? <>{archivados.length} proyecto{archivados.length !== 1 ? "s" : ""}</>
+                ? archivadosFiltrados.length !== archivados.length
+                  ? <>{archivadosFiltrados.length} <span className="text-[#bbb]">/ {archivados.length}</span></>
+                  : <>{archivados.length} proyecto{archivados.length !== 1 ? "s" : ""}</>
                 : engagementsFiltrados.length !== engagements.length
                 ? <>{engagementsFiltrados.length} <span className="text-[#bbb]">/ {engagements.length}</span></>
                 : <>{engagements.length} proyecto{engagements.length !== 1 ? "s" : ""}</>
@@ -652,42 +665,48 @@ export function EngagementsList({ rolActual }: Props) {
           )}
         </div>
 
-        {/* Buscador principal — solo en tab Activos */}
-        {tabPrincipal === "activos" && (
-          <div className="flex items-center gap-2">
-            <select
-              value={principalColumna}
-              onChange={(e) => setPrincipalColumna(e.target.value)}
-              className="py-1.5 pl-2 pr-6 text-xs border border-[#e8e8e8] rounded-lg focus:outline-none focus:border-[#4a90e2] text-[#555] bg-white appearance-none cursor-pointer"
-              style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23aaa'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 6px center" }}
-            >
-              <option value="todas">Todas las columnas</option>
-              <option value="codigo">Código</option>
-              <option value="proyecto">Proyecto</option>
-              <option value="cliente">Cliente</option>
-              <option value="industria">Industria</option>
-              <option value="tematicas">Temáticas</option>
-              <option value="participantes">Participantes</option>
-              <option value="descripcion">Descripción</option>
-            </select>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#aaa]" />
-              <input
-                type="text"
-                value={principalBusqueda}
-                onChange={(e) => setPrincipalBusqueda(e.target.value)}
-                placeholder={principalColumna === "todas" ? "Buscar proyectos..." : `Buscar por ${principalColumna}...`}
-                className="pl-8 pr-3 py-1.5 text-xs border border-[#e8e8e8] rounded-lg focus:outline-none focus:border-[#4a90e2] w-52"
-              />
+        {/* Buscador — columna/texto activos según el tab visible */}
+        {(() => {
+          const columna  = tabPrincipal === "archivado" ? archivoColumna  : principalColumna;
+          const setColumna = tabPrincipal === "archivado" ? setArchivoColumna : setPrincipalColumna;
+          const busqueda = tabPrincipal === "archivado" ? archivoBusqueda : principalBusqueda;
+          const setBusqueda = tabPrincipal === "archivado" ? setArchivoBusqueda : setPrincipalBusqueda;
+          return (
+            <div className="flex items-center gap-2">
+              <select
+                value={columna}
+                onChange={(e) => setColumna(e.target.value)}
+                className="py-1.5 pl-2 pr-6 text-xs border border-[#e8e8e8] rounded-lg focus:outline-none focus:border-[#4a90e2] text-[#555] bg-white appearance-none cursor-pointer"
+                style={{ backgroundImage: "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%23aaa'/%3E%3C/svg%3E\")", backgroundRepeat: "no-repeat", backgroundPosition: "right 6px center" }}
+              >
+                <option value="todas">Todas las columnas</option>
+                <option value="codigo">Código</option>
+                <option value="proyecto">Proyecto</option>
+                <option value="cliente">Cliente</option>
+                <option value="industria">Industria</option>
+                <option value="tematicas">Temáticas</option>
+                <option value="participantes">Participantes</option>
+                <option value="descripcion">Descripción</option>
+              </select>
+              <div className="relative">
+                <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#aaa]" />
+                <input
+                  type="text"
+                  value={busqueda}
+                  onChange={(e) => setBusqueda(e.target.value)}
+                  placeholder={columna === "todas" ? "Buscar proyectos..." : `Buscar por ${columna}...`}
+                  className="pl-8 pr-3 py-1.5 text-xs border border-[#e8e8e8] rounded-lg focus:outline-none focus:border-[#4a90e2] w-52"
+                />
+              </div>
+              {busqueda && (
+                <button type="button" onClick={() => setBusqueda("")}
+                  className="text-xs text-[#aaa] hover:text-[#555]">
+                  Limpiar
+                </button>
+              )}
             </div>
-            {principalBusqueda && (
-              <button type="button" onClick={() => setPrincipalBusqueda("")}
-                className="text-xs text-[#aaa] hover:text-[#555]">
-                Limpiar
-              </button>
-            )}
-          </div>
-        )}
+          );
+        })()}
       </div>
 
       {tabPrincipal === "activos" ? (
@@ -706,6 +725,11 @@ export function EngagementsList({ rolActual }: Props) {
           <Archive className="w-10 h-10 mx-auto mb-3 opacity-20" />
           <p className="text-sm font-medium">No hay proyectos archivados.</p>
         </div>
+      ) : archivadosFiltrados.length === 0 ? (
+        <div className="text-center py-12 text-[#888]">
+          <Archive className="w-10 h-10 mx-auto mb-3 opacity-20" />
+          <p className="text-sm font-medium">No hay proyectos archivados que coincidan con la búsqueda.</p>
+        </div>
       ) : (
         <div className="overflow-x-auto rounded-xl border border-[#e8e8e8]">
           <table className="w-full text-xs border-collapse">
@@ -718,7 +742,7 @@ export function EngagementsList({ rolActual }: Props) {
               </tr>
             </thead>
             <tbody>
-              {archivados.map((e, idx) => {
+              {archivadosFiltrados.map((e, idx) => {
                 const ex = archivadosExtra.get(e.id);
                 const fechaFin = e.fecha_fin_real ?? e.fecha_fin_estimada;
                 const fmt = (d: string | null) => d ? format(new Date(d + "T00:00:00"), "d MMM yy", { locale: es }) : "—";

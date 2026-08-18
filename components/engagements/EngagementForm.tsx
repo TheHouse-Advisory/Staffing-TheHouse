@@ -118,6 +118,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   const [tematicasOpts, setTematicasOpts] = useState<{ value: string; label: string }[]>([]);
 
   const [extOpen, setExtOpen] = useState(false);
+  // Sección "Equipo del proyecto": colapsada por defecto al abrir el formulario
+  const [equipoOpen, setEquipoOpen] = useState(false);
   // Switch rápido de extensión (bajo Descripción): alternativa simple a "Extender Proyecto"
   const [mostrarExtension, setMostrarExtension] = useState(false);
   const [extFechaInicio, setExtFechaInicio] = useState("");
@@ -166,7 +168,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     if (!open) {
       setForm({ ...EMPTY_ENG }); setReqs([]); setErrors({}); setServerError(null);
       setAsignacionesAEliminar([]); setAusenciasPorPersona(new Map());
-      setExtOpen(false); setActividades([]); setActividadOpen(false); setNuevaActividad({ ...EMPTY_ACTIVIDAD }); setEditingActividadIdx(null);
+      setExtOpen(false); setEquipoOpen(false); setActividades([]); setActividadOpen(false); setNuevaActividad({ ...EMPTY_ACTIVIDAD }); setEditingActividadIdx(null);
       setMostrarExtension(false); setExtFechaInicio(""); setExtFechaFin(""); setExtId(null);
       return;
     }
@@ -614,13 +616,18 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       const { error } = await supabase.from("engagement").update(payload).eq("id", engagement.id);
       if (error) { setServerError(error.message); setLoading(false); return; }
       engId = engagement.id;
-      // Borrar reqs huérfanos
+      // Borrar reqs huérfanos (los que el usuario quitó de "Equipo del proyecto")
       const savedIds = reqs.filter((r) => r.id).map((r) => r.id!);
-      if (savedIds.length > 0) {
-        await supabase.from("requerimiento_engagement")
-          .delete().eq("engagement_id", engId).not("id", "in", `(${savedIds.join(",")})`);
-      } else {
-        await supabase.from("requerimiento_engagement").delete().eq("engagement_id", engId);
+      const { data: reqsHuerfanos } = await (savedIds.length > 0
+        ? supabase.from("requerimiento_engagement").select("id").eq("engagement_id", engId).not("id", "in", `(${savedIds.join(",")})`)
+        : supabase.from("requerimiento_engagement").select("id").eq("engagement_id", engId));
+      const idsHuerfanos = ((reqsHuerfanos ?? []) as { id: string }[]).map((r) => r.id);
+      if (idsHuerfanos.length > 0) {
+        // asignacion.requerimiento_id no tiene ON DELETE CASCADE: hay que borrar la(s)
+        // asignación(es) vinculada(s) primero o el delete del req falla en silencio por FK
+        // y la barra "fantasma" queda viva en el tablero.
+        await supabase.from("asignacion").delete().in("requerimiento_id", idsHuerfanos);
+        await supabase.from("requerimiento_engagement").delete().in("id", idsHuerfanos);
       }
     } else {
       const { data, error } = await supabase.from("engagement").insert(payload).select("id").single();
@@ -1196,10 +1203,26 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
 
         {/* Requerimientos */}
         <div className="border-t border-[#f0f0f0] pt-5">
+          <button
+            type="button"
+            onClick={() => setEquipoOpen((o) => !o)}
+            className="w-full flex items-center justify-between group"
+          >
+            <div className="flex items-center gap-2">
+              <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">Equipo del proyecto</p>
+              {reqs.length > 0 && <span className="text-[10px] text-[#aaa] font-medium">{reqs.length}</span>}
+            </div>
+            {equipoOpen
+              ? <ChevronUp className="w-4 h-4 text-[#aaa] group-hover:text-[#666] transition-colors" />
+              : <ChevronDown className="w-4 h-4 text-[#aaa] group-hover:text-[#666] transition-colors" />
+            }
+          </button>
+
+          {equipoOpen && (
+          <div className="mt-4">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
               <div>
-                <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">Equipo del proyecto</p>
                 {(minReqDate || maxReqDate) && (
                   <p className="text-[10px] text-[#aaa] mt-0.5">
                     Las fechas deben estar dentro del rango del engagement
@@ -1421,6 +1444,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
               );
             })}
           </div>
+          </div>
+          )}
         </div>
 
         {/* ── Actividades Planificadas ── */}
