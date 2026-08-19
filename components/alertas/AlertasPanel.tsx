@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { format, isSameDay, parseISO, startOfDay, addDays, subDays } from "date-fns";
 import { es } from "date-fns/locale";
-import { PartyPopper, Clock, CheckCircle2, Circle, ChevronDown, ChevronUp, Trash2, Cake, ClipboardCheck } from "lucide-react";
+import { PartyPopper, Clock, CheckCircle2, Circle, ChevronDown, ChevronUp, Trash2, Cake, ClipboardCheck, FileSignature } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 
 // ── Tipos ────────────────────────────────────────────────────────
@@ -35,6 +35,16 @@ interface AlertaEPP {
   fecha_fin: string;
   tipo: "por_terminar" | "recien_terminado";
   dias: number; // días restantes (por_terminar) o días desde fin (recien_terminado)
+  personas: { id: string; nombre: string; apellido: string; cargo_actual: string | null }[];
+}
+
+/** Recordatorio de enviar planes de acción — engagements que pasaron (o nacieron) a tipo "proyecto"
+ *  recientemente (created_at o updated_at dentro de la ventana). Color ámbar, distinto del morado EDD/EPP. */
+interface AlertaPlanAccion {
+  engagement_id: string;
+  engagement_nombre: string;
+  cliente: string;
+  fecha: string; // created_at o updated_at, lo más reciente
   personas: { id: string; nombre: string; apellido: string; cargo_actual: string | null }[];
 }
 
@@ -277,6 +287,64 @@ function TarjetaEPP({
   );
 }
 
+// ── Tarjeta Plan de Acción ────────────────────────────────────────
+
+function TarjetaPlanAccion({
+  alerta, checked, onCheck,
+}: {
+  alerta: AlertaPlanAccion; checked: boolean; onCheck: () => void;
+}) {
+  const color = "#f59e0b"; // ámbar — distinto del morado EDD/EPP, del azul Aniversarios y del naranja Cumpleaños
+
+  return (
+    <div className={`flex items-start gap-4 p-4 rounded-xl border-2 transition-all ${
+      checked ? "border-gray-100 bg-gray-50 opacity-60" : "border-[#f59e0b]/30 bg-[#fffbeb]"
+    }`}>
+      <div className="w-10 h-10 rounded-full flex items-center justify-center text-white flex-shrink-0"
+        style={{ backgroundColor: checked ? "#94a3b8" : color }}>
+        <FileSignature className="w-5 h-5" />
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <p className={`font-semibold text-[#1a1a2e] ${checked ? "line-through text-gray-400" : ""}`}>
+          Recordar: enviar planes de acción —{" "}
+          <span style={{ color: checked ? undefined : color }}>{alerta.engagement_nombre}</span>
+        </p>
+        {alerta.cliente && (
+          <p className="text-xs text-gray-400 mt-0.5 mb-2">{alerta.cliente}</p>
+        )}
+        {alerta.personas.length > 0 && (
+          <div className="flex flex-wrap gap-1.5 mt-1">
+            {alerta.personas.map((p) => (
+              <span key={p.id}
+                className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full bg-white border border-gray-200 text-gray-600 font-medium">
+                <span className="w-4 h-4 rounded-full flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0"
+                  style={{ backgroundColor: color }}>
+                  {p.nombre[0]}{p.apellido[0]}
+                </span>
+                {p.nombre} {p.apellido}
+                {p.cargo_actual && <span className="text-gray-300">· {p.cargo_actual}</span>}
+              </span>
+            ))}
+          </div>
+        )}
+        <p className="text-xs text-gray-400 mt-1.5">
+          Proyecto desde: <span className="font-medium text-gray-600">
+            {format(parseISO(alerta.fecha), "d 'de' MMMM yyyy", { locale: es })}
+          </span>
+        </p>
+      </div>
+
+      <button onClick={onCheck} title={checked ? "Desmarcar" : "Marcar como gestionado"}
+        className="flex-shrink-0 transition-transform hover:scale-110">
+        {checked
+          ? <CheckCircle2 className="w-6 h-6 text-[#27ae60]" />
+          : <Circle className="w-6 h-6 text-gray-300 hover:text-[#27ae60]" />}
+      </button>
+    </div>
+  );
+}
+
 // ── Panel principal ──────────────────────────────────────────────
 
 interface AlertasPanelProps {
@@ -290,9 +358,11 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
   const [cumpleHoy, setCumpleHoy] = useState<PersonaCumpleanos[]>([]);
   const [cumpleProximos, setCumpleProximos] = useState<PersonaCumpleanos[]>([]);
   const [eppAlertas, setEppAlertas] = useState<AlertaEPP[]>([]);
+  const [planAccionAlertas, setPlanAccionAlertas] = useState<AlertaPlanAccion[]>([]);
   const [loading, setLoading] = useState(true);
   const [checks, setChecks] = useState<AlertaChecked[]>([]);
   const [historialAbierto, setHistorialAbierto] = useState(false);
+  const [planAccionAbierto, setPlanAccionAbierto] = useState(false); // colapsado por defecto
 
   useEffect(() => { setChecks(leerChecks()); }, []);
 
@@ -317,14 +387,16 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
       const en7Str = format(addDays(ahora, 7), "yyyy-MM-dd");
       const hace7Str = format(subDays(ahora, 7), "yyyy-MM-dd");
 
-      const [personasRes, engRes, asigRes] = await Promise.all([
+      const [personasRes, engRes, asigRes, engProyectoRecienteRes] = await Promise.all([
         sb.from("persona")
           .select("id, nombre, apellido, cargo_actual, fecha_ingreso, fecha_nacimiento")
           .eq("activo", true),
 
         // Engagements que terminan en los próximos 7 días O terminaron en los últimos 7 días
+        // (excluye "posibles_proyectos": no son proyectos reales en curso, no aplican a EPP/EDD)
         sb.from("engagement")
-          .select("id, nombre, cliente, fecha_fin_estimada, fecha_fin_real, estado")
+          .select("id, nombre, cliente, fecha_fin_estimada, fecha_fin_real, estado, tipo")
+          .neq("tipo", "posibles_proyectos")
           .or(
             // por terminar: activo, fin estimado entre hoy y hoy+7
             `and(estado.eq.activo,fecha_fin_estimada.gte.${hoyStr},fecha_fin_estimada.lte.${en7Str}),` +
@@ -335,6 +407,16 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
         sb.from("asignacion")
           .select("engagement_id, persona_id")
           .eq("estado", "activa"),
+
+        // Engagements de tipo "proyecto" creados o escalados (tipo cambiado) en los últimos 7 días
+        // → recordatorio de enviar planes de acción. No hay columna dedicada de "fecha de escalado",
+        // así que se aproxima con created_at/updated_at (igual criterio que "Última actualización" del Tablero).
+        sb.from("engagement")
+          .select("id, nombre, cliente, tipo, estado, created_at, updated_at")
+          .eq("tipo", "proyecto")
+          .eq("estado", "activo")
+          .eq("is_deleted", false)
+          .or(`created_at.gte.${hace7Str},updated_at.gte.${hace7Str}`),
       ]);
 
       const personas = (personasRes.data ?? []) as {
@@ -432,11 +514,31 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
         return a.dias - b.dias;
       });
 
+      // ── Planes de acción (engagements recién creados/escalados a "proyecto") ──
+      const planAccionArr: AlertaPlanAccion[] = [];
+      for (const eng of (engProyectoRecienteRes.data ?? []) as any[]) {
+        const fecha: string = eng.updated_at && eng.updated_at > eng.created_at ? eng.updated_at : eng.created_at;
+        const personaIds = [...new Set(asigPorEng.get(eng.id) ?? [])];
+        const personasEng = personaIds
+          .map((pid) => personaMap.get(pid))
+          .filter(Boolean) as typeof personas;
+
+        planAccionArr.push({
+          engagement_id: eng.id,
+          engagement_nombre: eng.nombre,
+          cliente: eng.cliente ?? "",
+          fecha,
+          personas: personasEng,
+        });
+      }
+      planAccionArr.sort((a, b) => b.fecha.localeCompare(a.fecha)); // más reciente primero
+
       setAnivHoy(anivHoyArr);
       setAnivProximos(anivProxArr);
       setCumpleHoy(cumpleHoyArr);
       setCumpleProximos(cumpleProxArr);
       setEppAlertas(eppArr);
+      setPlanAccionAlertas(planAccionArr);
       setLoading(false);
     }
     load();
@@ -460,6 +562,11 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
     const id = `epp-${alerta.engagement_id}-${alerta.fecha_fin}`;
     const desc = `EPP — ${alerta.engagement_nombre} (${alerta.tipo === "por_terminar" ? "termina" : "terminó"} el ${format(parseISO(alerta.fecha_fin), "d MMM yyyy", { locale: es })})`;
     toggleCheck(id, "epp", desc);
+  }
+
+  function togglePlanAccion(alerta: AlertaPlanAccion) {
+    const id = `plan_accion-${alerta.engagement_id}`;
+    toggleCheck(id, "plan_accion", `Planes de acción enviados — ${alerta.engagement_nombre}`);
   }
 
   function toggleCheck(id: string, tipo: string, descripcion: string) {
@@ -489,6 +596,9 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
   function isCheckedEPP(alerta: AlertaEPP) {
     return checks.some((c) => c.alertaId === `epp-${alerta.engagement_id}-${alerta.fecha_fin}`);
   }
+  function isCheckedPlanAccion(alerta: AlertaPlanAccion) {
+    return checks.some((c) => c.alertaId === `plan_accion-${alerta.engagement_id}`);
+  }
 
   if (loading) return (
     <div className="space-y-3 animate-pulse">
@@ -502,7 +612,7 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
   const sinAlertas =
     anivHoy.length === 0 && anivProximos.length === 0 &&
     cumpleHoy.length === 0 && cumpleProximos.length === 0 &&
-    eppAlertas.length === 0;
+    eppAlertas.length === 0 && planAccionAlertas.length === 0;
 
   const eppPorTerminar = eppAlertas.filter((e) => e.tipo === "por_terminar");
   const eppTerminados  = eppAlertas.filter((e) => e.tipo === "recien_terminado");
@@ -550,6 +660,43 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
                   checked={isCheckedEPP(a)} onCheck={() => toggleEPP(a)} />
               ))}
             </div>
+          )}
+        </section>
+      </div>
+
+      {/* ══ PLANES DE ACCIÓN ═══════════════════════════════════════ */}
+      <div className="space-y-5">
+        <div className="flex items-center gap-2">
+          <div className="w-1 h-5 rounded-full bg-[#f59e0b]" />
+          <h2 className="text-xs font-bold text-[#f59e0b] uppercase tracking-widest">Planes de Acción</h2>
+        </div>
+
+        <section>
+          <button onClick={() => setPlanAccionAbierto((v) => !v)}
+            className="flex items-center gap-2 mb-3 w-full text-left group">
+            <FileSignature className="w-4 h-4 text-[#f59e0b]" />
+            <h3 className="text-sm font-bold text-[#1a1a2e] uppercase tracking-wide flex-1">
+              Proyectos nuevos o escalados
+              {planAccionAlertas.length > 0 && (
+                <span className="ml-2 text-xs font-semibold text-white bg-[#f59e0b] rounded-full px-2 py-0.5 normal-case tracking-normal">
+                  {planAccionAlertas.length}
+                </span>
+              )}
+            </h3>
+            {planAccionAbierto ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+          </button>
+
+          {planAccionAbierto && (
+            planAccionAlertas.length === 0 ? (
+              <p className="text-sm text-gray-400 italic">Sin proyectos nuevos pendientes de plan de acción.</p>
+            ) : (
+              <div className="space-y-2">
+                {planAccionAlertas.map((a) => (
+                  <TarjetaPlanAccion key={a.engagement_id} alerta={a}
+                    checked={isCheckedPlanAccion(a)} onCheck={() => togglePlanAccion(a)} />
+                ))}
+              </div>
+            )
           )}
         </section>
       </div>
