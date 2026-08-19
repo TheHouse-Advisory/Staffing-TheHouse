@@ -5,7 +5,7 @@ import { es } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight } from "lucide-react";
 import { COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 import type { TipoAusencia } from "@/lib/types/database";
-import { nextDiaHabil, type EngRow, type PersonaAsig } from "./DesgloceEngagements";
+import { ventana5DiasHabiles, RESUMEN_EXPORT_COL_LABEL, RESUMEN_EXPORT_COL_DIA, type EngRow, type PersonaAsig } from "./DesgloceEngagements";
 
 interface AusenciaRow {
   persona_id: string;
@@ -24,6 +24,9 @@ interface Props {
   onDiaAnterior?: () => void;
   onDiaSiguiente?: () => void;
   onNavSiguiente?: () => void;
+  /** Modo captura para el Resumen Semanal descargable: sin scroll/recorte, columnas a ancho fijo
+   *  (RESUMEN_EXPORT_COL_LABEL/RESUMEN_EXPORT_COL_DIA) para alinear 1:1 con la tabla de ausencias. */
+  modoExport?: boolean;
 }
 
 const BOTON_NAV = "text-xs font-semibold text-gray-500 hover:text-gray-800 px-1 py-0.5 rounded";
@@ -42,6 +45,34 @@ const CARGO_COLOR: Record<string, string> = {
   "Desarrollo": "#94a3b8",
 };
 const CARGO_COLOR_DEFAULT = "#94a3b8";
+
+// Leyenda compacta (deduplicada) de la paleta CARGO_COLOR — un color representativo por grupo,
+// usada solo en el Resumen Semanal descargable (los avatares reales usan colorPorCargo() arriba).
+const LEYENDA_CARGOS: { label: string; color: string }[] = [
+  { label: "Socio", color: CARGO_COLOR["Socio"] },
+  { label: "Director", color: CARGO_COLOR["Director"] },
+  { label: "Gerente", color: CARGO_COLOR["Gerente"] },
+  { label: "Asociado", color: CARGO_COLOR["Asociado"] },
+  { label: "Consultor Senior", color: CARGO_COLOR["Consultor Senior"] },
+  { label: "Consultor de proyectos", color: CARGO_COLOR["Consultor de Proyectos"] },
+  { label: "Consultor Analista", color: CARGO_COLOR["Consultor Analista"] },
+  { label: "Consultor Trainee", color: CARGO_COLOR["Consultor Trainee"] },
+  { label: "Desarrollo", color: CARGO_COLOR["Desarrollo"] },
+];
+
+/** Leyenda de colores por cargo para el Resumen Semanal descargable — compacta y legible. */
+export function LeyendaCargosColor() {
+  return (
+    <div className="flex flex-wrap gap-3 text-[10px] text-gray-500">
+      {LEYENDA_CARGOS.map((c) => (
+        <span key={c.label} className="flex items-center gap-1">
+          <span className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ background: c.color }} />
+          {c.label}
+        </span>
+      ))}
+    </div>
+  );
+}
 
 function colorPorCargo(cargo: string | null): string {
   if (!cargo) return CARGO_COLOR_DEFAULT;
@@ -81,10 +112,12 @@ function rangoAusencia(a: AusenciaRow): string {
   return `del ${ini} al ${fin}`;
 }
 
-function SeparadorSeccion({ label, cantidad, color }: { label: string; cantidad: number; color: string }) {
+function SeparadorSeccion({ label, cantidad, color, modoExport }: { label: string; cantidad: number; color: string; modoExport?: boolean }) {
   return (
     <tr>
-      <td colSpan={6} className="pt-2 pb-0.5">
+      {/* En modoExport se separa con más aire (pt-4) para que la sección no colisione visualmente
+          con la anterior cuando la lista de proyectos/propuestas crece. */}
+      <td colSpan={6} className={modoExport ? "pt-5 pb-1" : "pt-2 pb-0.5"}>
         <div className="flex items-center gap-2">
           <div className="w-1 h-4 rounded-full flex-shrink-0" style={{ background: color }} />
           <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color }}>{label}</span>
@@ -96,10 +129,10 @@ function SeparadorSeccion({ label, cantidad, color }: { label: string; cantidad:
   );
 }
 
-function FilaEngagement({ eng, diasIso, ausencias }: { eng: EngRow; diasIso: string[]; ausencias: AusenciaRow[] }) {
+function FilaEngagement({ eng, diasIso, ausencias, modoExport }: { eng: EngRow; diasIso: string[]; ausencias: AusenciaRow[]; modoExport?: boolean }) {
   return (
     <tr className="border-b border-gray-200 dark:border-gray-800">
-      <td className="py-1.5 pr-2 font-semibold text-[#1a1a2e] truncate max-w-[160px] border-r border-gray-200 dark:border-gray-800">
+      <td className={`py-1.5 pr-2 font-semibold text-[#1a1a2e] border-r border-gray-200 dark:border-gray-800 ${modoExport ? "break-words" : "truncate max-w-[160px]"}`}>
         {eng.codigo ? `${eng.codigo}: ${eng.nombre}` : eng.nombre}
       </td>
       {diasIso.map((diaIso) => {
@@ -141,12 +174,11 @@ function FilaEngagement({ eng, diasIso, ausencias }: { eng: EngRow; diasIso: str
 }
 
 export function VistaResumidaEngagements({
-  engs, base, ausencias, onNavAnterior, onDiaAnterior, onDiaSiguiente, onNavSiguiente,
+  engs, base, ausencias, onNavAnterior, onDiaAnterior, onDiaSiguiente, onNavSiguiente, modoExport = false,
 }: Props) {
   // Ventana móvil de 5 días hábiles consecutivos a partir de `base` (no se ancla al lunes ISO):
   // "<"/">" desplazan `base` un día hábil y esta ventana se recalcula completa a partir de ahí.
-  const dias: Date[] = [base];
-  while (dias.length < 5) dias.push(nextDiaHabil(dias[dias.length - 1]));
+  const dias: Date[] = ventana5DiasHabiles(base);
   const diasIso = dias.map((d) => format(d, "yyyy-MM-dd"));
   const inicioVentanaIso = diasIso[0];
   const finVentanaIso = diasIso[4];
@@ -159,10 +191,16 @@ export function VistaResumidaEngagements({
   const engsSemana = [...proyectos, ...propuestas];
 
   return (
-    <div className="flex-1 flex flex-col w-full h-full max-w-none min-h-0">
-    <div className="flex-1 overflow-y-auto max-h-[calc(100vh-140px)]">
-      <table className="w-full border-collapse text-xs">
-        <thead className="sticky top-0 bg-white z-10">
+    <div className={modoExport ? "flex flex-col w-full" : "flex-1 flex flex-col w-full h-full max-w-none min-h-0"}>
+    <div className={modoExport ? "overflow-visible" : "flex-1 overflow-y-auto max-h-[calc(100vh-140px)]"}>
+      <table className={`w-full border-collapse text-xs ${modoExport ? "table-fixed" : ""}`}>
+        {modoExport && (
+          <colgroup>
+            <col style={{ width: RESUMEN_EXPORT_COL_LABEL }} />
+            {diasIso.map((d) => <col key={d} style={{ width: RESUMEN_EXPORT_COL_DIA }} />)}
+          </colgroup>
+        )}
+        <thead className={modoExport ? "" : "sticky top-0 bg-white z-10"}>
           <tr className="border-b border-gray-200 dark:border-gray-800">
             <th className="text-left py-1.5 pr-2 text-gray-400 font-semibold whitespace-nowrap border-r border-gray-200 dark:border-gray-800">
               <div className="flex items-center justify-between gap-1">
@@ -224,16 +262,16 @@ export function VistaResumidaEngagements({
           ) : (
             <>
               {proyectos.length > 0 && (
-                <SeparadorSeccion label="Proyectos" cantidad={proyectos.length} color="#4a90e2" />
+                <SeparadorSeccion label="Proyectos" cantidad={proyectos.length} color="#4a90e2" modoExport={modoExport} />
               )}
               {proyectos.map((eng) => (
-                <FilaEngagement key={eng.id} eng={eng} diasIso={diasIso} ausencias={ausencias} />
+                <FilaEngagement key={eng.id} eng={eng} diasIso={diasIso} ausencias={ausencias} modoExport={modoExport} />
               ))}
               {propuestas.length > 0 && (
-                <SeparadorSeccion label="Propuestas comerciales" cantidad={propuestas.length} color="#9b59b6" />
+                <SeparadorSeccion label="Propuestas comerciales" cantidad={propuestas.length} color="#9b59b6" modoExport={modoExport} />
               )}
               {propuestas.map((eng) => (
-                <FilaEngagement key={eng.id} eng={eng} diasIso={diasIso} ausencias={ausencias} />
+                <FilaEngagement key={eng.id} eng={eng} diasIso={diasIso} ausencias={ausencias} modoExport={modoExport} />
               ))}
             </>
           )}

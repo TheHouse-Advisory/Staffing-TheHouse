@@ -9,6 +9,7 @@ import {
 import { es } from "date-fns/locale";
 import { createAnyClient } from "@/lib/supabase/client";
 import type { Persona } from "@/lib/types/database";
+import { RESUMEN_EXPORT_COL_LABEL, RESUMEN_EXPORT_COL_DIA } from "./DesgloceEngagements";
 
 // ── Jerarquía de cargos ──────────────────────────────────────
 const JERARQUIA = [
@@ -102,9 +103,17 @@ interface GanttAusenciasProps {
   onVerPersona: (p: Persona) => void;
   vistaExterna?: Vista;
   baseExterna?: Date;
+  /** Columnas exactas (una por día) — cuando se provee, ignora vistaExterna/baseExterna.
+   *  Usado por el Resumen Semanal descargable para alinear columnas 1:1 con Vista Resumida. */
+  diasFijos?: Date[];
+  /** Modo captura: renderiza como <table> con colgroup a ancho fijo (RESUMEN_EXPORT_COL_*)
+   *  en vez del layout flex, para que las columnas coincidan px a px con VistaResumidaEngagements. */
+  modoExport?: boolean;
+  /** Texto de la primera columna (fija) en modoExport — por defecto "Ausencias". */
+  labelExport?: string;
 }
 
-export function GanttAusencias({ onVerPersona, vistaExterna, baseExterna }: GanttAusenciasProps) {
+export function GanttAusencias({ onVerPersona, vistaExterna, baseExterna, diasFijos, modoExport = false, labelExport = "Ausencias" }: GanttAusenciasProps) {
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [ausencias, setAusencias] = useState<AusenciaRaw[]>([]);
   const [loading, setLoading] = useState(true);
@@ -126,10 +135,16 @@ export function GanttAusencias({ onVerPersona, vistaExterna, baseExterna }: Gant
     load();
   }, []);
 
-  const columnas: Columna[] =
-    vista === "dia" ? columnasDia(base) :
-    vista === "semana" ? columnasSemana(base) :
-    columnasMes(base);
+  const columnas: Columna[] = diasFijos
+    ? diasFijos.map((d) => ({
+        label: format(d, "EEE", { locale: es }),
+        sublabel: format(d, "d MMM", { locale: es }),
+        inicio: d,
+        fin: d,
+      }))
+    : vista === "dia" ? columnasDia(base) :
+      vista === "semana" ? columnasSemana(base) :
+      columnasMes(base);
 
   function ausentesEnColumna(col: Columna): Persona[] {
     const ids = new Set(
@@ -138,6 +153,54 @@ export function GanttAusencias({ onVerPersona, vistaExterna, baseExterna }: Gant
         .map((a) => a.persona_id)
     );
     return ordenarPorCargo(personas.filter((p) => ids.has(p.id)));
+  }
+
+  if (modoExport) {
+    return (
+      <div className="flex flex-col w-full">
+        {loading ? (
+          <p className="text-sm text-gray-300">Cargando...</p>
+        ) : (
+          <table className="w-full border-collapse text-xs table-fixed">
+            <colgroup>
+              <col style={{ width: RESUMEN_EXPORT_COL_LABEL }} />
+              {columnas.map((_, i) => <col key={i} style={{ width: RESUMEN_EXPORT_COL_DIA }} />)}
+            </colgroup>
+            <tbody>
+              <tr>
+                {/* Columna fija (misma que "Proyecto" en la tabla de arriba): AUSENCIAS a la izquierda */}
+                <td className="pl-0 pr-2 align-top border-r border-gray-200 dark:border-gray-800">
+                  <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest whitespace-nowrap">{labelExport}</p>
+                </td>
+                {columnas.map((col, i) => {
+                  const ausentes = ausentesEnColumna(col);
+                  return (
+                    <td key={i} className="px-1 align-top">
+                      <div className="rounded-lg p-1.5 flex flex-wrap gap-1 content-start min-h-[40px]" style={{ background: "#f9f9f9", border: "1.5px solid #f0f0f0" }}>
+                        {ausentes.length === 0 ? (
+                          <span className="text-[10px] text-gray-200 mx-auto">—</span>
+                        ) : (
+                          ausentes.map((p) => (
+                            <div
+                              key={p.id}
+                              title={`${p.nombre} ${p.apellido}`}
+                              className="w-6 h-6 rounded-full flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0"
+                              style={{ backgroundColor: COLORES[p.cargo_actual ?? ""] ?? COLOR_DEFAULT }}
+                            >
+                              {iniciales(p.nombre, p.apellido, p.iniciales)}
+                            </div>
+                          ))
+                        )}
+                      </div>
+                    </td>
+                  );
+                })}
+              </tr>
+            </tbody>
+          </table>
+        )}
+      </div>
+    );
   }
 
   return (

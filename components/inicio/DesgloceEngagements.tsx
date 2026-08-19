@@ -7,7 +7,8 @@ import {
   subWeeks, subMonths, format, startOfMonth, endOfMonth,
 } from "date-fns";
 import { es } from "date-fns/locale";
-import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2, GripVertical, RotateCcw, Diamond, Plane, Search, AlertTriangle, CheckCircle, Undo2 } from "lucide-react";
+import { ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, ChevronDown, ChevronUp, Plus, Pencil, X, Calendar, Users, Building2, AlignLeft, Briefcase, Trash2, Loader2, GripVertical, RotateCcw, Diamond, Plane, Search, AlertTriangle, CheckCircle, Undo2, Download } from "lucide-react";
+import { toPng } from "html-to-image";
 import { createAnyClient } from "@/lib/supabase/client";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
 import { ColaboradorModal } from "@/components/engagements/ColaboradorModal";
@@ -19,7 +20,8 @@ import { COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 import { cambiarEstadoEngagement, cambiarTipoEngagement, fetchUltimaActualizacionReal, redimensionarEngagementConEquipo, moverEngagementConEquipo } from "@/lib/queries/engagements";
 import { obtenerViernesSemanaHabil } from "@/lib/utils/date-utils";
 import { useCargosColapsados } from "@/components/providers/CargosColapsadosContext";
-import { VistaResumidaEngagements } from "./VistaResumidaEngagements";
+import { VistaResumidaEngagements, LeyendaCargosColor } from "./VistaResumidaEngagements";
+import { GanttAusencias } from "./GanttAusencias";
 
 // ── Cargos Asociado y Consultor Senior son la misma categoría visual ──
 const GRUPO_SENIOR = ["Asociado", "Consultor Senior", "Asociado / Consultor Senior"];
@@ -141,6 +143,19 @@ export function nextDiaHabil(d: Date): Date {
   let nd = addDays(d, 1);
   while (nd.getDay() === 0 || nd.getDay() === 6) nd = addDays(nd, 1);
   return nd;
+}
+// Anchos de columna fijos del export "Resumen Semanal Staffing" — misma fuente usada por
+// VistaResumidaEngagements y GanttAusencias en modoExport para que sus colgroups coincidan px a px.
+export const RESUMEN_EXPORT_COL_LABEL = 220;
+export const RESUMEN_EXPORT_COL_DIA = 176;
+export const RESUMEN_EXPORT_WIDTH = RESUMEN_EXPORT_COL_LABEL + RESUMEN_EXPORT_COL_DIA * 5; // 1100
+
+// Ventana de 5 días hábiles consecutivos desde `base` — fuente única usada por Vista Resumida
+// y por el Resumen Semanal descargable para que ambas tablas queden alineadas por columna.
+export function ventana5DiasHabiles(base: Date): Date[] {
+  const dias: Date[] = [base];
+  while (dias.length < 5) dias.push(nextDiaHabil(dias[dias.length - 1]));
+  return dias;
 }
 function rangoSolapan(aIni: string, aFin: string | null, cIni: Date, cFin: Date) {
   if (!aFin) return parseLocal(aIni) <= cFin;
@@ -749,6 +764,28 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   // Colapso por cargo dentro de un engagement (clave: `${engId}::${cargo}`)
   // Compartido vía contexto: sincroniza Inicio > Cuadrante Tablero y Tablero > Vista Proyectos
   const { colapsados: cargosColapsados, toggle: toggleCargoColapso } = useCargosColapsados();
+
+  // Ventana de 5 días hábiles usada por Vista Resumida + Resumen Semanal descargable (mismo array → columnas alineadas)
+  const diasResumen = useMemo(() => ventana5DiasHabiles(base), [base]);
+  const rangoResumenLabel = `${format(diasResumen[0], "d MMM", { locale: es })} – ${format(diasResumen[4], "d MMM yyyy", { locale: es })}`;
+  const resumenSemanalRef = useRef<HTMLDivElement>(null);
+  const [descargandoResumen, setDescargandoResumen] = useState(false);
+
+  async function handleDescargarResumenSemanal() {
+    if (!resumenSemanalRef.current || descargandoResumen) return;
+    setDescargandoResumen(true);
+    try {
+      const dataUrl = await toPng(resumenSemanalRef.current, { backgroundColor: "#ffffff", pixelRatio: 2 });
+      const link = document.createElement("a");
+      link.download = `Resumen Semanal Staffing ${format(diasResumen[0], "yyyy-MM-dd")}.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch (err) {
+      console.error("Error generando imagen del Resumen Semanal:", err);
+    } finally {
+      setDescargandoResumen(false);
+    }
+  }
 
   const columnas: Columna[] = useMemo(
     () =>
@@ -1851,6 +1888,18 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 Vista Detallada
               </button>
             </div>
+          )}
+
+          {vistaResumida && (
+            <button
+              onClick={handleDescargarResumenSemanal}
+              disabled={descargandoResumen}
+              title="Descargar Resumen Semanal como imagen"
+              className="flex items-center gap-1 px-2 h-7 text-[11px] font-semibold whitespace-nowrap rounded-md border border-gray-200 text-gray-500 hover:border-[#4a90e2] hover:text-[#4a90e2] transition-colors flex-shrink-0 ml-auto disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {descargandoResumen ? <Loader2 className="w-3 h-3 animate-spin" /> : <Download className="w-3 h-3" />}
+              Descargar Resumen Imagen
+            </button>
           )}
 
           {!vistaResumida && (
@@ -3309,6 +3358,39 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               >
                 Confirmar asignación
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Plantilla oculta del "Resumen Semanal Staffing" (solo para captura de imagen) ──
+          No forma parte de la vista visible: se posiciona fuera de pantalla y solo se lee
+          via resumenSemanalRef al presionar "Descargar Resumen Imagen". Proyectos y ausencias
+          comparten `diasResumen` para que las columnas de días queden alineadas 1:1. */}
+      {vistaResumida && (
+        <div className="absolute -left-[9999px] top-0 pointer-events-none" style={{ height: "auto", overflow: "visible" }} aria-hidden="true">
+          {/* height:auto + overflow:visible explícitos: el contenedor debe crecer libremente sin
+              recortar filas sin importar cuántos proyectos/propuestas/ausencias se agreguen. */}
+          <div
+            ref={resumenSemanalRef}
+            className="flex flex-col bg-white p-5"
+            style={{ width: RESUMEN_EXPORT_WIDTH, minWidth: RESUMEN_EXPORT_WIDTH, height: "auto", overflow: "visible" }}
+          >
+            <div className="flex-shrink-0 pb-3">
+              <h3 className="text-base font-bold text-[#1a1a2e]">Resumen Semanal Staffing</h3>
+              <p className="text-xs text-gray-400 capitalize">{rangoResumenLabel}</p>
+            </div>
+            {/* Leyenda de colores por cargo — compacta, no le resta espacio a la tabla de proyectos */}
+            <div className="flex-shrink-0 pb-4">
+              <LeyendaCargosColor />
+            </div>
+            <VistaResumidaEngagements engs={engs} base={base} ausencias={ausencias} modoExport />
+            {/* Separador Proyectos/Propuestas ↔ Ausencias con margen amplio: evita colisión visual
+                cuando la tabla de arriba crece con más filas. */}
+            <div className="flex-shrink-0 mt-8 pt-4 border-t-2 border-gray-200">
+              {/* La etiqueta "AUSENCIAS" vive dentro de la 1ra columna de la tabla (labelExport),
+                  misma columna fija que "Proyecto" arriba → columnas de días quedan alineadas 1:1. */}
+              <GanttAusencias onVerPersona={() => {}} diasFijos={diasResumen} modoExport labelExport="Ausencias" />
             </div>
           </div>
         </div>
