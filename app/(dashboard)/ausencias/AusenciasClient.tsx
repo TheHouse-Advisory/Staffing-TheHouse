@@ -59,7 +59,7 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
   const [rol, setRol] = useState<RolSistema | null>(null);
   const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD" || rol === "AySr";
   // Vista limpia (solo admin): oculta insignias R/A y píldoras de días tomados en el Heatmap
-  const [showMetrics, setShowMetrics] = useState(true);
+  const [showMetrics, setShowMetrics] = useState(false); // oculto por defecto
   const { tipos: tiposDB } = useTiposAusencia();
   // Leyenda = tipos de BD + feriado fijo al final
   const leyendaDinamica = [...tiposDB, LEYENDA_FERIADO];
