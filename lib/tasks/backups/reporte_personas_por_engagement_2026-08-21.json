@@ -1,0 +1,946 @@
+{
+  "Frente comercial (null)": [
+    {
+      "persona": "Alfonso Undurraga",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-02",
+      "fecha_fin": "2026-07-10",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Joaquín López",
+      "cargo": "Asociado",
+      "fecha_inicio": "2026-06-24",
+      "fecha_fin": "2026-07-10",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Josefina Guridi",
+      "cargo": "Asociado",
+      "fecha_inicio": "2026-07-02",
+      "fecha_fin": "2026-07-17",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Javier de Petris",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-06-22",
+      "fecha_fin": "2026-08-14",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Pablo Murillo",
+      "cargo": "Gerente de Proyectos",
+      "fecha_inicio": "2026-08-04",
+      "fecha_fin": "2026-08-30",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Bernardita Lea-Plaza",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-14",
+      "fecha_fin": "2026-07-17",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Andrés Justiniano",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-17",
+      "fecha_fin": "2026-12-31",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Pablo Murillo",
+      "cargo": "Gerente de Proyectos",
+      "fecha_inicio": "2026-07-02",
+      "fecha_fin": "2026-07-10",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Juan Pablo Vega",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-08-04",
+      "fecha_fin": "2026-08-28",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Mariana Hernández",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-17",
+      "fecha_fin": "2026-12-31",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Florencia Santa Cruz",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-01",
+      "fecha_fin": "2026-07-30",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Miguel Mondaca",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-06-30",
+      "fecha_fin": "2026-07-03",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Simón Merino",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-08-17",
+      "fecha_fin": "2026-08-22",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Benjamín Matte",
+      "cargo": "Asociado",
+      "fecha_inicio": "2026-07-01",
+      "fecha_fin": "2026-07-10",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Magdalena Gálvez",
+      "cargo": "Gerente de Proyectos",
+      "fecha_inicio": "2026-08-07",
+      "fecha_fin": "2026-08-29",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Juan Pablo Vega",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-08-04",
+      "fecha_fin": "2026-08-28",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Martin Rosenfeld",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-05-25",
+      "fecha_fin": "2026-06-15",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Martin Rosenfeld",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-06-29",
+      "fecha_fin": "2026-07-06",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Joaquín Cerda",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-08-17",
+      "fecha_fin": "2026-08-22",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Francisco Croquevielle",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-08-03",
+      "fecha_fin": "2026-12-31",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Tomás Concha",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-07-06",
+      "fecha_fin": "2026-07-24",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Mariana Hernández",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-17",
+      "fecha_fin": "2026-12-31",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Mariana Hernández",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-17",
+      "fecha_fin": "2026-12-31",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Andrés Mercado",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-07-11",
+      "fecha_fin": "2026-07-31",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Consuelo Moreno",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-08-04",
+      "fecha_fin": "2026-08-07",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Consuelo Moreno",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-01",
+      "fecha_fin": "2026-08-15",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "ENGIE Apoyo a la transformación a la gerencia O&M (ENG01)": [
+    {
+      "persona": "Vicente Chadwick",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-07-06",
+      "fecha_fin": "2026-09-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Gerardo Boetsch",
+      "cargo": "Gerente de Proyectos",
+      "fecha_inicio": "2026-07-13",
+      "fecha_fin": "2026-09-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Alejandra Loyola",
+      "cargo": "Socio",
+      "fecha_inicio": "2026-07-06",
+      "fecha_fin": "2026-07-26",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Alejandra Loyola",
+      "cargo": "Socio",
+      "fecha_inicio": "2026-08-01",
+      "fecha_fin": "2026-09-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Benjamín Matte",
+      "cargo": "Asociado",
+      "fecha_inicio": "2026-07-06",
+      "fecha_fin": "2026-09-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Constanza Aguilera",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-08",
+      "fecha_fin": "2026-09-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Sofia Figueroa",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-08",
+      "fecha_fin": "2026-09-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Alfonso Undurraga",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-17",
+      "fecha_fin": "2026-09-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Alfonso Undurraga",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-09-21",
+      "fecha_fin": "2026-09-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "Duragas (DURA01)": [
+    {
+      "persona": "Magdalena Gálvez",
+      "cargo": "Asociado",
+      "fecha_inicio": "2026-08-10",
+      "fecha_fin": "2026-10-09",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Santiago Varela",
+      "cargo": "Consultor Trainee",
+      "fecha_inicio": "2026-08-17",
+      "fecha_fin": "2026-10-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Sebastián Camus",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-08-10",
+      "fecha_fin": "2026-10-09",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Mariana Hernández",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-08-10",
+      "fecha_fin": "2026-10-09",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Javier de Petris",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-08-10",
+      "fecha_fin": "2026-10-09",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Consuelo Moreno",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-08-10",
+      "fecha_fin": "2026-10-09",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "BHP20: Digital (null)": [
+    {
+      "persona": "Josefa Arias",
+      "cargo": "Asociado",
+      "fecha_inicio": "2026-08-03",
+      "fecha_fin": "2026-10-23",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Elisa Robinson",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-08-03",
+      "fecha_fin": "2026-10-23",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Fernanda Galilea",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-08-03",
+      "fecha_fin": "2026-10-23",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Bernardita Lea-Plaza",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-08-18",
+      "fecha_fin": "2026-08-21",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Mariana Hernández",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-08-03",
+      "fecha_fin": "2026-10-23",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Sebastián Cifuentes",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-08-10",
+      "fecha_fin": "2026-10-23",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Sebastián Cifuentes",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-08-10",
+      "fecha_fin": "2026-10-23",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Joaquín López",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-08-03",
+      "fecha_fin": "2026-10-23",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "Innovation (BHP18)": [
+    {
+      "persona": "Alejandra Loyola",
+      "cargo": "Socio",
+      "fecha_inicio": "2026-07-06",
+      "fecha_fin": "2026-08-15",
+      "pct_dedicacion": 50,
+      "estado": "activa"
+    },
+    {
+      "persona": "Andrés Justiniano",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-27",
+      "fecha_fin": "2026-08-15",
+      "pct_dedicacion": 50,
+      "estado": "activa"
+    },
+    {
+      "persona": "Sebastián Camus",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-07-06",
+      "fecha_fin": "2026-08-15",
+      "pct_dedicacion": 50,
+      "estado": "activa"
+    },
+    {
+      "persona": "Joaquín Cerda",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-05-11",
+      "fecha_fin": "2026-08-15",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Josefa Arias",
+      "cargo": "Asociado",
+      "fecha_inicio": "2026-05-11",
+      "fecha_fin": "2026-08-06",
+      "pct_dedicacion": 50,
+      "estado": "activa"
+    },
+    {
+      "persona": "Consuelo Moreno",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-01",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Andrés Justiniano",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-06",
+      "fecha_fin": "2026-07-26",
+      "pct_dedicacion": 50,
+      "estado": "activa"
+    }
+  ],
+  "Museo Arte precolombino (null)": [
+    {
+      "persona": "José Miguel Sepulveda",
+      "cargo": "Socio",
+      "fecha_inicio": "2026-07-10",
+      "fecha_fin": "2026-08-22",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Andrés Mercado",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-05-18",
+      "fecha_fin": "2026-08-22",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Florencia Hernández",
+      "cargo": "Desarrollo",
+      "fecha_inicio": "2026-07-10",
+      "fecha_fin": "2026-08-22",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Maria Jesús Moreno",
+      "cargo": "Desarrollo",
+      "fecha_inicio": "2026-05-18",
+      "fecha_fin": "2026-08-22",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Martin Rosenfeld",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-05-18",
+      "fecha_fin": "2026-08-22",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "De prueba (null)": [
+    {
+      "persona": "Florencia Hernández",
+      "cargo": "Desarrollo",
+      "fecha_inicio": "2026-07-01",
+      "fecha_fin": "2026-07-31",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Florencia Hernández",
+      "cargo": "Desarrollo",
+      "fecha_inicio": "2026-08-31",
+      "fecha_fin": "2026-09-18",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Florencia Hernández",
+      "cargo": "Desarrollo",
+      "fecha_inicio": "2026-08-05",
+      "fecha_fin": "2026-08-16",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Florencia Hernández",
+      "cargo": "Desarrollo",
+      "fecha_inicio": "2026-08-05",
+      "fecha_fin": "2026-08-16",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Florencia Hernández",
+      "cargo": "Desarrollo",
+      "fecha_inicio": "2026-08-05",
+      "fecha_fin": "2026-08-16",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "MITTA01 (MITTA01)": [
+    {
+      "persona": "Sebastián Cifuentes",
+      "cargo": "Asociado",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-29",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Bernardita Lea-Plaza",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-22",
+      "fecha_fin": "2026-08-29",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Andrés Justiniano",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-30",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Andrés Justiniano",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-28",
+      "fecha_fin": "2026-07-31",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "Minera Salar Blanco (null)": [
+    {
+      "persona": "Alfonso Undurraga",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-08-10",
+      "fecha_fin": "2026-08-21",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Simón Merino",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-08-10",
+      "fecha_fin": "2026-08-21",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Francisco Croquevielle",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-08-10",
+      "fecha_fin": "2026-08-21",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "Senadis (SEN02)": [
+    {
+      "persona": "Miguel Mondaca",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-08-01",
+      "fecha_fin": "2026-09-13",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Martin Rosenfeld",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-21",
+      "fecha_fin": "2026-09-13",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Miguel Mondaca",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-07-31",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Martin Rosenfeld",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-22",
+      "fecha_fin": "2026-07-31",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Miguel Mondaca",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-07-26",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Andrés Justiniano",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-09-13",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Andrés Mercado",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-09-04",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Alfonso Undurraga",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-07-31",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Andrés Mercado",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-08-17",
+      "fecha_fin": "2026-09-13",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "PASA Extensión (null)": [
+    {
+      "persona": "Alfonso Undurraga",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-21",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Elisa Robinson",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-21",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Consuelo Moreno",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-21",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Juan Pablo Vega",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-21",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Mariana Hernández",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-27",
+      "fecha_fin": "2026-08-01",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "Prioridades asuntos corporativos y fundación CMPC (CMPC14)": [
+    {
+      "persona": "Gerardo Boetsch",
+      "cargo": "Gerente de Proyectos",
+      "fecha_inicio": "2026-06-01",
+      "fecha_fin": "2026-07-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Simón Merino",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-06-11",
+      "fecha_fin": "2026-07-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Elisa Robinson",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-05-25",
+      "fecha_fin": "2026-07-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Sebastián Cifuentes",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-05-25",
+      "fecha_fin": "2026-07-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Andrés Justiniano",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-05-25",
+      "fecha_fin": "2026-07-25",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Fernanda Galilea",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-06-15",
+      "fecha_fin": "2026-06-26",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "ACHS No Laboral (null)": [
+    {
+      "persona": "Joaquín López",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-07",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Martin Rosenfeld",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-07",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Mariana Hernández",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-26",
+      "fecha_fin": "2026-08-07",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "Copec Marketing (null)": [
+    {
+      "persona": "Andrés Justiniano",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-20",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Pablo Murillo",
+      "cargo": "Gerente de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-20",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Josefa Arias",
+      "cargo": "Asociado",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-20",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "Rio Tinto (null)": [
+    {
+      "persona": "Andrés Mercado",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-27",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Sebastián Cifuentes",
+      "cargo": "Consultor Senior",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-27",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Joaquín Cerda",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-27",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Mariana Hernández",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-27",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "probando posibles proyectos (null)": [
+    {
+      "persona": "Florencia Hernández",
+      "cargo": "Desarrollo",
+      "fecha_inicio": "2026-07-15",
+      "fecha_fin": "2026-07-19",
+      "pct_dedicacion": 65,
+      "estado": "activa"
+    },
+    {
+      "persona": "Florencia Hernández",
+      "cargo": "Desarrollo",
+      "fecha_inicio": "2026-07-21",
+      "fecha_fin": "2026-07-31",
+      "pct_dedicacion": 65,
+      "estado": "activa"
+    }
+  ],
+  "ACHS Minerería (null)": [
+    {
+      "persona": "Andrés Justiniano",
+      "cargo": "Director de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-08",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Pablo Murillo",
+      "cargo": "Gerente de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-08",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Simón Merino",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-07-20",
+      "fecha_fin": "2026-08-08",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "probando historial años pasados (null)": [
+    {
+      "persona": "Florencia Hernández",
+      "cargo": "Desarrollo",
+      "fecha_inicio": "2024-06-07",
+      "fecha_fin": "2026-07-08",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "CSC09 (null)": [
+    {
+      "persona": "Tomás Concha",
+      "cargo": "Consultor de Proyectos",
+      "fecha_inicio": "2026-07-28",
+      "fecha_fin": "2026-09-18",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Florencia Santa Cruz",
+      "cargo": "Consultor Analista",
+      "fecha_inicio": "2026-07-30",
+      "fecha_fin": "2026-09-18",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    },
+    {
+      "persona": "Pablo Murillo",
+      "cargo": "Gerente de Proyectos",
+      "fecha_inicio": "2026-07-30",
+      "fecha_fin": "2026-09-18",
+      "pct_dedicacion": 100,
+      "estado": "activa"
+    }
+  ],
+  "probando (null)": [
+    {
+      "persona": "Florencia Hernández",
+      "cargo": "Desarrollo",
+      "fecha_inicio": "2026-08-17",
+      "fecha_fin": "2026-10-04",
+      "pct_dedicacion": 50,
+      "estado": "activa"
+    }
+  ]
+}

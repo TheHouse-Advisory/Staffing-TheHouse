@@ -473,13 +473,17 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
 interface HistorialEngRow {
   id: string;            // id de la asignación (key de fila)
   engagementId: string;
+  codigo: string;
   nombre: string;
   cliente: string;
   cargo: string;
   fechaInicio: string;
-  fechaFin: string;
+  fechaFin: string | null;
   diasHabiles: number;
+  esActual: boolean;
 }
+
+const GRUPO_ACTUALES = "Actuales";
 
 interface HistorialAccordionProps {
   personaId: string;
@@ -507,42 +511,54 @@ export function HistorialProyectosAccordion({ personaId, personaNombreCompleto, 
       setLoading(true);
       const sb = createAnyClient();
       const hoy = new Date().toISOString().slice(0, 10);
-      // Solo asignaciones YA FINALIZADAS (fecha_fin < hoy) — igual criterio que antes
-      // !inner + exclusión de "posibles_proyectos": no deben contarse como historial real
+      // Trae asignaciones ya iniciadas (actuales + finalizadas); las futuras (aún no
+      // iniciadas) no aplican a este historial. !inner + exclusión de "posibles_proyectos"
+      // y engagements en papelera: no deben contarse como historial real.
       const { data } = await (sb as any)
         .from("asignacion")
-        .select("id, fecha_inicio, fecha_fin, cargo_al_momento, engagement:engagement_id!inner(id, nombre, cliente, tipo)")
+        .select("id, fecha_inicio, fecha_fin, cargo_al_momento, engagement:engagement_id!inner(id, nombre, cliente, tipo, codigo, estado, is_deleted)")
         .eq("persona_id", personaId)
-        .not("fecha_fin", "is", null)
-        .lt("fecha_fin", hoy)
+        .eq("engagement.is_deleted", false)
         .neq("engagement.tipo", "posibles_proyectos")
+        .lte("fecha_inicio", hoy)
         .order("fecha_inicio", { ascending: false });
 
       setRows(
-        ((data ?? []) as any[]).map((r) => ({
-          id:           r.id,
-          engagementId: r.engagement?.id ?? "",
-          nombre:       r.engagement?.nombre  ?? "—",
-          cliente:      r.engagement?.cliente ?? "",
-          cargo:        r.cargo_al_momento ?? "",
-          fechaInicio:  r.fecha_inicio,
-          fechaFin:     r.fecha_fin,
-          diasHabiles:  calculateBusinessDays(r.fecha_inicio, r.fecha_fin),
-        }))
+        ((data ?? []) as any[]).map((r) => {
+          const fechaFin: string | null = r.fecha_fin;
+          const esActual = (fechaFin === null || fechaFin >= hoy) && r.engagement?.estado === "activo";
+          return {
+            id:           r.id,
+            engagementId: r.engagement?.id ?? "",
+            codigo:       r.engagement?.codigo ?? "",
+            nombre:       r.engagement?.nombre  ?? "—",
+            cliente:      r.engagement?.cliente ?? "",
+            cargo:        r.cargo_al_momento ?? "",
+            fechaInicio:  r.fecha_inicio,
+            fechaFin,
+            diasHabiles:  calculateBusinessDays(r.fecha_inicio, fechaFin ?? hoy),
+            esActual,
+          };
+        })
       );
       setLoading(false);
     }
     load();
   }, [personaId]);
 
-  // Agrupa por año (según fecha_inicio) → años desc; dentro de cada año, cronológico Ene→Dic
-  const porAnio = new Map<string, HistorialEngRow[]>();
+  // Agrupa: "Actuales" primero, luego por año de fecha_término (finalizados) desc;
+  // dentro de cada grupo, cronológico Ene→Dic por fecha_inicio.
+  const porGrupo = new Map<string, HistorialEngRow[]>();
   rows.forEach((r) => {
-    const anio = r.fechaInicio.slice(0, 4);
-    (porAnio.get(anio) ?? porAnio.set(anio, []).get(anio)!).push(r);
+    const grupo = r.esActual ? GRUPO_ACTUALES : (r.fechaFin ?? r.fechaInicio).slice(0, 4);
+    (porGrupo.get(grupo) ?? porGrupo.set(grupo, []).get(grupo)!).push(r);
   });
-  const anios = [...porAnio.keys()].sort((a, b) => b.localeCompare(a));
-  anios.forEach((a) => porAnio.get(a)!.sort((x, y) => x.fechaInicio.localeCompare(y.fechaInicio)));
+  const grupos = [...porGrupo.keys()].sort((a, b) => {
+    if (a === GRUPO_ACTUALES) return -1;
+    if (b === GRUPO_ACTUALES) return 1;
+    return b.localeCompare(a);
+  });
+  grupos.forEach((g) => porGrupo.get(g)!.sort((x, y) => x.fechaInicio.localeCompare(y.fechaInicio)));
 
   async function confirmarEliminar() {
     if (!deletingEng) return;
@@ -554,21 +570,21 @@ export function HistorialProyectosAccordion({ personaId, personaNombreCompleto, 
   }
 
   if (loading) return <p className="text-xs text-gray-300">Cargando historial...</p>;
-  if (anios.length === 0) return <p className="text-sm text-[#ccc] italic">Sin proyectos registrados.</p>;
+  if (grupos.length === 0) return <p className="text-sm text-[#ccc] italic">Sin proyectos registrados.</p>;
 
   return (
     <div>
       <div className="divide-y divide-[#f0f0f0]">
-        {anios.map((anio) => {
-          const items = porAnio.get(anio)!;
-          const abierto = openYear === anio;
+        {grupos.map((grupo) => {
+          const items = porGrupo.get(grupo)!;
+          const abierto = openYear === grupo;
           return (
-            <div key={anio}>
+            <div key={grupo}>
               <button
-                onClick={() => setOpenYear(abierto ? null : anio)}
+                onClick={() => setOpenYear(abierto ? null : grupo)}
                 className="w-full flex items-center justify-between py-3 first:pt-0 text-left"
               >
-                <span className="text-sm font-semibold text-[#1a1a2e]">{anio}</span>
+                <span className="text-sm font-semibold text-[#1a1a2e]">{grupo}</span>
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-[#888]">{items.length} {items.length === 1 ? "proyecto" : "proyectos"}</span>
                   <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${abierto ? "rotate-180" : ""}`} />
@@ -585,8 +601,9 @@ export function HistorialProyectosAccordion({ personaId, personaNombreCompleto, 
                           onClick={() => onVerDetalle(h.engagementId)}
                           className="block w-full font-medium text-gray-900 truncate text-left hover:underline hover:text-[#4a90e2] transition-colors"
                         >
-                          {h.nombre}
+                          {h.codigo ? `${h.codigo}: ${h.nombre}` : h.nombre}
                         </button>
+                        {h.cliente && <p className="text-xs text-gray-400 truncate mt-0.5">{h.cliente}</p>}
                         {h.cargo && <p className="text-xs text-gray-500 mt-0.5">{h.cargo}</p>}
                       </div>
 
@@ -595,7 +612,7 @@ export function HistorialProyectosAccordion({ personaId, personaNombreCompleto, 
                         <span className="text-xs text-gray-500 whitespace-nowrap">
                           {format(new Date(h.fechaInicio + "T00:00:00"), "d MMM yyyy", { locale: es })}
                           {" al "}
-                          {format(new Date(h.fechaFin + "T00:00:00"), "d MMM yyyy", { locale: es })}
+                          {h.fechaFin ? format(new Date(h.fechaFin + "T00:00:00"), "d MMM yyyy", { locale: es }) : "hoy"}
                         </span>
                         {!rolSinDias(rolActual) && (
                           <span className="px-2.5 py-1 text-xs font-semibold text-blue-600 bg-blue-50 rounded-md whitespace-nowrap">

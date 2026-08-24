@@ -155,16 +155,24 @@ export function PersonaProfile({ id }: Props) {
 
   const load = async () => {
     const supabase = createAnyClient();
+    const hoy = new Date().toISOString().slice(0, 10);
 
     const [pRes, asigRes, mentoreRes, cargosRes] = await Promise.all([
       supabase.from("persona").select("*").eq("id", id).single(),
 
+      // Solo asignaciones vigentes HOY (fecha_inicio <= hoy y fecha_fin null o futura) de
+      // engagements activos y no borrados: las históricas/finalizadas (ej. migradas) o de
+      // engagements en papelera no deben sumar a la ocupación actual.
       supabase
         .from("asignacion")
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .select("id, pct_dedicacion, fecha_inicio, fecha_fin, cargo_al_momento, engagement:engagement_id(id, nombre)" as any)
+        .select("id, pct_dedicacion, fecha_inicio, fecha_fin, cargo_al_momento, engagement:engagement_id!inner(id, nombre, estado, is_deleted)" as any)
         .eq("persona_id", id)
         .eq("estado", "activa")
+        .eq("engagement.estado", "activo")
+        .eq("engagement.is_deleted", false)
+        .lte("fecha_inicio", hoy)
+        .or(`fecha_fin.is.null,fecha_fin.gte.${hoy}`)
         .order("fecha_inicio"),
 
       // Personas a las que esta persona hace de mentor

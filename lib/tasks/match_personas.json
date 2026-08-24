@@ -1,0 +1,372 @@
+{
+  "generado_en": "2026-08-24T15:22:45.256Z",
+  "total_csv": 303,
+  "total_persona_db": 50,
+  "coincidencias_exactas": [
+    {
+      "persona_id": "5f7c0543-4640-4781-b8d1-69401c9bbb8e",
+      "email_normalizado": "jsepulveda@thehouse.cl",
+      "nombre_db": "José Miguel Sepulveda",
+      "ids_ficticios": [
+        "PERSON_0002"
+      ],
+      "nombres_csv": [
+        "José Miguel Sepúlveda"
+      ]
+    },
+    {
+      "persona_id": "4a6b0e37-e6bf-4b49-af7a-140f68b173b9",
+      "email_normalizado": "aloyola@thehouse.cl",
+      "nombre_db": "Alejandra Loyola",
+      "ids_ficticios": [
+        "PERSON_0003"
+      ],
+      "nombres_csv": [
+        "Alejandra Loyola"
+      ]
+    },
+    {
+      "persona_id": "b10ce039-24bb-4513-8089-f137a9298db1",
+      "email_normalizado": "aundurraga@thehouse.cl",
+      "nombre_db": "Alfonso Undurraga",
+      "ids_ficticios": [
+        "PERSON_0005"
+      ],
+      "nombres_csv": [
+        "Alfonso Undurraga"
+      ]
+    },
+    {
+      "persona_id": "ef5af5d5-8199-4d9a-a973-bb422a4a00de",
+      "email_normalizado": "mhernandez@thehouse.cl",
+      "nombre_db": "Mariana Hernández",
+      "ids_ficticios": [
+        "PERSON_0013"
+      ],
+      "nombres_csv": [
+        "Mariana Hernández"
+      ]
+    },
+    {
+      "persona_id": "bab68f7a-b9d5-4103-bf9c-22fcb525bf13",
+      "email_normalizado": "lcelleri@thehouse.cl",
+      "nombre_db": "Loredanna Celleri",
+      "ids_ficticios": [
+        "PERSON_0015"
+      ],
+      "nombres_csv": [
+        "Loredanna Celleri"
+      ]
+    },
+    {
+      "persona_id": "10a98d26-4ea4-444d-ad24-33ee8fe725d3",
+      "email_normalizado": "pmurillo@thehouse.cl",
+      "nombre_db": "Pablo Murillo",
+      "ids_ficticios": [
+        "PERSON_0039"
+      ],
+      "nombres_csv": [
+        "Pablo Murillo"
+      ]
+    },
+    {
+      "persona_id": "ea1b5dac-13d5-4007-a038-b8961ee31b5f",
+      "email_normalizado": "jguridi@thehouse.cl",
+      "nombre_db": "Josefina Guridi",
+      "ids_ficticios": [
+        "PERSON_0040"
+      ],
+      "nombres_csv": [
+        "Josefina Guridi"
+      ]
+    },
+    {
+      "persona_id": "04fa02b5-452a-4903-a37d-390b83b9674c",
+      "email_normalizado": "scifuentes@thehouse.cl",
+      "nombre_db": "Sebastián Cifuentes",
+      "ids_ficticios": [
+        "PERSON_0041"
+      ],
+      "nombres_csv": [
+        "Sebastián Cifuentes"
+      ]
+    },
+    {
+      "persona_id": "bbba20bf-bd38-4b28-9c4e-9a19200c24bf",
+      "email_normalizado": "ajustiniano@thehouse.cl",
+      "nombre_db": "Andrés Justiniano",
+      "ids_ficticios": [
+        "PERSON_0064"
+      ],
+      "nombres_csv": [
+        "Andrés Justiniano"
+      ]
+    },
+    {
+      "persona_id": "9e69c082-57ee-44a4-85cd-9184c2120079",
+      "email_normalizado": "jvega@thehouse.cl",
+      "nombre_db": "Juan Pablo Vega",
+      "ids_ficticios": [
+        "PERSON_0068"
+      ],
+      "nombres_csv": [
+        "Juan Pablo Vega"
+      ]
+    },
+    {
+      "persona_id": "27c2bb6d-1795-4ef3-9a2b-47ba2b24f2bc",
+      "email_normalizado": "mgalvez@thehouse.cl",
+      "nombre_db": "Magdalena Gálvez",
+      "ids_ficticios": [
+        "PERSON_0075",
+        "PERSON_0236"
+      ],
+      "nombres_csv": [
+        "Magdalena Gálvez",
+        "Magdalena Galvez"
+      ]
+    },
+    {
+      "persona_id": "ecbf24f9-d0c7-4a7c-832a-b60a8a504dde",
+      "email_normalizado": "fcroquevielle@thehouse.cl",
+      "nombre_db": "Francisco Croquevielle",
+      "ids_ficticios": [
+        "PERSON_0207"
+      ],
+      "nombres_csv": [
+        "Francisco Croquevielle"
+      ]
+    },
+    {
+      "persona_id": "ca6400be-5cc6-4afc-a0c9-8ce41d928562",
+      "email_normalizado": "scamus@thehouse.cl",
+      "nombre_db": "Sebastián Camus",
+      "ids_ficticios": [
+        "PERSON_0210"
+      ],
+      "nombres_csv": [
+        "Sebastián Camus"
+      ]
+    },
+    {
+      "persona_id": "0a0ef4d2-747d-4d15-a450-92da9c5043ac",
+      "email_normalizado": "bmatte@thehouse.cl",
+      "nombre_db": "Benjamín Matte",
+      "ids_ficticios": [
+        "PERSON_0212"
+      ],
+      "nombres_csv": [
+        "Benjamín Matte"
+      ]
+    },
+    {
+      "persona_id": "ce9b043b-591f-4718-86f6-70dbf745e484",
+      "email_normalizado": "jcruz@thehouse.cl",
+      "nombre_db": "Josefina Cruz",
+      "ids_ficticios": [
+        "PERSON_0216"
+      ],
+      "nombres_csv": [
+        "Josefina Cruz"
+      ]
+    },
+    {
+      "persona_id": "e1aa8668-6d66-491d-b49f-f1bdef0bc21f",
+      "email_normalizado": "amercado@thehouse.cl",
+      "nombre_db": "Andrés Mercado",
+      "ids_ficticios": [
+        "PERSON_0217"
+      ],
+      "nombres_csv": [
+        "Andrés Mercado"
+      ]
+    },
+    {
+      "persona_id": "92d3b110-2433-461d-9432-a819e99c0a45",
+      "email_normalizado": "sdelano@thehouse.cl",
+      "nombre_db": "Sofía Delano",
+      "ids_ficticios": [
+        "PERSON_0219"
+      ],
+      "nombres_csv": [
+        "Sofía Delano"
+      ]
+    },
+    {
+      "persona_id": "2c32616f-9b4d-44eb-a378-70998163951c",
+      "email_normalizado": "jarias@thehouse.cl",
+      "nombre_db": "Josefa Arias",
+      "ids_ficticios": [
+        "PERSON_0222"
+      ],
+      "nombres_csv": [
+        "Josefa Arias"
+      ]
+    },
+    {
+      "persona_id": "88a13294-03f6-4420-b731-21408110e00c",
+      "email_normalizado": "vchadwick@thehouse.cl",
+      "nombre_db": "Vicente Chadwick",
+      "ids_ficticios": [
+        "PERSON_0224"
+      ],
+      "nombres_csv": [
+        "Vicente Chadwick"
+      ]
+    },
+    {
+      "persona_id": "6fd8f098-37e1-4785-ab83-b57804bb804b",
+      "email_normalizado": "erobinson@thehouse.cl",
+      "nombre_db": "Elisa Robinson",
+      "ids_ficticios": [
+        "PERSON_0226"
+      ],
+      "nombres_csv": [
+        "Elisa Robinson"
+      ]
+    },
+    {
+      "persona_id": "aab349b4-15e6-4db5-bce8-41c4b3faeec7",
+      "email_normalizado": "tconcha@thehouse.cl",
+      "nombre_db": "Tomás Concha",
+      "ids_ficticios": [
+        "PERSON_0253"
+      ],
+      "nombres_csv": [
+        "Tomás Concha"
+      ]
+    },
+    {
+      "persona_id": "24c72e76-62ab-4f09-8a92-a3cf56f38416",
+      "email_normalizado": "jdepetris@thehouse.cl",
+      "nombre_db": "Javier de Petris",
+      "ids_ficticios": [
+        "PERSON_0256"
+      ],
+      "nombres_csv": [
+        "Javier de Petris"
+      ]
+    },
+    {
+      "persona_id": "322aa3f5-82d7-4dea-a682-36503cc3c831",
+      "email_normalizado": "mmoncada@thehouse.cl",
+      "nombre_db": "Miguel Mondaca",
+      "ids_ficticios": [
+        "PERSON_0259"
+      ],
+      "nombres_csv": [
+        "Miguel Mondaca"
+      ]
+    },
+    {
+      "persona_id": "80d50676-7b81-4bc8-ba4a-94a942683782",
+      "email_normalizado": "talvarez@thehouse.cl",
+      "nombre_db": "Tomás Álvarez",
+      "ids_ficticios": [
+        "PERSON_0262"
+      ],
+      "nombres_csv": [
+        "Tomás Álvarez"
+      ]
+    },
+    {
+      "persona_id": "d3e13aa4-e1bd-43d2-b56d-4912b1ae88a4",
+      "email_normalizado": "caguilera@thehouse.cl",
+      "nombre_db": "Constanza Aguilera",
+      "ids_ficticios": [
+        "PERSON_0269"
+      ],
+      "nombres_csv": [
+        "Constanza Aguilera"
+      ]
+    },
+    {
+      "persona_id": "8e0b15b1-9eb7-4b19-a223-bb7b04e0caec",
+      "email_normalizado": "smerino@thehouse.cl",
+      "nombre_db": "Simón Merino",
+      "ids_ficticios": [
+        "PERSON_0273"
+      ],
+      "nombres_csv": [
+        "Simón Merino"
+      ]
+    },
+    {
+      "persona_id": "7e9e13fc-de2b-415e-8130-86b160ffd863",
+      "email_normalizado": "jcerda@thehouse.cl",
+      "nombre_db": "Joaquín Cerda",
+      "ids_ficticios": [
+        "PERSON_0274"
+      ],
+      "nombres_csv": [
+        "Joaquín Cerda"
+      ]
+    },
+    {
+      "persona_id": "3130b5bb-fe61-4138-9e4a-66dead7b2749",
+      "email_normalizado": "bleaplaza@thehouse.cl",
+      "nombre_db": "Bernardita Lea-Plaza",
+      "ids_ficticios": [
+        "PERSON_0279"
+      ],
+      "nombres_csv": [
+        "Bernardita Lea-Plaza"
+      ]
+    },
+    {
+      "persona_id": "5d81c140-2468-4d3f-bcd1-bfb0e60e62ee",
+      "email_normalizado": "fgalilea@thehouse.cl",
+      "nombre_db": "Fernanda Galilea",
+      "ids_ficticios": [
+        "PERSON_0284"
+      ],
+      "nombres_csv": [
+        "Fernanda Galilea"
+      ]
+    },
+    {
+      "persona_id": "0a6c8fb0-d54d-4e4e-96b2-0a4a87909956",
+      "email_normalizado": "gboetsch@thehouse.cl",
+      "nombre_db": "Gerardo Boetsch",
+      "ids_ficticios": [
+        "PERSON_0285"
+      ],
+      "nombres_csv": [
+        "Gerardo Boetsch"
+      ]
+    },
+    {
+      "persona_id": "61f8d73d-1c47-41a1-9c92-3b28d447e165",
+      "email_normalizado": "mrosenfeld@thehouse.cl",
+      "nombre_db": "Martin Rosenfeld",
+      "ids_ficticios": [
+        "PERSON_0291"
+      ],
+      "nombres_csv": [
+        "Martín Rosenfeld"
+      ]
+    },
+    {
+      "persona_id": "55e2df54-20db-43c5-8c0e-3fabed7e4423",
+      "email_normalizado": "sfigueroa@thehouse.cl",
+      "nombre_db": "Sofia Figueroa",
+      "ids_ficticios": [
+        "PERSON_0299"
+      ],
+      "nombres_csv": [
+        "Sofía Figueroa"
+      ]
+    },
+    {
+      "persona_id": "02205551-3d3f-4c9f-994e-d1b924629e9c",
+      "email_normalizado": "cmoreno@thehouse.cl",
+      "nombre_db": "Consuelo Moreno",
+      "ids_ficticios": [
+        "PERSON_0301"
+      ],
+      "nombres_csv": [
+        "Consuelo Moreno"
+      ]
+    }
+  ]
+}
