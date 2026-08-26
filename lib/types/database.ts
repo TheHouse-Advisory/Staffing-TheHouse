@@ -276,6 +276,19 @@ export interface Asignacion {
 }
 
 /**
+ * Fila de `asignacion` con su `engagement` embebido (join parcial tipo Supabase).
+ * Usado en ProyectosPersonaDetalle.tsx / HistorialProyectosAccordion — cada query
+ * selecciona un subconjunto distinto de columnas, por eso los campos son parciales.
+ */
+export type AsignacionConEngagement = Pick<Asignacion, "id" | "fecha_inicio" | "fecha_fin"> &
+  Partial<Pick<Asignacion, "pct_dedicacion" | "cargo_al_momento">> & {
+    engagement: Pick<Engagement, "id" | "nombre" | "cliente" | "tipo"> &
+      Partial<Pick<Engagement, "estado" | "is_deleted">> & {
+        industria?: Pick<CatIndustria, "nombre"> | null;
+      };
+  };
+
+/**
  * asignacion_historial: id, asignacion_id, accion, campo_modificado,
  *   valor_anterior, valor_nuevo, realizado_por, created_at
  * NOTA: usa 'asignacion_id' (NOT NULL FK a asignacion), NO 'asignacion_resultante_id'

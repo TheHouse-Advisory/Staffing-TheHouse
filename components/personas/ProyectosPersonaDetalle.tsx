@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { format, isWeekend } from "date-fns";
 import { es } from "date-fns/locale";
 import { ChevronLeft, ChevronRight, ChevronDown, Trash2 } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { expandirRango } from "@/lib/queries/ausencias";
 import { calculateBusinessDays } from "@/lib/utils/date-utils";
+import type { AsignacionConEngagement } from "@/lib/types/database";
 
 // ── Días hábiles ──────────────────────────────────────────────
 function diasHabiles(desde: string, hasta: string): number {
@@ -157,7 +158,7 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
       const hoy = new Date().toISOString().split("T")[0];
       // !inner + filtro por estado/is_deleted del engagement: descarta asignaciones "fantasma"
       // de engagements borrados, en papelera o no activos
-      const { data } = await (sb as any)
+      const { data } = await sb
         .from("asignacion")
         .select("id, fecha_inicio, fecha_fin, pct_dedicacion, engagement:engagement_id!inner(id, nombre, cliente, industria:industria_id(nombre), estado, is_deleted, tipo)")
         .eq("persona_id", personaId)
@@ -165,11 +166,11 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
         .eq("engagement.estado", "activo")
         .eq("engagement.is_deleted", false)
         .neq("engagement.tipo", "posibles_proyectos")
-        .gte("fecha_fin", hoy)
+        .or(`fecha_fin.gte.${hoy},fecha_fin.is.null`) // sin fecha_fin = en curso, no debe excluirse
         .order("fecha_inicio");
 
       setAsignaciones(
-        ((data ?? []) as any[]).map((a) => {
+        ((data ?? []) as AsignacionConEngagement[]).map((a) => {
           const { dias, esFuturo } = calcDias(a.fecha_inicio, a.fecha_fin);
           const diasRestantes = a.fecha_fin && !esFuturo
             ? diasHabiles(hoy, a.fecha_fin)
@@ -240,7 +241,8 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
   }
 
   // ── Modo completo: Mini-Gantt ─────────────────────────────────
-  const { cols, windowStart, windowEnd } = buildVentana(pv, offset);
+  // Memoizado: solo recalcula al cambiar vista/página, no en cada re-render del padre.
+  const { cols, windowStart, windowEnd } = useMemo(() => buildVentana(pv, offset), [pv, offset]);
   const windowMs = windowEnd.getTime() - windowStart.getTime();
 
   // Marcador de hoy
@@ -249,7 +251,7 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
   const showToday = todayPct >= 0 && todayPct <= 100;
 
   // Posicionamiento porcentual de cada barra
-  const rows = asignaciones.map((a) => {
+  const rows = useMemo(() => asignaciones.map((a) => {
     const iniMs  = new Date(a.fechaInicio + "T00:00:00").getTime();
     const finRaw = a.fechaFin
       ? new Date(a.fechaFin + "T00:00:00").getTime() + 86_400_000
@@ -261,16 +263,16 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
     const right = Math.min(100, ((finMs - windowStart.getTime()) / windowMs) * 100);
     const width = Math.max(0.5, right - left);
     return { ...a, visible, left, width, iniMs, finMs };
-  });
+  }), [asignaciones, windowStart, windowEnd, windowMs]);
 
   // Sobreasignación por columna
-  const pctPorCol = cols.map((col, i) => {
+  const pctPorCol = useMemo(() => cols.map((col, i) => {
     const colEnd = i < cols.length - 1 ? cols[i + 1].startMs : windowEnd.getTime();
     return rows.reduce((sum, r) => {
       if (!r.visible) return sum;
       return sum + (r.iniMs < colEnd && r.finMs > col.startMs ? r.pct : 0);
     }, 0);
-  });
+  }), [cols, rows, windowEnd]);
 
   const INFO_W = 156;
 
@@ -477,8 +479,9 @@ interface HistorialEngRow {
   cliente: string;
   cargo: string;
   fechaInicio: string;
-  fechaFin: string;
+  fechaFin: string | null;  // null = sigue activo (va a "Actuales")
   diasHabiles: number;
+  esActual: boolean;
 }
 
 interface HistorialAccordionProps {
@@ -486,6 +489,32 @@ interface HistorialAccordionProps {
   personaNombreCompleto: string;
   rolActual: string | null;
   onVerDetalle: (engagementId: string) => void;
+}
+
+/**
+ * Consolida en una sola tarjeta las sub-asignaciones del mismo engagement (mismo nombre,
+ * p.ej. splits semanales o duplicados de "Propuesta Comercial"/"Frente comercial"):
+ * toma la fecha_inicio más antigua, la fecha_fin más lejana (null = en curso, domina)
+ * y suma los días hábiles trabajados de todas.
+ */
+function consolidarPorEngagement(items: HistorialEngRow[]): HistorialEngRow[] {
+  const porNombre = new Map<string, HistorialEngRow>();
+  for (const item of items) {
+    const key = item.nombre.trim().toLowerCase();
+    const existente = porNombre.get(key);
+    if (!existente) {
+      porNombre.set(key, { ...item });
+      continue;
+    }
+    existente.fechaInicio = item.fechaInicio < existente.fechaInicio ? item.fechaInicio : existente.fechaInicio;
+    existente.fechaFin =
+      existente.fechaFin === null || item.fechaFin === null
+        ? null
+        : item.fechaFin > existente.fechaFin ? item.fechaFin : existente.fechaFin;
+    existente.diasHabiles += item.diasHabiles;
+    existente.esActual = existente.esActual || item.esActual;
+  }
+  return [...porNombre.values()];
 }
 
 /** Roles sin visibilidad de días/carga (mismos que en ProyectosPersonaDetalle) */
@@ -507,42 +536,50 @@ export function HistorialProyectosAccordion({ personaId, personaNombreCompleto, 
       setLoading(true);
       const sb = createAnyClient();
       const hoy = new Date().toISOString().slice(0, 10);
-      // Solo asignaciones YA FINALIZADAS (fecha_fin < hoy) — igual criterio que antes
-      // !inner + exclusión de "posibles_proyectos": no deben contarse como historial real
-      const { data } = await (sb as any)
+      // TODAS las asignaciones (activas y finalizadas) — se clasifican en "Actuales" vs
+      // años históricos en el render. !inner + exclusión de "posibles_proyectos": no
+      // deben contarse como historial real.
+      const { data } = await sb
         .from("asignacion")
-        .select("id, fecha_inicio, fecha_fin, cargo_al_momento, engagement:engagement_id!inner(id, nombre, cliente, tipo)")
+        .select("id, fecha_inicio, fecha_fin, cargo_al_momento, engagement:engagement_id!inner(id, nombre, cliente, tipo, is_deleted)")
         .eq("persona_id", personaId)
-        .not("fecha_fin", "is", null)
-        .lt("fecha_fin", hoy)
         .neq("engagement.tipo", "posibles_proyectos")
         .order("fecha_inicio", { ascending: false });
 
       setRows(
-        ((data ?? []) as any[]).map((r) => ({
-          id:           r.id,
-          engagementId: r.engagement?.id ?? "",
-          nombre:       r.engagement?.nombre  ?? "—",
-          cliente:      r.engagement?.cliente ?? "",
-          cargo:        r.cargo_al_momento ?? "",
-          fechaInicio:  r.fecha_inicio,
-          fechaFin:     r.fecha_fin,
-          diasHabiles:  calculateBusinessDays(r.fecha_inicio, r.fecha_fin),
-        }))
+        ((data ?? []) as AsignacionConEngagement[]).map((r) => {
+          const fechaFin = r.fecha_fin;
+          // "Actuales": en curso hoy y el engagement no está en papelera
+          const esActual = r.fecha_inicio <= hoy && (fechaFin === null || fechaFin >= hoy) && !r.engagement?.is_deleted;
+          return {
+            id:           r.id,
+            engagementId: r.engagement?.id ?? "",
+            nombre:       r.engagement?.nombre  ?? "—",
+            cliente:      r.engagement?.cliente ?? "",
+            cargo:        r.cargo_al_momento ?? "",
+            fechaInicio:  r.fecha_inicio,
+            fechaFin,
+            diasHabiles:  calculateBusinessDays(r.fecha_inicio, fechaFin ?? hoy),
+            esActual,
+          };
+        })
       );
       setLoading(false);
     }
     load();
   }, [personaId]);
 
-  // Agrupa por año (según fecha_inicio) → años desc; dentro de cada año, cronológico Ene→Dic
+  // "Actuales" (en curso hoy) primero; el resto agrupado por año de fecha_inicio, años desc.
+  const ACTUALES = "Actuales";
   const porAnio = new Map<string, HistorialEngRow[]>();
   rows.forEach((r) => {
-    const anio = r.fechaInicio.slice(0, 4);
-    (porAnio.get(anio) ?? porAnio.set(anio, []).get(anio)!).push(r);
+    const grupo = r.esActual ? ACTUALES : r.fechaInicio.slice(0, 4);
+    (porAnio.get(grupo) ?? porAnio.set(grupo, []).get(grupo)!).push(r);
   });
-  const anios = [...porAnio.keys()].sort((a, b) => b.localeCompare(a));
-  anios.forEach((a) => porAnio.get(a)!.sort((x, y) => x.fechaInicio.localeCompare(y.fechaInicio)));
+  const aniosHistoricos = [...porAnio.keys()].filter((g) => g !== ACTUALES).sort((a, b) => b.localeCompare(a));
+  const anios = porAnio.has(ACTUALES) ? [ACTUALES, ...aniosHistoricos] : aniosHistoricos;
+  // Consolida duplicados (mismo engagement_id/nombre) dentro de cada grupo antes de ordenar
+  anios.forEach((a) => porAnio.set(a, consolidarPorEngagement(porAnio.get(a)!).sort((x, y) => x.fechaInicio.localeCompare(y.fechaInicio))));
 
   async function confirmarEliminar() {
     if (!deletingEng) return;
@@ -595,7 +632,7 @@ export function HistorialProyectosAccordion({ personaId, personaNombreCompleto, 
                         <span className="text-xs text-gray-500 whitespace-nowrap">
                           {format(new Date(h.fechaInicio + "T00:00:00"), "d MMM yyyy", { locale: es })}
                           {" al "}
-                          {format(new Date(h.fechaFin + "T00:00:00"), "d MMM yyyy", { locale: es })}
+                          {h.fechaFin ? format(new Date(h.fechaFin + "T00:00:00"), "d MMM yyyy", { locale: es }) : "Presente"}
                         </span>
                         {!rolSinDias(rolActual) && (
                           <span className="px-2.5 py-1 text-xs font-semibold text-blue-600 bg-blue-50 rounded-md whitespace-nowrap">
