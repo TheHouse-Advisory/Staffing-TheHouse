@@ -38,6 +38,7 @@ interface EngRow {
   sort_order: number | null;
   fecha_inicio: string | null;
   fecha_fin: string | null;
+  estado: "activo" | "terminado";
 }
 
 interface ReqRow {
@@ -107,6 +108,12 @@ function fmt(d: Date): string {
   return d.toISOString().slice(0, 10);
 }
 
+/** yyyy-MM-dd -> DD/MM/AAAA (para columnas Inicio/Término). */
+function fmtDDMMYYYY(fecha: string): string {
+  const [y, m, d] = fecha.split("-");
+  return `${d}/${m}/${y}`;
+}
+
 /** Todas las semanas (lunes a viernes) cuyo lunes cae dentro del año dado. */
 function generarSemanasAnio(anio: number): Semana[] {
   const semanas: Semana[] = [];
@@ -161,6 +168,34 @@ function buildLineas(engId: string, semana: Semana, reqs: ReqRow[], asigs: AsigR
       textoConfirmado: confirmados.map((a) => a.iniciales).join(" + "),
       textoPlan: plan.map((a) => a.iniciales).join("/"),
       vacio: confirmados.length === 0 && plan.length === 0,
+    };
+  });
+}
+
+/**
+ * Roster para la columna "Equipo": a diferencia de buildLineas, se arma directo
+ * desde las asignaciones (no depende de que exista un requerimiento activo esa
+ * fecha), para no dejar vacíos engagements con personas staffeadas pero sin
+ * requerimiento formal cubriendo la fecha de referencia.
+ */
+function buildEquipoLineas(engId: string, fecha: string, asigs: AsigRow[]): LineaCelda[] {
+  const asigsDia = asigs.filter((a) => a.engagement_id === engId && solapan(a.fecha_inicio, a.fecha_fin, fecha, fecha));
+  if (asigsDia.length === 0) return [];
+
+  const cargosConAsig = [...new Set(asigsDia.map((a) => a.cargo))];
+  const cargosOrdenados = [
+    ...CARGOS.filter((c) => cargosConAsig.includes(c)),
+    ...cargosConAsig.filter((c) => !(CARGOS as readonly string[]).includes(c)),
+  ];
+
+  return cargosOrdenados.map((cargo) => {
+    const asigsCargo = asigsDia.filter((a) => a.cargo === cargo);
+    const confirmados = asigsCargo.filter((a) => a.estado_staffing === "CONFIRMADO");
+    const plan = asigsCargo.filter((a) => a.estado_staffing === "PLAN");
+    return {
+      textoConfirmado: confirmados.map((a) => a.iniciales).join(" + "),
+      textoPlan: plan.map((a) => a.iniciales).join("/"),
+      vacio: false, // sin noción de "requerimiento sin cubrir" acá
     };
   });
 }
@@ -325,7 +360,9 @@ function escribirBloque(
   const filaHeader = sheet.getRow(fila);
   filaHeader.getCell(1).value = "Proyecto";
   filaHeader.getCell(2).value = "Inicio";
-  semanas.forEach((s, i) => (filaHeader.getCell(3 + i).value = s.label));
+  filaHeader.getCell(3).value = "Término";
+  filaHeader.getCell(4).value = "Equipo";
+  semanas.forEach((s, i) => (filaHeader.getCell(5 + i).value = s.label));
   filaHeader.eachCell((cell) => {
     cell.font = { bold: true };
     cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFF9F9F9" } };
@@ -333,12 +370,33 @@ function escribirBloque(
   });
   fila++;
 
+  // Staffing vigente hoy o, si el engagement ya terminó, el último equipo real:
+  // se toma la fecha más tardía con una asignación (no la fecha_fin del engagement,
+  // que puede no calzar exacto con esos registros y dejar la celda vacía). El
+  // roster se arma con buildEquipoLineas (basado solo en asignaciones, no en
+  // requerimientos) para no perder personas staffeadas sin requerimiento formal.
+  const hoy = fmt(new Date());
+  const fechaFinalEquipo = (engId: string, terminado: boolean): string => {
+    if (!terminado) return hoy;
+    const fines = asigs
+      .filter((a) => a.engagement_id === engId)
+      .map((a) => a.fecha_fin ?? hoy);
+    return fines.length > 0 ? fines.reduce((max, f) => (f > max ? f : max)) : hoy;
+  };
+
   engs.forEach((eng) => {
     const row = sheet.getRow(fila);
     row.getCell(1).value = eng.codigo ? `${eng.codigo}: ${eng.nombre}` : eng.nombre;
-    row.getCell(2).value = eng.fecha_inicio ?? "—";
+    row.getCell(2).value = eng.fecha_inicio ? fmtDDMMYYYY(eng.fecha_inicio) : "—";
+    // "En proceso" solo si está activo hoy (estado); si ya terminó, se indica su fecha de término.
+    row.getCell(3).value =
+      eng.estado === "activo" ? "En proceso" : eng.fecha_fin ? fmtDDMMYYYY(eng.fecha_fin) : "—";
+    const fechaRefEquipo = fechaFinalEquipo(eng.id, eng.estado !== "activo");
+    const cellEquipo = row.getCell(4);
+    cellEquipo.value = celdaRichText(buildEquipoLineas(eng.id, fechaRefEquipo, asigs));
+    cellEquipo.alignment = { wrapText: true, vertical: "top" };
     semanas.forEach((s, i) => {
-      const cell = row.getCell(3 + i);
+      const cell = row.getCell(5 + i);
       cell.value = celdaRichText(buildLineas(eng.id, s, reqs, asigs));
       cell.alignment = { wrapText: true, vertical: "top" };
     });
@@ -367,8 +425,10 @@ export async function syncExcelResumenProyectos(sb: any): Promise<SyncResult> {
     .eq("is_deleted", false);
   if (engErr) throw new Error(`Error leyendo engagements: ${engErr.message}`);
 
+  // Nota: ya no se filtra por estado === "activo". El filtro por año (más abajo,
+  // por pestaña) decide qué engagements aparecen: cualquiera activo en algún
+  // momento dentro del año, aunque ya esté "terminado" a la fecha de hoy.
   const engs: EngRow[] = (engData ?? [])
-    .filter((e: any) => e.estado === "activo")
     .map((e: any) => ({
       id: e.id,
       codigo: e.codigo ?? null,
@@ -378,6 +438,7 @@ export async function syncExcelResumenProyectos(sb: any): Promise<SyncResult> {
       sort_order: e.sort_order ?? null,
       fecha_inicio: e.fecha_inicio ?? null,
       fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? null,
+      estado: e.estado === "activo" ? "activo" : "terminado",
     }));
 
   if (engs.length === 0) {
@@ -387,13 +448,14 @@ export async function syncExcelResumenProyectos(sb: any): Promise<SyncResult> {
 
   const engIds = engs.map((e) => e.id);
 
-  // Años cubiertos: desde inicio hasta fin de cada engagement (sin fin -> año actual + 1)
+  // Años cubiertos: desde inicio hasta fin de cada engagement, sin superar el año actual
+  // (sin fin -> se acota al año actual; no se generan pestañas de años futuros).
   const anioActual = new Date().getFullYear();
   const anios = new Set<number>();
   engs.forEach((e) => {
     const y0 = e.fecha_inicio ? new Date(e.fecha_inicio).getFullYear() : anioActual;
-    const y1 = e.fecha_fin ? new Date(e.fecha_fin).getFullYear() : anioActual + 1;
-    for (let y = y0; y <= Math.min(y1, anioActual + 1); y++) anios.add(y);
+    const y1 = e.fecha_fin ? new Date(e.fecha_fin).getFullYear() : anioActual;
+    for (let y = y0; y <= Math.min(y1, anioActual); y++) anios.add(y);
   });
 
   const [{ data: reqData }, { data: asigData }, { data: personaData }, { data: ausenciaData }] = await Promise.all([
@@ -452,12 +514,21 @@ export async function syncExcelResumenProyectos(sb: any): Promise<SyncResult> {
     await workbook.xlsx.load(Buffer.from(arrayBuffer) as any);
   }
 
-  // 2. Sobrescribir (o crear) la pestaña de cada año afectado
-  const byOrder = (a: EngRow, b: EngRow) => (a.sort_order ?? 9999) - (b.sort_order ?? 9999);
-  const proyectos = engs.filter((e) => e.tipo === "proyecto").sort(byOrder);
-  const propuestas = engs.filter((e) => e.tipo === "propuesta").sort(byOrder);
+  // 1b. Purgar pestañas huérfanas de años futuros (> anioActual) que hayan quedado
+  //     de sincronizaciones anteriores, ya que ya no se generan.
+  workbook.worksheets
+    .filter((ws) => {
+      const m = ws.name.match(/(\d{4})$/);
+      return m && Number(m[1]) > anioActual;
+    })
+    .forEach((ws) => workbook.removeWorksheet(ws.id));
 
-  const aniosOrdenados = [...anios].sort((a, b) => a - b);
+  // 2. Sobrescribir (o crear) la pestaña de cada año afectado
+  // Más recientes arriba: por fecha de inicio descendente.
+  const byFechaDesc = (a: EngRow, b: EngRow) => (b.fecha_inicio ?? "").localeCompare(a.fecha_inicio ?? "");
+
+  // Pestañas de año más reciente a más antiguo (orden de creación = orden de tabs).
+  const aniosOrdenados = [...anios].sort((a, b) => b - a);
   for (const anio of aniosOrdenados) {
     const { proyectos: nombreHoja, ausencias: nombreHojaAusencias, legacyProyectos, legacyAusencias } =
       nombresHojaAnio(anio, anioActual);
@@ -473,16 +544,39 @@ export async function syncExcelResumenProyectos(sb: any): Promise<SyncResult> {
     const reqsAnio = reqs.filter((r) => solapan(r.fecha_inicio, r.fecha_fin, rangoInicio, rangoFin));
     const asigsAnio = asigs.filter((a) => solapan(a.fecha_inicio, a.fecha_fin, rangoInicio, rangoFin));
 
-    let fila = escribirBloque(sheet, 1, "Proyectos Activos", proyectos, semanas, reqsAnio, asigsAnio);
-    escribirBloque(sheet, fila, "Propuestas Comerciales", propuestas, semanas, reqsAnio, asigsAnio);
+    // Engagements activos en cualquier momento del año (fecha_inicio <= 31/12 y
+    // fecha_fin >= 01/01 o sin fecha_fin), no solo los "activo" a la fecha actual.
+    const rangoInicioAnio = `${anio}-01-01`;
+    const rangoFinAnio = `${anio}-12-31`;
+    // Excluye "terminado" sin fecha_fin registrada (dato incompleto, no se puede mostrar término).
+    const activosEnAnio = (e: EngRow) =>
+      (e.estado === "activo" || e.fecha_fin !== null) &&
+      solapan(e.fecha_inicio ?? rangoInicioAnio, e.fecha_fin, rangoInicioAnio, rangoFinAnio);
+    const proyectosAnio = engs.filter((e) => e.tipo === "proyecto" && activosEnAnio(e)).sort(byFechaDesc);
+    const propuestasAnio = engs.filter((e) => e.tipo === "propuesta" && activosEnAnio(e)).sort(byFechaDesc);
+
+    let fila = escribirBloque(sheet, 1, "Proyectos Activos", proyectosAnio, semanas, reqsAnio, asigsAnio);
+    escribirBloque(sheet, fila, "Propuestas Comerciales", propuestasAnio, semanas, reqsAnio, asigsAnio);
 
     sheet.getColumn(1).width = 34;
     sheet.getColumn(2).width = 12;
-    for (let c = 3; c <= semanas.length + 2; c++) sheet.getColumn(c).width = 14;
+    sheet.getColumn(3).width = 12;
+    sheet.getColumn(4).width = 16;
+    for (let c = 5; c <= semanas.length + 4; c++) sheet.getColumn(c).width = 14;
+
+    // Colapsa por defecto las semanas ya pasadas (no se eliminan, solo se ocultan);
+    // el usuario las expande con el botón de agrupación (+) que genera Excel.
+    const hoy = fmt(new Date());
+    semanas.forEach((s, i) => {
+      if (s.fin < hoy) {
+        const col = sheet.getColumn(5 + i);
+        col.outlineLevel = 1;
+        col.hidden = true;
+      }
+    });
+    sheet.properties.outlineProperties = { summaryBelow: true, summaryRight: true };
 
     removerHojasLegacy(workbook, legacyAusencias);
-    const rangoInicioAnio = `${anio}-01-01`;
-    const rangoFinAnio = `${anio}-12-31`;
     const ausenciasAnio = ausencias.filter((a) => solapan(a.fecha_inicio, a.fecha_fin, rangoInicioAnio, rangoFinAnio));
     escribirHojaAusencias(workbook, nombreHojaAusencias, anio, personasAus, ausenciasAnio);
   }
