@@ -1,0 +1,8 @@
+# exports crudos de engagements — contienen nombres de clientes/proyectos/personas
+lib/tasks/*.csv
+lib/tasks/*.xlsx
+
+# credenciales locales
+.env.local
+.env*
+!.env*.example

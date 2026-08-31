@@ -27,6 +27,10 @@ yarn-error.log*
 .env*
 !.env*.example
 
+# exports crudos de engagements — contienen nombres de clientes/proyectos/personas
+lib/tasks/*.csv
+lib/tasks/*.xlsx
+
 # vercel
 .vercel
 
