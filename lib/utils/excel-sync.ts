@@ -353,8 +353,21 @@ function escribirBloque(
   if (engs.length === 0) return filaInicio;
   let fila = filaInicio;
 
-  sheet.getCell(fila, 1).value = titulo;
-  sheet.getCell(fila, 1).font = { bold: true, size: 12 };
+  // Si el título trae una leyenda entre paréntesis (ej. simbología del color verde),
+  // esa parte se pinta en verde vía rich text; el resto queda negro en negrita.
+  const cellTitulo = sheet.getCell(fila, 1);
+  const parenIdx = titulo.indexOf("(");
+  if (parenIdx === -1) {
+    cellTitulo.value = titulo;
+    cellTitulo.font = { bold: true, size: 12 };
+  } else {
+    cellTitulo.value = {
+      richText: [
+        { font: { bold: true, size: 12 }, text: titulo.slice(0, parenIdx) },
+        { font: { bold: true, size: 12, color: { argb: "FF008000" } }, text: titulo.slice(parenIdx) },
+      ],
+    } as unknown as ExcelJS.CellValue;
+  }
   fila++;
 
   const filaHeader = sheet.getRow(fila);
@@ -388,9 +401,13 @@ function escribirBloque(
     const row = sheet.getRow(fila);
     row.getCell(1).value = eng.codigo ? `${eng.codigo}: ${eng.nombre}` : eng.nombre;
     row.getCell(2).value = eng.fecha_inicio ? fmtDDMMYYYY(eng.fecha_inicio) : "—";
-    // "En proceso" solo si está activo hoy (estado); si ya terminó, se indica su fecha de término.
-    row.getCell(3).value =
-      eng.estado === "activo" ? "En proceso" : eng.fecha_fin ? fmtDDMMYYYY(eng.fecha_fin) : "—";
+    // Siempre se muestra la fecha de término real; si el engagement sigue activo,
+    // se pinta en verde para distinguirlo visualmente (en vez del string "En proceso").
+    const cellTermino = row.getCell(3);
+    cellTermino.value = eng.fecha_fin ? fmtDDMMYYYY(eng.fecha_fin) : "—";
+    if (eng.estado === "activo") {
+      cellTermino.font = { color: { argb: "FF008000" } };
+    }
     const fechaRefEquipo = fechaFinalEquipo(eng.id, eng.estado !== "activo");
     const cellEquipo = row.getCell(4);
     cellEquipo.value = celdaRichText(buildEquipoLineas(eng.id, fechaRefEquipo, asigs));
@@ -555,7 +572,15 @@ export async function syncExcelResumenProyectos(sb: any): Promise<SyncResult> {
     const proyectosAnio = engs.filter((e) => e.tipo === "proyecto" && activosEnAnio(e)).sort(byFechaDesc);
     const propuestasAnio = engs.filter((e) => e.tipo === "propuesta" && activosEnAnio(e)).sort(byFechaDesc);
 
-    let fila = escribirBloque(sheet, 1, "Proyectos Activos", proyectosAnio, semanas, reqsAnio, asigsAnio);
+    let fila = escribirBloque(
+      sheet,
+      1,
+      "Proyectos Activos (Fecha término en verde = Proyecto en curso)",
+      proyectosAnio,
+      semanas,
+      reqsAnio,
+      asigsAnio
+    );
     escribirBloque(sheet, fila, "Propuestas Comerciales", propuestasAnio, semanas, reqsAnio, asigsAnio);
 
     sheet.getColumn(1).width = 34;
