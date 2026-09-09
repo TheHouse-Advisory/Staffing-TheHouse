@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/Button";
 import type { Engagement } from "@/lib/types/database";
 import { COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 import { cambiarEstadoEngagement, cambiarTipoEngagement, fetchUltimaActualizacionReal, redimensionarEngagementConEquipo, moverEngagementConEquipo } from "@/lib/queries/engagements";
-import { obtenerViernesSemanaHabil } from "@/lib/utils/date-utils";
+import { obtenerViernesSemanaHabil, calcularRecorteSemana } from "@/lib/utils/date-utils";
 import { useCargosColapsados } from "@/components/providers/CargosColapsadosContext";
 import { VistaResumidaEngagements, LeyendaCargosColor } from "./VistaResumidaEngagements";
 import { GanttAusencias } from "./GanttAusencias";
@@ -2551,16 +2551,23 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               // Verifica TODOS los segmentos: barra visible si cualquier segmento solapa la columna
                               const isActive = (segsPersona.get(p.id) ?? [p]).some((s) => rangoSolapan(s.fecha_inicio, s.fecha_fin, col.inicio, col.fin));
                               const { isFirst, isLast } = barEdge(p, i);
+                              // Recorte visual si el inicio/fin del segmento cae a mitad de semana (solo vista semana)
+                              const segActivoConf = (segsPersona.get(p.id) ?? [p]).find((s) => rangoSolapan(s.fecha_inicio, s.fecha_fin, col.inicio, col.fin));
+                              const recorteConf = vista === "semana" && segActivoConf
+                                ? calcularRecorteSemana(segActivoConf.fecha_inicio, segActivoConf.fecha_fin, col.inicio, col.fin)
+                                : null;
                               // Ausencia activa de esta persona en esta columna
                               const tieneAusenciaConf = ausencias.some((a) => a.persona_id === p.id && rangoSolapan(a.fecha_inicio, a.fecha_fin, col.inicio, col.fin));
                               // Semana: 5 segmentos L/M/X/J/V · Mes: S1…S5 por semanas del mes
-                              const segmentsConf = vista === "semana" ? DIAS_SEMANA_LABELS.map((lbl, offset) => {
-                                const dayDate = addDays(col.inicio, offset);
-                                const dayStr = format(dayDate, "yyyy-MM-dd");
-                                const aus = ausencias.find((a) => a.persona_id === p.id && a.fecha_inicio <= dayStr && (a.fecha_fin ?? dayStr) >= dayStr);
-                                const ausColor = aus ? (COLOR_AUSENCIA[aus.tipo as keyof typeof COLOR_AUSENCIA]?.bg ?? "#9ca3af") : null;
-                                return { lbl, ausColor };
-                              }) : vista === "mes" ? (() => {
+                              const segmentsConf = vista === "semana" ? DIAS_SEMANA_LABELS
+                                .map((lbl, offset) => ({ lbl, dayStr: format(addDays(col.inicio, offset), "yyyy-MM-dd") }))
+                                // Solo los días L-V que caen dentro del rango real de la asignación en esta columna
+                                .filter(({ dayStr }) => !segActivoConf || (dayStr >= segActivoConf.fecha_inicio && dayStr <= (segActivoConf.fecha_fin ?? dayStr)))
+                                .map(({ lbl, dayStr }) => {
+                                  const aus = ausencias.find((a) => a.persona_id === p.id && a.fecha_inicio <= dayStr && (a.fecha_fin ?? dayStr) >= dayStr);
+                                  const ausColor = aus ? (COLOR_AUSENCIA[aus.tipo as keyof typeof COLOR_AUSENCIA]?.bg ?? "#9ca3af") : null;
+                                  return { lbl, ausColor };
+                                }) : vista === "mes" ? (() => {
                                 const segs: { lbl: string; ausColor: string | null }[] = [];
                                 let wStart = startOfISOWeek(col.inicio);
                                 if (addDays(wStart, 6) < col.inicio) wStart = addDays(wStart, 7);
@@ -2596,8 +2603,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                   onMouseEnter={() => { if (resizing) { setResizeHoverIdx(i); resizeHoverRef.current = i; } }}>
                                   {isActive && (
                                     <>
-                                      <div className="relative group/bar w-full cursor-pointer overflow-hidden"
-                                        style={{ height: 7, background: finalBarBgConf, opacity: desasignando === p.asignacionId ? 0.3 : esHoy ? 1 : 0.85, borderRadius: 4, marginTop: 6 }}
+                                      <div className="relative group/bar cursor-pointer overflow-hidden"
+                                        style={{ height: 7, width: recorteConf ? `${recorteConf.widthPct}%` : "100%", marginLeft: recorteConf ? `${recorteConf.leftPct}%` : 0, background: finalBarBgConf, opacity: desasignando === p.asignacionId ? 0.3 : esHoy ? 1 : 0.85, borderRadius: 4, marginTop: 6 }}
                                         onClick={(e) => handleAvatarClick(e, p, eng)}
                                         title={`${p.nombre} ${p.apellido} · ${p.cargo ?? ""} · ${p.pct}%`}>
                                         {diaAusCfgConf && (
@@ -2609,11 +2616,11 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                         {!diaAusCfgConf && segmentsConf && segmentsConf.map((s, si) => s.ausColor ? (
                                           <div key={si} className="absolute inset-y-0 flex items-center justify-center select-none pointer-events-none"
                                             style={{ left: `${si * segPct}%`, width: `${segPct}%`, backgroundColor: s.ausColor }}>
-                                            <span className="text-white font-black drop-shadow-sm" style={{ fontSize: vista === "mes" ? 9 : 7, lineHeight: 1 }}>{s.lbl}</span>
+                                            <span className="font-black text-white" style={{ fontSize: vista === "mes" ? 9 : 7, lineHeight: 1, textShadow: "-1px -1px 2px rgba(0,0,0,.95), 1px -1px 2px rgba(0,0,0,.95), -1px 1px 2px rgba(0,0,0,.95), 1px 1px 2px rgba(0,0,0,.95), 0 0 3px rgba(0,0,0,.6)" }}>{s.lbl}</span>
                                           </div>
                                         ) : (
-                                          <span key={si} className="absolute text-white font-black select-none pointer-events-none"
-                                            style={{ left: `${si * segPct + segPct / 2}%`, top: "50%", transform: "translate(-50%, -50%)", fontSize: vista === "mes" ? 9 : 7, lineHeight: 1, opacity: 0.35 }}>
+                                          <span key={si} className="absolute font-black text-white select-none pointer-events-none"
+                                            style={{ left: `${si * segPct + segPct / 2}%`, top: "50%", transform: "translate(-50%, -50%)", fontSize: vista === "mes" ? 9 : 7, lineHeight: 1, textShadow: "-1px -1px 2px rgba(0,0,0,.95), 1px -1px 2px rgba(0,0,0,.95), -1px 1px 2px rgba(0,0,0,.95), 1px 1px 2px rgba(0,0,0,.95), 0 0 3px rgba(0,0,0,.6)" }}>
                                             {s.lbl}
                                           </span>
                                         ))}
@@ -2644,16 +2651,23 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                             // ── PLAN ───────────────────────────────────────────────────
                             const isActive = (segsPersona.get(p.id) ?? [p]).some((s) => rangoSolapan(s.fecha_inicio, s.fecha_fin, col.inicio, col.fin));
                             const { isFirst, isLast } = barEdge(p, i);
+                            // Recorte visual si el inicio/fin del segmento cae a mitad de semana (solo vista semana)
+                            const segActivoPlan = (segsPersona.get(p.id) ?? [p]).find((s) => rangoSolapan(s.fecha_inicio, s.fecha_fin, col.inicio, col.fin));
+                            const recortePlan = vista === "semana" && segActivoPlan
+                              ? calcularRecorteSemana(segActivoPlan.fecha_inicio, segActivoPlan.fecha_fin, col.inicio, col.fin)
+                              : null;
                             // Ausencia activa en esta columna
                             const tieneAusenciaPlan = ausencias.some((a) => a.persona_id === p.id && rangoSolapan(a.fecha_inicio, a.fecha_fin, col.inicio, col.fin));
                             // Semana: 5 segmentos L/M/X/J/V · Mes: S1…S5 por semanas del mes
-                            const segmentsPlan = vista === "semana" ? DIAS_SEMANA_LABELS.map((lbl, offset) => {
-                              const dayDate = addDays(col.inicio, offset);
-                              const dayStr = format(dayDate, "yyyy-MM-dd");
-                              const aus = ausencias.find((a) => a.persona_id === p.id && a.fecha_inicio <= dayStr && (a.fecha_fin ?? dayStr) >= dayStr);
-                              const ausColor = aus ? (COLOR_AUSENCIA[aus.tipo as keyof typeof COLOR_AUSENCIA]?.bg ?? "#9ca3af") : null;
-                              return { lbl, ausColor };
-                            }) : vista === "mes" ? (() => {
+                            const segmentsPlan = vista === "semana" ? DIAS_SEMANA_LABELS
+                              .map((lbl, offset) => ({ lbl, dayStr: format(addDays(col.inicio, offset), "yyyy-MM-dd") }))
+                              // Solo los días L-V que caen dentro del rango real de la asignación en esta columna
+                              .filter(({ dayStr }) => !segActivoPlan || (dayStr >= segActivoPlan.fecha_inicio && dayStr <= (segActivoPlan.fecha_fin ?? dayStr)))
+                              .map(({ lbl, dayStr }) => {
+                                const aus = ausencias.find((a) => a.persona_id === p.id && a.fecha_inicio <= dayStr && (a.fecha_fin ?? dayStr) >= dayStr);
+                                const ausColor = aus ? (COLOR_AUSENCIA[aus.tipo as keyof typeof COLOR_AUSENCIA]?.bg ?? "#9ca3af") : null;
+                                return { lbl, ausColor };
+                              }) : vista === "mes" ? (() => {
                               const segs: { lbl: string; ausColor: string | null }[] = [];
                               let wStart = startOfISOWeek(col.inicio);
                               if (addDays(wStart, 6) < col.inicio) wStart = addDays(wStart, 7);
@@ -2697,7 +2711,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 {isActive && (
                                   <>
                                     <div className="relative group/bar overflow-hidden cursor-pointer"
-                                      style={{ height: 7, marginTop: 6, background: barBgPlan, border: `1.5px dashed ${cargoColor}`, borderRadius: 4, opacity: desasignando === p.asignacionId ? 0.2 : 1 }}
+                                      style={{ height: 7, width: recortePlan ? `${recortePlan.widthPct}%` : "100%", marginLeft: recortePlan ? `${recortePlan.leftPct}%` : 0, marginTop: 6, background: barBgPlan, border: `1.5px dashed ${cargoColor}`, borderRadius: 4, opacity: desasignando === p.asignacionId ? 0.2 : 1 }}
                                       title={`PLAN · ${p.nombre} ${p.apellido} · ${p.pct}%`}
                                       onClick={(e) => handleAvatarClick(e, p, eng)}>
                                       {diaAusCfgPlan && (
@@ -2706,16 +2720,15 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                           {diaAusCfgPlan.label[0].toUpperCase()}
                                         </span>
                                       )}
-                                      {!diaAusCfgPlan && segmentsPlan && segmentsPlan.map((s, si) => s.ausColor ? (
+                                      {!diaAusCfgPlan && segmentsPlan && segmentsPlan.map((s, si) => (
                                         <div key={si} className="absolute inset-y-0 flex items-center justify-center select-none pointer-events-none"
-                                          style={{ left: `${si * segPctPlan}%`, width: `${segPctPlan}%`, backgroundColor: s.ausColor }}>
-                                          <span className="text-white font-black drop-shadow-sm" style={{ fontSize: vista === "mes" ? 9 : 7, lineHeight: 1 }}>{s.lbl}</span>
+                                          style={{
+                                            left: `${si * segPctPlan}%`, width: `${segPctPlan}%`,
+                                            backgroundColor: s.ausColor ?? undefined,
+                                            borderRight: si < segmentsPlan.length - 1 ? `1px solid ${cargoColor}77` : undefined,
+                                          }}>
+                                          <span className="font-black text-white" style={{ fontSize: vista === "mes" ? 9 : 7, lineHeight: 1, textShadow: "-1px -1px 2px rgba(0,0,0,.95), 1px -1px 2px rgba(0,0,0,.95), -1px 1px 2px rgba(0,0,0,.95), 1px 1px 2px rgba(0,0,0,.95), 0 0 3px rgba(0,0,0,.6)" }}>{s.lbl}</span>
                                         </div>
-                                      ) : (
-                                        <span key={si} className="absolute text-white font-black select-none pointer-events-none"
-                                          style={{ left: `${si * segPctPlan + segPctPlan / 2}%`, top: "50%", transform: "translate(-50%, -50%)", fontSize: vista === "mes" ? 9 : 7, lineHeight: 1, opacity: 0.35 }}>
-                                          {s.lbl}
-                                        </span>
                                       ))}
                                       {!readOnly && <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
                                         title="Quitar del plan"
