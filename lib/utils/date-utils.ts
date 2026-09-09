@@ -51,6 +51,38 @@ export function obtenerViernesSemanaHabil(fechaInicio: Date): Date {
   return viernes;
 }
 
+/**
+ * Offset de día hábil (L=0…V=4) de `d` respecto al lunes `colInicio` de su columna semanal,
+ * clampeado a [0,4] — fin de semana se pega al día hábil más cercano de esa semana.
+ */
+function offsetDiaHabilSemana(d: Date, colInicio: Date): number {
+  const diff = Math.round((d.getTime() - colInicio.getTime()) / 86400000);
+  return Math.min(4, Math.max(0, diff));
+}
+
+/**
+ * Recorte visual (left/width en %, base 5 días hábiles L-V) de una barra de asignación
+ * dentro de una columna semanal, cuando su inicio o fin cae a mitad de semana.
+ * fechaFin null (asignación abierta) se trata como si cubriera hasta el fin de la columna.
+ */
+export function calcularRecorteSemana(
+  fechaInicio: string,
+  fechaFin: string | null,
+  colInicio: Date,
+  colFin: Date
+): { leftPct: number; widthPct: number } {
+  const inicioAsig = new Date(fechaInicio + "T00:00:00");
+  const finAsig = fechaFin ? new Date(fechaFin + "T00:00:00") : colFin;
+  const desde = inicioAsig > colInicio ? inicioAsig : colInicio;
+  const hasta = finAsig < colFin ? finAsig : colFin;
+  const offInicio = offsetDiaHabilSemana(desde, colInicio);
+  const offFin = offsetDiaHabilSemana(hasta, colInicio);
+  return {
+    leftPct: (offInicio / 5) * 100,
+    widthPct: ((Math.max(offInicio, offFin) - offInicio + 1) / 5) * 100,
+  };
+}
+
 /** Igual que expandirRango pero excluye feriados además de fines de semana */
 export function expandirRangoHabil(inicio: string, fin: string): string[] {
   const result: string[] = [];

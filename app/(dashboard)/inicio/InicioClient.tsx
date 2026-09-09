@@ -254,6 +254,17 @@ export function InicioClient() {
       if (!grupos[cargo]) grupos[cargo] = [];
       grupos[cargo].push(p);
     }
+    // Dentro de cada cargo: fecha de ingreso ascendente (más antigua primero, sin fecha al final)
+    for (const cargo of Object.keys(grupos)) {
+      grupos[cargo].sort((a, b) => {
+        const fa = a.fecha_ingreso ?? "";
+        const fb = b.fecha_ingreso ?? "";
+        if (!fa && !fb) return 0;
+        if (!fa) return 1;
+        if (!fb) return -1;
+        return fa.localeCompare(fb);
+      });
+    }
     return { grupos, cargos: ordenarCargos(Object.keys(grupos)) };
   }, [personas]);
 
