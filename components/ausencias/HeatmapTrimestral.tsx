@@ -3,6 +3,7 @@
 import React, { useMemo, useState } from "react";
 import { Calendar } from "lucide-react";
 import { COLOR_AUSENCIA, isHoliday } from "@/lib/queries/ausencias";
+import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import type { TipoAusencia } from "@/lib/types/database";
 import { PopoverPersona } from "./PopoverPersona";
 
@@ -116,9 +117,7 @@ function formatFechaCL(iso: string): string {
 }
 
 function diasEntre(inicioISO: string, finISO: string): number {
-  const inicio = new Date(inicioISO + "T00:00:00");
-  const fin = new Date(finISO + "T00:00:00");
-  return Math.round((fin.getTime() - inicio.getTime()) / 86400000) + 1;
+  return calculateBusinessDays(inicioISO, finISO);
 }
 
 interface BloqueConsecutivo {

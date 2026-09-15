@@ -89,10 +89,11 @@ interface PlanSimulacion {
 // ─── Helpers ──────────────────────────────────────────────────
 
 
+// Texto en tono -900 del mismo color base sobre fondo -100 (misma regla que TIPO_BADGE en DesgloceEngagements)
 const ESTADO_STYLE: Record<PlanSimulacion["estado"], string> = {
-  Borrador:  "bg-slate-100 text-slate-600",
-  Aceptado:  "bg-green-100 text-green-700",
-  Rechazado: "bg-red-100 text-red-600",
+  Borrador:  "bg-slate-100 text-slate-900",
+  Aceptado:  "bg-emerald-100 text-emerald-900",
+  Rechazado: "bg-rose-100 text-rose-900",
 };
 
 // ─── Persistencia Supabase + localStorage (fallback) ─────────
@@ -1351,7 +1352,7 @@ export function GanttPlanificacion() {
                   className="w-full flex items-center gap-2 px-4 py-1.5 text-[11px] text-[#888] hover:text-[#555] hover:bg-[#f5f5f5] transition-colors">
                   <FolderX className="w-3.5 h-3.5 text-red-300 flex-shrink-0" />
                   <span className="font-medium">Historial de Descartes</span>
-                  <span className="bg-red-100 text-red-500 text-[9px] font-bold px-1.5 py-0.5 rounded-full">{rechazados.length}</span>
+                  <span className="bg-rose-100 text-rose-900 text-[9px] font-bold px-1.5 py-0.5 rounded-full">{rechazados.length}</span>
                   {verArchivados ? <ChevronDown className="w-3 h-3 ml-auto" /> : <ChevronRight className="w-3 h-3 ml-auto" />}
                 </button>
                 {verArchivados && (
@@ -1362,7 +1363,7 @@ export function GanttPlanificacion() {
                         <div key={p.id} onClick={() => setPlanActivo(p.id)}
                           className="flex items-center gap-1.5 bg-white border border-red-200 rounded-lg px-2.5 py-1 cursor-pointer text-[11px] opacity-80 hover:opacity-100 hover:border-red-400 transition-all">
                           <span className="font-semibold text-[#555] max-w-[120px] truncate">{p.nombre}</span>
-                          <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 bg-red-100 text-red-600">Rechazado</span>
+                          <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full flex-shrink-0 ${ESTADO_STYLE.Rechazado}`}>Rechazado</span>
                           {dias !== null && <span className={`text-[9px] font-medium flex-shrink-0 ${dias<=5?"text-red-500":"text-[#aaa]"}`}>{dias}d</span>}
                           {p.creadoPorNombre && (
                             <span title={`Creado por ${p.creadoPorNombre}`} style={{ display:"inline-flex", alignItems:"center", gap:"3px", flexShrink:0, color:"#64748b", fontSize:"9px" }}>

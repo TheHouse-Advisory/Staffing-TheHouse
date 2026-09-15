@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { format, isWeekend } from "date-fns";
 import { es } from "date-fns/locale";
 import { AlertTriangle, X, User, CheckCircle, BarChart2, Search, Undo2 } from "lucide-react";
@@ -616,23 +616,62 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
     };
   }, [cargar]);
 
-  if (loading) return <TableroSkeleton />;
-  if (error)   return <div className="flex items-center justify-center h-48 text-sm text-red-500">Error: {error}</div>;
-
   const pv = periodoVista ?? "dia";
-  const columnas = getColumnas(dias, pv);
+
+  // Cálculo de columnas: filtra/agrupa hasta 120 días (vista mes) — evitar
+  // recalcularlo en cada render (ej: al abrir/cerrar un popover).
+  const columnas = useMemo(() => getColumnas(dias, pv), [dias, pv]);
 
   // ── Lógica de meses colapsables (solo vista semana) ──────
-  const monthGroups = pv === "semana"
-    ? Array.from(
-        columnas.reduce((map, col, i) => {
-          const key = format(col.dias[0], "yyyy-MM");
-          if (!map.has(key)) map.set(key, { key, label: format(col.dias[0], "MMM yyyy", { locale: es }), indices: [] as number[] });
-          map.get(key)!.indices.push(i);
-          return map;
-        }, new Map<string, { key: string; label: string; indices: number[] }>())
-      ).map(([, g]) => g)
-    : [];
+  const monthGroups = useMemo(() => (
+    pv === "semana"
+      ? Array.from(
+          columnas.reduce((map, col, i) => {
+            const key = format(col.dias[0], "yyyy-MM");
+            if (!map.has(key)) map.set(key, { key, label: format(col.dias[0], "MMM yyyy", { locale: es }), indices: [] as number[] });
+            map.get(key)!.indices.push(i);
+            return map;
+          }, new Map<string, { key: string; label: string; indices: number[] }>())
+        ).map(([, g]) => g)
+      : []
+  ), [columnas, pv]);
+
+  // Agrupación por cargo de la vista "persona": varios filtros sobre filasPersona.
+  const gruposPersona = useMemo(() => {
+    const cargoOrden = [...CARGOS];
+    const sinCargo = filasPersona.filter(
+      (f) => !cargoOrden.includes(f.cargo_actual as typeof CARGOS[number])
+    );
+    return [
+      ...cargoOrden.map((c) => ({ cargo: c as string, lista: filasPersona.filter((f) => f.cargo_actual === c) })),
+      ...(sinCargo.length > 0 ? [{ cargo: "Sin cargo", lista: sinCargo }] : []),
+    ].filter((g) => g.lista.length > 0);
+  }, [filasPersona]);
+
+  // Agrupación por tipo + filtro de búsqueda de la vista "proyecto".
+  const gruposProyecto = useMemo(() => {
+    const q = searchTerm.toLowerCase().trim();
+    return [
+      { tipo: "proyecto",      label: "Proyectos",              color: "#4a90e2" },
+      { tipo: "propuesta",     label: "Propuestas comerciales", color: "#9b59b6" },
+      { tipo: "posibles_proyectos", label: "Posibles proyectos", color: "#f5a623" },
+      { tipo: "ayuda_interna", label: "Desarrollo interno",          color: "#27ae60" },
+    ]
+      .map(({ tipo, label, color }) => ({
+        tipo, label, color,
+        lista: filasProyecto.filter((f) => {
+          if (f.tipo !== tipo) return false;
+          if (!q) return true;
+          if (f.engagement_nombre.toLowerCase().includes(q)) return true;
+          if (f.cliente.toLowerCase().includes(q)) return true;
+          return false;
+        }),
+      }))
+      .filter((g) => g.lista.length > 0);
+  }, [filasProyecto, searchTerm]);
+
+  if (loading) return <TableroSkeleton />;
+  if (error)   return <div className="flex items-center justify-center h-48 text-sm text-red-500">Error: {error}</div>;
 
   const toggleMonth = (key: string) =>
     setCollapsedMonths(prev => prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]);
@@ -729,16 +768,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
               </thead>
               <tbody>
                 {(() => {
-                  const cargoOrden = [...CARGOS];
-                  const sinCargo = filasPersona.filter(
-                    (f) => !cargoOrden.includes(f.cargo_actual as typeof CARGOS[number])
-                  );
-                  const grupos = [
-                    ...cargoOrden.map((c) => ({ cargo: c, lista: filasPersona.filter((f) => f.cargo_actual === c) })),
-                    ...(sinCargo.length > 0 ? [{ cargo: "Sin cargo", lista: sinCargo }] : []),
-                  ].filter((g) => g.lista.length > 0);
-
-                  return grupos.flatMap(({ cargo, lista }) => {
+                  return gruposPersona.flatMap(({ cargo, lista }) => {
                     const cargoColor = CARGO_COLORS[cargo] ?? CARGO_COLOR_DEFAULT;
                     const filaSeccion = (
                       <tr key={`sec-${cargo}`}>
@@ -922,21 +952,7 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
               </tr>
             </thead>
             <tbody>
-              {[
-                { tipo: "proyecto",      label: "Proyectos",              color: "#4a90e2" },
-                { tipo: "propuesta",     label: "Propuestas comerciales", color: "#9b59b6" },
-                { tipo: "posibles_proyectos", label: "Posibles proyectos", color: "#f5a623" },
-                { tipo: "ayuda_interna", label: "Desarrollo interno",          color: "#27ae60" },
-              ].flatMap(({ tipo, label, color: secColor }) => {
-                const q = searchTerm.toLowerCase().trim();
-                const lista = filasProyecto.filter((f) => {
-                  if (f.tipo !== tipo) return false;
-                  if (!q) return true;
-                  if (f.engagement_nombre.toLowerCase().includes(q)) return true;
-                  if (f.cliente.toLowerCase().includes(q)) return true;
-                  return false;
-                });
-                if (lista.length === 0) return [];
+              {gruposProyecto.flatMap(({ tipo, label, color: secColor, lista }) => {
                 const filaSeccion = (
                   <tr key={`sec-${tipo}`}>
                     <td colSpan={columnas.length + 2} className="px-4 pt-4 pb-1 bg-white sticky left-0">

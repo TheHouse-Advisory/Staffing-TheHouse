@@ -465,7 +465,7 @@ export async function fetchOcupacionSemanas(
 
   const { data, error } = await supabase
     .from("ocupacion_semana")
-    .select("*")
+    .select("persona_id, persona_nombre, cargo_actual, semana_inicio, ocupacion_actual_pct, ocupacion_proyectada_pct")
     .gte("semana_inicio", format(inicio, "yyyy-MM-dd"))
     .lt("semana_inicio", format(fin, "yyyy-MM-dd"))
     .order("persona_nombre");

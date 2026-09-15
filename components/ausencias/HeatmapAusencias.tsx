@@ -17,6 +17,7 @@ import {
 } from "@/lib/queries/ausencias";
 import type { TipoAusencia } from "@/lib/types/database";
 import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
+import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import { PopoverPersona } from "./PopoverPersona";
 
 const DIAS_SEMANA_LETRA = ["L", "M", "X", "J", "V"];
@@ -613,7 +614,6 @@ export function HeatmapAusencias({
 
     // Calcular totales anuales por persona (días hábiles sin feriados)
     if (ausAnioRes.data) {
-      const { calculateBusinessDays } = await import("@/lib/utils/date-utils");
       const map: Record<string, number> = {};
       for (const a of ausAnioRes.data as { persona_id: string; fecha_inicio: string; fecha_fin: string }[]) {
         const ini = a.fecha_inicio > inicioAnio ? a.fecha_inicio : inicioAnio;
@@ -781,9 +781,7 @@ export function HeatmapAusencias({
       if (c.fecha_inicio < inicioReal) inicioReal = c.fecha_inicio;
       if (c.fecha_fin > finReal) finReal = c.fecha_fin;
     }
-    const numDias = Math.round(
-      (new Date(finReal + "T00:00:00").getTime() - new Date(inicioReal + "T00:00:00").getTime()) / 86400000
-    ) + 1;
+    const numDias = calculateBusinessDays(inicioReal, finReal);
     return { inicio: inicioReal, fin: finReal, numDias };
   }
 

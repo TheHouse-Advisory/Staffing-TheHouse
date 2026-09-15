@@ -3,8 +3,9 @@
 import { useEffect, useState } from "react";
 import { format, isSameDay, parseISO, startOfDay, addDays, subDays } from "date-fns";
 import { es } from "date-fns/locale";
-import { PartyPopper, Clock, CheckCircle2, Circle, ChevronDown, ChevronUp, Trash2, Cake, ClipboardCheck, FileSignature } from "lucide-react";
+import { PartyPopper, Clock, CheckCircle2, Circle, ChevronDown, ChevronUp, Trash2, Cake, ClipboardCheck, FileSignature, Timer } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
+import { calculateBusinessDays } from "@/lib/utils/date-utils";
 
 // ── Tipos ────────────────────────────────────────────────────────
 
@@ -48,6 +49,19 @@ interface AlertaPlanAccion {
   personas: { id: string; nombre: string; apellido: string; cargo_actual: string | null }[];
 }
 
+/** Alerta de 20 días hábiles acumulados en una asignación dentro de un engagement
+ *  tipo "propuesta" (Propuesta comercial). Color teal, distinto del resto. */
+interface AlertaPropuesta20Dias {
+  engagement_id: string;
+  engagement_nombre: string;
+  cliente: string;
+  persona: { id: string; nombre: string; apellido: string; cargo_actual: string | null };
+  fecha_inicio: string;
+  diasHabiles: number;
+  /** Fecha exacta (yyyy-MM-dd) en que se cumplen los 20 días hábiles */
+  fechaCumple: string;
+}
+
 interface AlertaChecked {
   alertaId: string;
   tipo: string;
@@ -56,10 +70,19 @@ interface AlertaChecked {
 }
 
 const LS_KEY = "staffinghub_alertas_checked";
+const HISTORIAL_DIAS = 30; // las alertas gestionadas se olvidan (y reaparecen si siguen vigentes) pasado este plazo
 
 function leerChecks(): AlertaChecked[] {
   if (typeof window === "undefined") return [];
-  try { return JSON.parse(localStorage.getItem(LS_KEY) ?? "[]"); } catch { return []; }
+  try {
+    const todos: AlertaChecked[] = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]");
+    const limite = Date.now() - HISTORIAL_DIAS * 24 * 60 * 60 * 1000;
+    const vigentes = todos.filter((c) => new Date(c.fechaCheck).getTime() >= limite);
+    if (vigentes.length !== todos.length) guardarChecks(vigentes); // purga silenciosa de las vencidas
+    return vigentes;
+  } catch {
+    return [];
+  }
 }
 
 function guardarChecks(checks: AlertaChecked[]) {
@@ -96,6 +119,15 @@ function alertaId(tipo: string, personaId: string, año: number) {
 
 function diffDiasEntre(a: Date, b: Date) {
   return Math.ceil((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+/** Fecha (yyyy-MM-dd) en que una asignación iniciada en fechaInicio cumple exactamente N días hábiles */
+function fechaCumpleDiasHabiles(fechaInicio: string, n: number): string {
+  let d = fechaInicio;
+  while (calculateBusinessDays(fechaInicio, d) < n) {
+    d = format(addDays(parseISO(d), 1), "yyyy-MM-dd");
+  }
+  return d;
 }
 
 // ── Tarjeta aniversario ──────────────────────────────────────────
@@ -345,6 +377,54 @@ function TarjetaPlanAccion({
   );
 }
 
+// ── Tarjeta Propuesta 20 días ────────────────────────────────────
+
+function TarjetaPropuesta20Dias({
+  alerta, checked, onCheck,
+}: {
+  alerta: AlertaPropuesta20Dias; checked: boolean; onCheck: () => void;
+}) {
+  const color = "#0d9488"; // teal — distinto del resto de categorías
+
+  return (
+    <div className={`flex items-start gap-4 p-4 rounded-xl border-2 transition-all ${
+      checked ? "border-gray-100 bg-gray-50 opacity-60" : "border-[#0d9488]/30 bg-[#f0fdfa]"
+    }`}>
+      <div className="w-10 h-10 rounded-full flex items-center justify-center text-white flex-shrink-0"
+        style={{ backgroundColor: checked ? "#94a3b8" : color }}>
+        <Timer className="w-5 h-5" />
+      </div>
+
+      <div className="flex-1 min-w-0">
+        <p className={`font-semibold text-[#1a1a2e] ${checked ? "line-through text-gray-400" : ""}`}>
+          <span style={{ color: checked ? undefined : color }}>{alerta.persona.nombre} {alerta.persona.apellido}</span>
+          {" "}ha cumplido <span className="font-bold">20 días hábiles</span> en la propuesta comercial{" "}
+          <span style={{ color: checked ? undefined : color }}>{alerta.engagement_nombre}</span>
+        </p>
+        {alerta.cliente && (
+          <p className="text-xs text-gray-400 mt-0.5">{alerta.cliente}</p>
+        )}
+        {alerta.persona.cargo_actual && (
+          <p className="text-xs text-gray-300 mt-0.5">{alerta.persona.cargo_actual}</p>
+        )}
+        <p className="text-xs text-gray-400 mt-1.5">
+          Inicio: <span className="font-medium text-gray-600">
+            {format(parseISO(alerta.fecha_inicio), "d 'de' MMMM yyyy", { locale: es })}
+          </span>
+          <span className="ml-2 text-[#0d9488] font-medium">{alerta.diasHabiles} días hábiles</span>
+        </p>
+      </div>
+
+      <button onClick={onCheck} title={checked ? "Desmarcar" : "Marcar como gestionado"}
+        className="flex-shrink-0 transition-transform hover:scale-110">
+        {checked
+          ? <CheckCircle2 className="w-6 h-6 text-[#27ae60]" />
+          : <Circle className="w-6 h-6 text-gray-300 hover:text-[#27ae60]" />}
+      </button>
+    </div>
+  );
+}
+
 // ── Panel principal ──────────────────────────────────────────────
 
 interface AlertasPanelProps {
@@ -359,6 +439,9 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
   const [cumpleProximos, setCumpleProximos] = useState<PersonaCumpleanos[]>([]);
   const [eppAlertas, setEppAlertas] = useState<AlertaEPP[]>([]);
   const [planAccionAlertas, setPlanAccionAlertas] = useState<AlertaPlanAccion[]>([]);
+  const [propuesta20AlertasHoy, setPropuesta20AlertasHoy] = useState<AlertaPropuesta20Dias[]>([]);
+  const [propuesta20AlertasAnteriores, setPropuesta20AlertasAnteriores] = useState<AlertaPropuesta20Dias[]>([]);
+  const [propuesta20HistAbierto, setPropuesta20HistAbierto] = useState(false); // colapsado por defecto
   const [loading, setLoading] = useState(true);
   const [checks, setChecks] = useState<AlertaChecked[]>([]);
   const [historialAbierto, setHistorialAbierto] = useState(false);
@@ -387,7 +470,7 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
       const en7Str = format(addDays(ahora, 7), "yyyy-MM-dd");
       const hace7Str = format(subDays(ahora, 7), "yyyy-MM-dd");
 
-      const [personasRes, engRes, asigRes, engProyectoRecienteRes] = await Promise.all([
+      const [personasRes, engRes, asigRes, engProyectoRecienteRes, engPropuestaRes] = await Promise.all([
         sb.from("persona")
           .select("id, nombre, apellido, cargo_actual, fecha_ingreso, fecha_nacimiento")
           .eq("activo", true),
@@ -405,7 +488,7 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
           ),
 
         sb.from("asignacion")
-          .select("engagement_id, persona_id")
+          .select("engagement_id, persona_id, fecha_inicio")
           .eq("estado", "activa"),
 
         // Engagements de tipo "proyecto" creados o escalados (tipo cambiado) en los últimos 7 días
@@ -417,6 +500,13 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
           .eq("estado", "activo")
           .eq("is_deleted", false)
           .or(`created_at.gte.${hace7Str},updated_at.gte.${hace7Str}`),
+
+        // Engagements tipo "propuesta" (Propuesta comercial) activos → base para la
+        // alerta de 20 días hábiles acumulados por persona asignada.
+        sb.from("engagement")
+          .select("id, nombre, cliente, tipo, estado")
+          .eq("tipo", "propuesta")
+          .eq("estado", "activo"),
       ]);
 
       const personas = (personasRes.data ?? []) as {
@@ -533,12 +623,47 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
       }
       planAccionArr.sort((a, b) => b.fecha.localeCompare(a.fecha)); // más reciente primero
 
+      // ── Propuestas comerciales: 20 días hábiles acumulados por persona ──
+      // Una persona puede tener varias filas de asignación activas para el mismo
+      // engagement (ej: % de dedicación cambiado a mitad de camino) → deduplicar
+      // por persona+engagement, quedándose con la de inicio más antiguo (más días hábiles).
+      const propuestaMap = new Map((engPropuestaRes.data ?? []).map((e: any) => [e.id, e]));
+      const propuesta20Map = new Map<string, AlertaPropuesta20Dias>();
+      for (const a of (asigRes.data ?? []) as { engagement_id: string; persona_id: string; fecha_inicio: string }[]) {
+        const eng = propuestaMap.get(a.engagement_id) as any;
+        const persona = personaMap.get(a.persona_id);
+        if (!eng || !persona || !a.fecha_inicio) continue;
+
+        const diasHabiles = calculateBusinessDays(a.fecha_inicio, hoyStr);
+        if (diasHabiles < 20) continue;
+
+        const key = `${a.persona_id}|${a.engagement_id}`;
+        const existente = propuesta20Map.get(key);
+        if (!existente || diasHabiles > existente.diasHabiles) {
+          propuesta20Map.set(key, {
+            engagement_id: eng.id,
+            engagement_nombre: eng.nombre,
+            cliente: eng.cliente ?? "",
+            persona,
+            fecha_inicio: a.fecha_inicio,
+            diasHabiles,
+            fechaCumple: fechaCumpleDiasHabiles(a.fecha_inicio, 20),
+          });
+        }
+      }
+      const propuesta20Todas = Array.from(propuesta20Map.values()).sort((a, b) => b.diasHabiles - a.diasHabiles);
+      // Hoy exactamente vs. días anteriores (según la fecha real de cumplimiento, no la de carga)
+      const propuesta20ArrHoy = propuesta20Todas.filter((a) => a.fechaCumple === hoyStr);
+      const propuesta20ArrAnteriores = propuesta20Todas.filter((a) => a.fechaCumple < hoyStr);
+
       setAnivHoy(anivHoyArr);
       setAnivProximos(anivProxArr);
       setCumpleHoy(cumpleHoyArr);
       setCumpleProximos(cumpleProxArr);
       setEppAlertas(eppArr);
       setPlanAccionAlertas(planAccionArr);
+      setPropuesta20AlertasHoy(propuesta20ArrHoy);
+      setPropuesta20AlertasAnteriores(propuesta20ArrAnteriores);
       setLoading(false);
     }
     load();
@@ -567,6 +692,12 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
   function togglePlanAccion(alerta: AlertaPlanAccion) {
     const id = `plan_accion-${alerta.engagement_id}`;
     toggleCheck(id, "plan_accion", `Planes de acción enviados — ${alerta.engagement_nombre}`);
+  }
+
+  function togglePropuesta20(alerta: AlertaPropuesta20Dias) {
+    const id = `propuesta20-${alerta.engagement_id}-${alerta.persona.id}`;
+    const desc = `20 días hábiles — ${alerta.persona.nombre} ${alerta.persona.apellido} en ${alerta.engagement_nombre}`;
+    toggleCheck(id, "propuesta20", desc);
   }
 
   function toggleCheck(id: string, tipo: string, descripcion: string) {
@@ -599,6 +730,9 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
   function isCheckedPlanAccion(alerta: AlertaPlanAccion) {
     return checks.some((c) => c.alertaId === `plan_accion-${alerta.engagement_id}`);
   }
+  function isCheckedPropuesta20(alerta: AlertaPropuesta20Dias) {
+    return checks.some((c) => c.alertaId === `propuesta20-${alerta.engagement_id}-${alerta.persona.id}`);
+  }
 
   if (loading) return (
     <div className="space-y-3 animate-pulse">
@@ -612,7 +746,8 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
   const sinAlertas =
     anivHoy.length === 0 && anivProximos.length === 0 &&
     cumpleHoy.length === 0 && cumpleProximos.length === 0 &&
-    eppAlertas.length === 0 && planAccionAlertas.length === 0;
+    eppAlertas.length === 0 && planAccionAlertas.length === 0 &&
+    propuesta20AlertasHoy.length === 0 && propuesta20AlertasAnteriores.length === 0;
 
   const eppPorTerminar = eppAlertas.filter((e) => e.tipo === "por_terminar");
   const eppTerminados  = eppAlertas.filter((e) => e.tipo === "recien_terminado");
@@ -694,6 +829,62 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
                 {planAccionAlertas.map((a) => (
                   <TarjetaPlanAccion key={a.engagement_id} alerta={a}
                     checked={isCheckedPlanAccion(a)} onCheck={() => togglePlanAccion(a)} />
+                ))}
+              </div>
+            )
+          )}
+        </section>
+      </div>
+
+      {/* ══ PROPUESTAS COMERCIALES — 20 DÍAS HÁBILES ═══════════════ */}
+      <div className="space-y-5">
+        <div className="flex items-center gap-2">
+          <div className="w-1 h-5 rounded-full bg-[#0d9488]" />
+          <h2 className="text-xs font-bold text-[#0d9488] uppercase tracking-widest">Propuestas Comerciales</h2>
+        </div>
+
+        {/* 20 días hábiles cumplidos HOY — siempre visible, abierta por defecto */}
+        <section>
+          <div className="flex items-center gap-2 mb-3">
+            <Timer className="w-4 h-4 text-[#0d9488]" />
+            <h3 className="text-sm font-bold text-[#1a1a2e] uppercase tracking-wide">20 días hábiles cumplidos</h3>
+          </div>
+          {propuesta20AlertasHoy.length === 0 ? (
+            <p className="text-sm text-gray-400 italic">Sin personas que cumplan 20 días hábiles hoy en propuestas comerciales.</p>
+          ) : (
+            <div className="space-y-2">
+              {propuesta20AlertasHoy.map((a) => (
+                <TarjetaPropuesta20Dias key={a.engagement_id + a.persona.id} alerta={a}
+                  checked={isCheckedPropuesta20(a)} onCheck={() => togglePropuesta20(a)} />
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Cumplidos en días anteriores — acordeón colapsado por defecto */}
+        <section>
+          <button onClick={() => setPropuesta20HistAbierto((v) => !v)}
+            className="flex items-center gap-2 mb-3 w-full text-left group">
+            <Timer className="w-4 h-4 text-[#0d9488]" />
+            <h3 className="text-sm font-bold text-[#1a1a2e] uppercase tracking-wide flex-1">
+              Cumplidos en días anteriores
+              {propuesta20AlertasAnteriores.length > 0 && (
+                <span className="ml-2 text-xs font-semibold text-white bg-[#0d9488] rounded-full px-2 py-0.5 normal-case tracking-normal">
+                  {propuesta20AlertasAnteriores.length}
+                </span>
+              )}
+            </h3>
+            {propuesta20HistAbierto ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
+          </button>
+
+          {propuesta20HistAbierto && (
+            propuesta20AlertasAnteriores.length === 0 ? (
+              <p className="text-sm text-gray-400 italic">Sin alertas históricas de propuestas comerciales.</p>
+            ) : (
+              <div className="space-y-2">
+                {propuesta20AlertasAnteriores.map((a) => (
+                  <TarjetaPropuesta20Dias key={a.engagement_id + a.persona.id} alerta={a}
+                    checked={isCheckedPropuesta20(a)} onCheck={() => togglePropuesta20(a)} />
                 ))}
               </div>
             )

@@ -143,19 +143,24 @@ export async function fetchEngagementsConReqs(supabase: any): Promise<{
 
   if (reqErr) return { engagements: [], error: reqErr.message };
 
-  // Todas las asignaciones activas (puede haber varias por req)
-  const { data: asigRaw, error: asigErr } = await (supabase as any)
-    .from("asignacion")
-    .select(`
-      id,
-      requerimiento_id,
-      persona_id,
-      pct_dedicacion,
-      fecha_inicio,
-      fecha_fin,
-      persona:persona_id (nombre, apellido, cargo_actual, iniciales)
-    `)
-    .eq("estado", "activa");
+  // Asignaciones activas, acotadas a los requerimientos vigentes (evita traer
+  // el historial completo de la tabla asignacion cuando solo interesan estos reqs)
+  const reqIds = (reqRaw ?? []).map((r: any) => r.id as string);
+  const { data: asigRaw, error: asigErr } = reqIds.length > 0
+    ? await (supabase as any)
+        .from("asignacion")
+        .select(`
+          id,
+          requerimiento_id,
+          persona_id,
+          pct_dedicacion,
+          fecha_inicio,
+          fecha_fin,
+          persona:persona_id (nombre, apellido, cargo_actual, iniciales)
+        `)
+        .eq("estado", "activa")
+        .in("requerimiento_id", reqIds)
+    : { data: [], error: null };
 
   if (asigErr) return { engagements: [], error: asigErr.message };
 
