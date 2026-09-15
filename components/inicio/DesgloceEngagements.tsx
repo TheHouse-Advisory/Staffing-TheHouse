@@ -63,12 +63,31 @@ const COLORES: Record<string, string> = {
 const COLOR_DEFAULT = "#94a3b8";
 const DIAS_SEMANA_LABELS = ["L", "M", "X", "J", "V"];
 
-// Badge de tipo en el modal de detalle del engagement
-const TIPO_BADGE: Record<string, { bg: string; text: string; label: string }> = {
-  proyecto:           { bg: "#eaf4ff", text: "#1a5276", label: "Proyecto" },
-  propuesta:          { bg: "#f5f0ff", text: "#6b21a8", label: "Propuesta" },
-  ayuda_interna:      { bg: "#f0fdf4", text: "#15803d", label: "Desarrollo interno" },
-  posibles_proyectos: { bg: "#fef3e2", text: "#b45309", label: "Posibles proyectos" },
+/** Oscurece un color hex (usado para el "outline" de texto sobre las barras, en vez de negro) */
+function darkenHex(hex: string, amount = 0.45): { r: number; g: number; b: number } {
+  const clean = hex.replace("#", "");
+  if (clean.length !== 6) return { r: 0, g: 0, b: 0 };
+  const r = parseInt(clean.slice(0, 2), 16);
+  const g = parseInt(clean.slice(2, 4), 16);
+  const b = parseInt(clean.slice(4, 6), 16);
+  return { r: Math.round(r * (1 - amount)), g: Math.round(g * (1 - amount)), b: Math.round(b * (1 - amount)) };
+}
+
+/** Text-shadow tipo "outline" en un tono más oscuro del color de fondo del segmento */
+function textOutlineShadow(bgColor: string): string {
+  const { r, g, b } = darkenHex(bgColor);
+  const solid = `rgba(${r}, ${g}, ${b}, .95)`;
+  const glow  = `rgba(${r}, ${g}, ${b}, .6)`;
+  return `-1px -1px 2px ${solid}, 1px -1px 2px ${solid}, -1px 1px 2px ${solid}, 1px 1px 2px ${solid}, 0 0 3px ${glow}`;
+}
+
+// Badge de tipo en el modal de detalle del engagement.
+// Texto en tono -900 del mismo color del fondo/borde (en vez de negro) para mejor contraste y armonía.
+const TIPO_BADGE: Record<string, { classes: string; label: string }> = {
+  proyecto:           { classes: "bg-blue-100 text-blue-900 border border-blue-300",     label: "Proyecto" },
+  propuesta:          { classes: "bg-violet-100 text-violet-900 border border-violet-300", label: "Propuesta" },
+  ayuda_interna:      { classes: "bg-emerald-100 text-emerald-900 border border-emerald-300", label: "Desarrollo interno" },
+  posibles_proyectos: { classes: "bg-amber-100 text-amber-900 border border-amber-300",   label: "Posibles proyectos" },
 };
 
 type Vista = "dia" | "semana" | "mes";
@@ -2616,11 +2635,11 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                         {!diaAusCfgConf && segmentsConf && segmentsConf.map((s, si) => s.ausColor ? (
                                           <div key={si} className="absolute inset-y-0 flex items-center justify-center select-none pointer-events-none"
                                             style={{ left: `${si * segPct}%`, width: `${segPct}%`, backgroundColor: s.ausColor }}>
-                                            <span className="font-black text-white" style={{ fontSize: vista === "mes" ? 9 : 7, lineHeight: 1, textShadow: "-1px -1px 2px rgba(0,0,0,.95), 1px -1px 2px rgba(0,0,0,.95), -1px 1px 2px rgba(0,0,0,.95), 1px 1px 2px rgba(0,0,0,.95), 0 0 3px rgba(0,0,0,.6)" }}>{s.lbl}</span>
+                                            <span className="font-black text-white" style={{ fontSize: vista === "mes" ? 9 : 7, lineHeight: 1, textShadow: textOutlineShadow(s.ausColor) }}>{s.lbl}</span>
                                           </div>
                                         ) : (
                                           <span key={si} className="absolute font-black text-white select-none pointer-events-none"
-                                            style={{ left: `${si * segPct + segPct / 2}%`, top: "50%", transform: "translate(-50%, -50%)", fontSize: vista === "mes" ? 9 : 7, lineHeight: 1, textShadow: "-1px -1px 2px rgba(0,0,0,.95), 1px -1px 2px rgba(0,0,0,.95), -1px 1px 2px rgba(0,0,0,.95), 1px 1px 2px rgba(0,0,0,.95), 0 0 3px rgba(0,0,0,.6)" }}>
+                                            style={{ left: `${si * segPct + segPct / 2}%`, top: "50%", transform: "translate(-50%, -50%)", fontSize: vista === "mes" ? 9 : 7, lineHeight: 1, textShadow: textOutlineShadow(cargoColor) }}>
                                             {s.lbl}
                                           </span>
                                         ))}
@@ -2711,12 +2730,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 {isActive && (
                                   <>
                                     <div className="relative group/bar overflow-hidden cursor-pointer"
-                                      style={{ height: 7, width: recortePlan ? `${recortePlan.widthPct}%` : "100%", marginLeft: recortePlan ? `${recortePlan.leftPct}%` : 0, marginTop: 6, background: barBgPlan, border: `1.5px dashed ${cargoColor}`, borderRadius: 4, opacity: desasignando === p.asignacionId ? 0.2 : 1 }}
+                                      style={{ height: 9, width: recortePlan ? `${recortePlan.widthPct}%` : "100%", marginLeft: recortePlan ? `${recortePlan.leftPct}%` : 0, marginTop: 5, background: barBgPlan, border: `1.5px dashed ${cargoColor}`, borderRadius: 4, opacity: desasignando === p.asignacionId ? 0.2 : 1 }}
                                       title={`PLAN · ${p.nombre} ${p.apellido} · ${p.pct}%`}
                                       onClick={(e) => handleAvatarClick(e, p, eng)}>
                                       {diaAusCfgPlan && (
-                                        <span className="absolute text-white font-black drop-shadow-sm select-none pointer-events-none"
-                                          style={{ left: "50%", top: "50%", transform: "translate(-50%, -50%)", fontSize: 11, lineHeight: 1 }}>
+                                        <span className="absolute text-white font-black text-[9px] leading-none select-none pointer-events-none"
+                                          style={{ left: "50%", top: "50%", transform: "translate(-50%, -50%)", textShadow: textOutlineShadow(diaAusCfgPlan.bg) }}>
                                           {diaAusCfgPlan.label[0].toUpperCase()}
                                         </span>
                                       )}
@@ -2727,7 +2746,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                             backgroundColor: s.ausColor ?? undefined,
                                             borderRight: si < segmentsPlan.length - 1 ? `1px solid ${cargoColor}77` : undefined,
                                           }}>
-                                          <span className="font-black text-white" style={{ fontSize: vista === "mes" ? 9 : 7, lineHeight: 1, textShadow: "-1px -1px 2px rgba(0,0,0,.95), 1px -1px 2px rgba(0,0,0,.95), -1px 1px 2px rgba(0,0,0,.95), 1px 1px 2px rgba(0,0,0,.95), 0 0 3px rgba(0,0,0,.6)" }}>{s.lbl}</span>
+                                          <span className="font-black text-white text-[9px] leading-none" style={{ textShadow: textOutlineShadow(s.ausColor ?? cargoColor) }}>{s.lbl}</span>
                                         </div>
                                       ))}
                                       {!readOnly && <button onClick={(e) => { e.stopPropagation(); handleDesasignar(p.asignacionId, eng.id); }}
@@ -2901,11 +2920,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               <div className="flex items-start justify-between gap-2">
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-1.5 mb-0.5 flex-wrap">
-                    <span className="text-[10px] font-bold px-2 py-0.5 rounded-full"
-                      style={{
-                        background: TIPO_BADGE[engModal.tipo]?.bg ?? "#f0fdf4",
-                        color:      TIPO_BADGE[engModal.tipo]?.text ?? "#15803d",
-                      }}>
+                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${TIPO_BADGE[engModal.tipo]?.classes ?? TIPO_BADGE.ayuda_interna.classes}`}>
                       {TIPO_BADGE[engModal.tipo]?.label ?? "Desarrollo interno"}
                     </span>
                   </div>
