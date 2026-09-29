@@ -13,7 +13,7 @@
 //  ENUMS / literales del dominio
 // ─────────────────────────────────────────────────────────────
 
-export type RolSistema = "admin" | "GyD" | "AySr" | "Desarrollo" | "proposer" | "planificador";
+export type RolSistema = "admin" | "personas" | "GyD" | "AySr" | "Desarrollo" | "proposer" | "planificador";
 
 /**
  * Ciclo de vida del acceso al sistema de una persona.
@@ -359,6 +359,8 @@ export interface Anotacion {
   creado_por?: string | null;
   editado_por?: string | null;
   folder_id?: string | null;
+  /** true → solo la ve su autor; false → visible para rol 'personas' */
+  es_privada?: boolean;
 }
 
 /** anotacion_folders: carpetas anidadas para Anotaciones (ver supabase/add_anotacion_folders.sql) */

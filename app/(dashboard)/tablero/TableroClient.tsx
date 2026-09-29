@@ -12,6 +12,7 @@ import { PerfilIndividualTablero } from "@/components/inicio/PerfilIndividualTab
 import { PanelFitAsignacion } from "@/components/engagements/PanelFitAsignacion";
 import { NavegadorFechas } from "@/components/ui/NavegadorFechas";
 import { cn } from "@/lib/utils";
+import { esAdmin } from "@/lib/roles";
 
 type VistaPrincipal = "proyectos" | "perfil";
 type Periodo = "dia" | "semana" | "mes";
@@ -132,7 +133,7 @@ function TableroContent() {
                 onOpenPanel={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo" ? undefined : abrirPanel}
                 readOnly={isReadOnly}
                 ocultarPctEquipo={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
-                isAdmin={rol === "admin"}
+                isAdmin={esAdmin(rol)}
               />
             </div>
 

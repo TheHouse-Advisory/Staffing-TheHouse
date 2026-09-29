@@ -49,13 +49,14 @@ interface AlertaPlanAccion {
   personas: { id: string; nombre: string; apellido: string; cargo_actual: string | null }[];
 }
 
-/** Alerta de 20 días hábiles acumulados en una asignación dentro de un engagement
+/** Alerta de 20 días hábiles consecutivos en una asignación dentro de un engagement
  *  tipo "propuesta" (Propuesta comercial). Color teal, distinto del resto. */
 interface AlertaPropuesta20Dias {
   engagement_id: string;
   engagement_nombre: string;
   cliente: string;
   persona: { id: string; nombre: string; apellido: string; cargo_actual: string | null };
+  /** Inicio de la racha continua actual */
   fecha_inicio: string;
   diasHabiles: number;
   /** Fecha exacta (yyyy-MM-dd) en que se cumplen los 20 días hábiles */
@@ -70,7 +71,8 @@ interface AlertaChecked {
 }
 
 const LS_KEY = "staffinghub_alertas_checked";
-const HISTORIAL_DIAS = 30; // las alertas gestionadas se olvidan (y reaparecen si siguen vigentes) pasado este plazo
+const HISTORIAL_DIAS = 30; // el registro del chequeo se borra del navegador pasado este plazo
+const OCULTAR_CHECK_DIAS = 7; // alertas chequeadas hace más de 7 días corridos se ocultan del panel
 
 function leerChecks(): AlertaChecked[] {
   if (typeof window === "undefined") return [];
@@ -433,14 +435,14 @@ interface AlertasPanelProps {
 }
 
 export function AlertasPanel({ personaId }: AlertasPanelProps) {
-  const [anivHoy, setAnivHoy] = useState<PersonaAniversario[]>([]);
-  const [anivProximos, setAnivProximos] = useState<PersonaAniversario[]>([]);
-  const [cumpleHoy, setCumpleHoy] = useState<PersonaCumpleanos[]>([]);
-  const [cumpleProximos, setCumpleProximos] = useState<PersonaCumpleanos[]>([]);
-  const [eppAlertas, setEppAlertas] = useState<AlertaEPP[]>([]);
-  const [planAccionAlertas, setPlanAccionAlertas] = useState<AlertaPlanAccion[]>([]);
-  const [propuesta20AlertasHoy, setPropuesta20AlertasHoy] = useState<AlertaPropuesta20Dias[]>([]);
-  const [propuesta20AlertasAnteriores, setPropuesta20AlertasAnteriores] = useState<AlertaPropuesta20Dias[]>([]);
+  const [anivHoyRaw, setAnivHoy] = useState<PersonaAniversario[]>([]);
+  const [anivProximosRaw, setAnivProximos] = useState<PersonaAniversario[]>([]);
+  const [cumpleHoyRaw, setCumpleHoy] = useState<PersonaCumpleanos[]>([]);
+  const [cumpleProximosRaw, setCumpleProximos] = useState<PersonaCumpleanos[]>([]);
+  const [eppAlertasRaw, setEppAlertas] = useState<AlertaEPP[]>([]);
+  const [planAccionAlertasRaw, setPlanAccionAlertas] = useState<AlertaPlanAccion[]>([]);
+  const [propuesta20AlertasHoyRaw, setPropuesta20AlertasHoy] = useState<AlertaPropuesta20Dias[]>([]);
+  const [propuesta20AlertasAnterioresRaw, setPropuesta20AlertasAnteriores] = useState<AlertaPropuesta20Dias[]>([]);
   const [propuesta20HistAbierto, setPropuesta20HistAbierto] = useState(false); // colapsado por defecto
   const [loading, setLoading] = useState(true);
   const [checks, setChecks] = useState<AlertaChecked[]>([]);
@@ -623,38 +625,74 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
       }
       planAccionArr.sort((a, b) => b.fecha.localeCompare(a.fecha)); // más reciente primero
 
-      // ── Propuestas comerciales: 20 días hábiles acumulados por persona ──
-      // Una persona puede tener varias filas de asignación activas para el mismo
-      // engagement (ej: % de dedicación cambiado a mitad de camino) → deduplicar
-      // por persona+engagement, quedándose con la de inicio más antiguo (más días hábiles).
+      // ── Propuestas comerciales: 20 días hábiles CONSECUTIVOS por persona+engagement ──
+      // Se traen todos los tramos (activos y finalizados) de cada propuesta y se arma la
+      // racha continua que llega hasta hoy: un tramo anterior se encadena solo si no deja
+      // ningún día hábil libre antes del inicio de la racha. Solo personas asignadas hoy.
       const propuestaMap = new Map((engPropuestaRes.data ?? []).map((e: any) => [e.id, e]));
-      const propuesta20Map = new Map<string, AlertaPropuesta20Dias>();
-      for (const a of (asigRes.data ?? []) as { engagement_id: string; persona_id: string; fecha_inicio: string }[]) {
-        const eng = propuestaMap.get(a.engagement_id) as any;
-        const persona = personaMap.get(a.persona_id);
-        if (!eng || !persona || !a.fecha_inicio) continue;
+      const propuestaIds = Array.from(propuestaMap.keys());
+      const { data: tramosData } = propuestaIds.length
+        ? await sb.from("asignacion")
+            .select("engagement_id, persona_id, fecha_inicio, fecha_fin, estado")
+            .in("engagement_id", propuestaIds)
+            .neq("estado", "cancelada")
+        : { data: [] };
 
-        const diasHabiles = calculateBusinessDays(a.fecha_inicio, hoyStr);
+      type Tramo = { engagement_id: string; persona_id: string; fecha_inicio: string; fecha_fin: string | null; estado: string };
+      const tramosPorClave = new Map<string, Tramo[]>();
+      for (const t of (tramosData ?? []) as Tramo[]) {
+        if (!t.fecha_inicio || t.fecha_inicio > hoyStr) continue;
+        const key = `${t.persona_id}|${t.engagement_id}`;
+        tramosPorClave.set(key, [...(tramosPorClave.get(key) ?? []), t]);
+      }
+
+      const finTramo = (t: Tramo) => (!t.fecha_fin || t.fecha_fin > hoyStr ? hoyStr : t.fecha_fin);
+      const diaAnterior = (iso: string) => format(subDays(parseISO(iso), 1), "yyyy-MM-dd");
+      const diaSiguiente = (iso: string) => format(addDays(parseISO(iso), 1), "yyyy-MM-dd");
+
+      const propuesta20Map = new Map<string, AlertaPropuesta20Dias>();
+      for (const [key, tramos] of Array.from(tramosPorClave)) {
+        const [personaId, engId] = key.split("|");
+        const eng = propuestaMap.get(engId) as any;
+        const persona = personaMap.get(personaId);
+        if (!eng || !persona) continue;
+
+        // Debe estar asignada hoy (tramo activo que cubre hoy)
+        const vigentes = tramos.filter((t) => t.estado === "activa" && (!t.fecha_fin || t.fecha_fin >= hoyStr));
+        if (vigentes.length === 0) continue;
+
+        // Retroceder encadenando tramos sin días hábiles libres entre medio
+        let inicioRacha = vigentes.reduce((min, t) => (t.fecha_inicio < min ? t.fecha_inicio : min), vigentes[0].fecha_inicio);
+        let cambio = true;
+        while (cambio) {
+          cambio = false;
+          for (const t of tramos) {
+            if (t.fecha_inicio >= inicioRacha) continue;
+            const fin = finTramo(t);
+            const pegado = fin >= diaAnterior(inicioRacha) ||
+              calculateBusinessDays(diaSiguiente(fin), diaAnterior(inicioRacha)) === 0;
+            if (pegado) { inicioRacha = t.fecha_inicio; cambio = true; }
+          }
+        }
+
+        const diasHabiles = calculateBusinessDays(inicioRacha, hoyStr);
         if (diasHabiles < 20) continue;
 
-        const key = `${a.persona_id}|${a.engagement_id}`;
-        const existente = propuesta20Map.get(key);
-        if (!existente || diasHabiles > existente.diasHabiles) {
-          propuesta20Map.set(key, {
-            engagement_id: eng.id,
-            engagement_nombre: eng.nombre,
-            cliente: eng.cliente ?? "",
-            persona,
-            fecha_inicio: a.fecha_inicio,
-            diasHabiles,
-            fechaCumple: fechaCumpleDiasHabiles(a.fecha_inicio, 20),
-          });
-        }
+        propuesta20Map.set(key, {
+          engagement_id: eng.id,
+          engagement_nombre: eng.nombre,
+          cliente: eng.cliente ?? "",
+          persona,
+          fecha_inicio: inicioRacha,
+          diasHabiles,
+          fechaCumple: fechaCumpleDiasHabiles(inicioRacha, 20),
+        });
       }
       const propuesta20Todas = Array.from(propuesta20Map.values()).sort((a, b) => b.diasHabiles - a.diasHabiles);
-      // Hoy exactamente vs. días anteriores (según la fecha real de cumplimiento, no la de carga)
-      const propuesta20ArrHoy = propuesta20Todas.filter((a) => a.fechaCumple === hoyStr);
-      const propuesta20ArrAnteriores = propuesta20Todas.filter((a) => a.fechaCumple < hoyStr);
+      // Vigente 7 días corridos desde que se cumple (día de cumplimiento + 6); luego pasa al historial
+      const limiteVigenciaStr = format(subDays(ahora, 6), "yyyy-MM-dd");
+      const propuesta20ArrHoy = propuesta20Todas.filter((a) => a.fechaCumple >= limiteVigenciaStr);
+      const propuesta20ArrAnteriores = propuesta20Todas.filter((a) => a.fechaCumple < limiteVigenciaStr);
 
       setAnivHoy(anivHoyArr);
       setAnivProximos(anivProxArr);
@@ -718,21 +756,23 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
     guardarChecks(nuevos);
   }
 
-  function isCheckedAniv(p: PersonaAniversario) {
-    return checks.some((c) => c.alertaId === alertaId("aniversario", p.id, p.años));
-  }
-  function isCheckedCumple(p: PersonaCumpleanos) {
-    return checks.some((c) => c.alertaId === alertaId("cumpleanos", p.id, p.edad));
-  }
-  function isCheckedEPP(alerta: AlertaEPP) {
-    return checks.some((c) => c.alertaId === `epp-${alerta.engagement_id}-${alerta.fecha_fin}`);
-  }
-  function isCheckedPlanAccion(alerta: AlertaPlanAccion) {
-    return checks.some((c) => c.alertaId === `plan_accion-${alerta.engagement_id}`);
-  }
-  function isCheckedPropuesta20(alerta: AlertaPropuesta20Dias) {
-    return checks.some((c) => c.alertaId === `propuesta20-${alerta.engagement_id}-${alerta.persona.id}`);
-  }
+  const idAniv = (p: PersonaAniversario) => alertaId("aniversario", p.id, p.años);
+  const idCumple = (p: PersonaCumpleanos) => alertaId("cumpleanos", p.id, p.edad);
+  const idEPP = (a: AlertaEPP) => `epp-${a.engagement_id}-${a.fecha_fin}`;
+  const idPlanAccion = (a: AlertaPlanAccion) => `plan_accion-${a.engagement_id}`;
+  const idPropuesta20 = (a: AlertaPropuesta20Dias) => `propuesta20-${a.engagement_id}-${a.persona.id}`;
+  const esChecked = (id: string) => checks.some((c) => c.alertaId === id);
+
+  // Oculta alertas chequeadas hace más de OCULTAR_CHECK_DIAS días corridos
+  const limiteOculto = Date.now() - OCULTAR_CHECK_DIAS * 24 * 60 * 60 * 1000;
+  const visible = <T,>(idFn: (x: T) => string) => (x: T) =>
+    !checks.some((c) => c.alertaId === idFn(x) && new Date(c.fechaCheck).getTime() < limiteOculto);
+
+  const isCheckedAniv = (p: PersonaAniversario) => esChecked(idAniv(p));
+  const isCheckedCumple = (p: PersonaCumpleanos) => esChecked(idCumple(p));
+  const isCheckedEPP = (a: AlertaEPP) => esChecked(idEPP(a));
+  const isCheckedPlanAccion = (a: AlertaPlanAccion) => esChecked(idPlanAccion(a));
+  const isCheckedPropuesta20 = (a: AlertaPropuesta20Dias) => esChecked(idPropuesta20(a));
 
   if (loading) return (
     <div className="space-y-3 animate-pulse">
@@ -741,6 +781,16 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
       ))}
     </div>
   );
+
+  // Listas visibles (sin las chequeadas hace más de 7 días)
+  const anivHoy = anivHoyRaw.filter(visible(idAniv));
+  const anivProximos = anivProximosRaw.filter(visible(idAniv));
+  const cumpleHoy = cumpleHoyRaw.filter(visible(idCumple));
+  const cumpleProximos = cumpleProximosRaw.filter(visible(idCumple));
+  const eppAlertas = eppAlertasRaw.filter(visible(idEPP));
+  const planAccionAlertas = planAccionAlertasRaw.filter(visible(idPlanAccion));
+  const propuesta20AlertasHoy = propuesta20AlertasHoyRaw.filter(visible(idPropuesta20));
+  const propuesta20AlertasAnteriores = propuesta20AlertasAnterioresRaw.filter(visible(idPropuesta20));
 
   const ahora = new Date();
   const sinAlertas =
@@ -843,14 +893,14 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
           <h2 className="text-xs font-bold text-[#0d9488] uppercase tracking-widest">Propuestas Comerciales</h2>
         </div>
 
-        {/* 20 días hábiles cumplidos HOY — siempre visible, abierta por defecto */}
+        {/* 20 días hábiles cumplidos en los últimos 7 días — siempre visible, abierta por defecto */}
         <section>
           <div className="flex items-center gap-2 mb-3">
             <Timer className="w-4 h-4 text-[#0d9488]" />
             <h3 className="text-sm font-bold text-[#1a1a2e] uppercase tracking-wide">20 días hábiles cumplidos</h3>
           </div>
           {propuesta20AlertasHoy.length === 0 ? (
-            <p className="text-sm text-gray-400 italic">Sin personas que cumplan 20 días hábiles hoy en propuestas comerciales.</p>
+            <p className="text-sm text-gray-400 italic">Sin personas que hayan cumplido 20 días hábiles esta semana en propuestas comerciales.</p>
           ) : (
             <div className="space-y-2">
               {propuesta20AlertasHoy.map((a) => (

@@ -17,9 +17,11 @@ import { Modal, ConfirmDialog } from "@/components/ui/Modal";
 import { FieldWrapper, Select } from "@/components/ui/FormField";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import type { Persona, RolSistema, EstadoAcceso } from "@/lib/types/database";
+import { esAdmin } from "@/lib/roles";
 
 const ROL_OPTIONS = [
   { value: "admin",          label: "Admin" },
+  { value: "personas",       label: "Personas" },
   { value: "GyD",            label: "G&D" },
   { value: "AySr",           label: "A&Sr" },
   { value: "Desarrollo",     label: "Desarrollo" },
@@ -425,7 +427,7 @@ function OtorgarAccesoModal({
               onChange={(e) => setRol(e.target.value as RolSistema)}
             />
             <p className="text-xs text-[#888]">
-              {rol === "admin"
+              {esAdmin(rol)
                 ? "Acceso total: gestiona accesos, personas y configuración."
                 : "Puede proponer asignaciones y ver la información de la plataforma."}
             </p>

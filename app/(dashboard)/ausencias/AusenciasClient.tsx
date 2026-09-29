@@ -1,7 +1,9 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { ChevronLeft, ChevronRight, Plus, BarChart2, Loader2, Eye, EyeOff } from "lucide-react";
+import { useState, useEffect, useRef } from "react";
+import { ChevronLeft, ChevronRight, ChevronDown, Plus, BarChart2, Loader2, Eye, EyeOff, CalendarOff, Plane } from "lucide-react";
+import { ModalNuevoViaje } from "@/components/ausencias/ModalNuevoViaje";
+import { fetchViajesRango, type ViajeDia } from "@/lib/queries/ausencias";
 import { createClient, createAnyClient } from "@/lib/supabase/client";
 import type { RolSistema } from "@/lib/types/database";
 import { HeatmapAusencias } from "@/components/ausencias/HeatmapAusencias";
@@ -85,6 +87,8 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
   const [personasQ, setPersonasQ]     = useState<PersonaTrimestral[]>([]);
   const [ausenciasQ, setAusenciasQ]   = useState<AusenciaTrimestral[]>([]);
   const [loadingQ, setLoadingQ]       = useState(false);
+  const [viajesQ, setViajesQ]         = useState<Record<string, Record<string, ViajeDia>>>({});
+  const [recargarKey, setRecargarKey] = useState(0); // recarga heatmaps tras guardar viaje
 
   useEffect(() => {
     if (vistaActiva !== "quarter") return;
@@ -94,21 +98,37 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
       // Rango ampliado (+/-6 días) para cubrir las semanas de borde que HeatmapTrimestral asoma del mes anterior/siguiente
       const desde = new Date(yearAnio, startMonthQ - 1, 1 - 6).toISOString().split("T")[0];
       const hasta = new Date(yearAnio, startMonthQ + 2, 0 + 6).toISOString().split("T")[0];
-      const [persRes, ausRes] = await Promise.all([
+      const [persRes, ausRes, viajesRes] = await Promise.all([
         sb.from("persona").select("id, nombre, apellido, cargo_actual, is_leverager, referente").eq("activo", true),
         sb.from("ausencia").select("persona_id, tipo, fecha_inicio, fecha_fin").lte("fecha_inicio", hasta).gte("fecha_fin", desde),
+        fetchViajesRango(sb, desde, hasta),
       ]);
+      setViajesQ(viajesRes);
       setPersonasQ((persRes.data ?? []) as PersonaTrimestral[]);
       setAusenciasQ((ausRes.data ?? []) as AusenciaTrimestral[]);
       setLoadingQ(false);
     })();
-  }, [vistaActiva, yearAnio, quarterQ]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [vistaActiva, yearAnio, quarterQ, recargarKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // Una sola fecha pivot — cada vista deriva su rango desde aquí
   const [selectedDate, setSelectedDate] = useState<Date>(
     new Date(now.getFullYear(), now.getMonth(), 1)
   );
   const [modalOpen, setModalOpen]     = useState(false);
   const [resumenOpen, setResumenOpen] = useState(false);
+  // Menú "+ Agregar" (Ausencia / Viaje)
+  const [menuAgregarOpen, setMenuAgregarOpen] = useState(false);
+  const [showModalViaje, setShowModalViaje] = useState(false);
+  const menuAgregarRef = useRef<HTMLDivElement>(null);
+
+  // Cerrar menú al hacer clic fuera
+  useEffect(() => {
+    if (!menuAgregarOpen) return;
+    const onClick = (e: MouseEvent) => {
+      if (!menuAgregarRef.current?.contains(e.target as Node)) setMenuAgregarOpen(false);
+    };
+    document.addEventListener("mousedown", onClick);
+    return () => document.removeEventListener("mousedown", onClick);
+  }, [menuAgregarOpen]);
 
   // Derivados para la vista mes
   const year  = selectedDate.getFullYear();
@@ -231,13 +251,38 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
               </button>
             )}
             {!isReadOnly && (
-              <button
-                onClick={() => setModalOpen(true)}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#333] rounded-lg text-[12px] font-semibold text-white transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                Nueva ausencia
-              </button>
+              <div ref={menuAgregarRef} className="relative">
+                <button
+                  onClick={() => setMenuAgregarOpen((v) => !v)}
+                  aria-haspopup="menu"
+                  aria-expanded={menuAgregarOpen}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#333] rounded-lg text-[12px] font-semibold text-white transition-colors"
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Agregar
+                  <ChevronDown className="w-3 h-3 opacity-70" />
+                </button>
+                {menuAgregarOpen && (
+                  <div role="menu" className="absolute right-0 mt-1 w-40 bg-white border border-[#e8e8e8] rounded-lg shadow-lg py-1 z-40">
+                    <button
+                      role="menuitem"
+                      onClick={() => { setMenuAgregarOpen(false); setModalOpen(true); }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-[#1a1a1a] hover:bg-gray-50"
+                    >
+                      <CalendarOff className="w-3.5 h-3.5 text-gray-500" />
+                      Ausencia
+                    </button>
+                    <button
+                      role="menuitem"
+                      onClick={() => { setMenuAgregarOpen(false); setShowModalViaje(true); }}
+                      className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-[#1a1a1a] hover:bg-gray-50"
+                    >
+                      <Plane className="w-3.5 h-3.5 text-gray-500" />
+                      Viaje
+                    </button>
+                  </div>
+                )}
+              </div>
             )}
           </div>
         </div>
@@ -253,6 +298,13 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
               <span className="text-[12px] text-[#555]">{l.label}</span>
             </div>
           ))}
+          {/* Viaje: no es tipo de ausencia, se agrega fijo */}
+          <div className="flex items-center gap-2 flex-shrink-0">
+            <span className="w-5 h-5 rounded flex-shrink-0 bg-indigo-600 text-white shadow-sm flex items-center justify-center">
+              <Plane size={16} strokeWidth={2.5} />
+            </span>
+            <span className="text-[12px] text-[#555]">Viaje</span>
+          </div>
         </div>
       </header>
 
@@ -277,6 +329,7 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
               readOnly={isReadOnly}
               rolActual={rol}
               showMetrics={showMetrics}
+              recargarKey={recargarKey}
             />
           )}
 
@@ -295,6 +348,7 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
                 ausenciasData={ausenciasQ}
                 tiposDinamicos={tiposDB}
                 rolActual={rol}
+                viajesData={viajesQ}
               />
             )
           )}
@@ -307,6 +361,7 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
               onExternalModalClose={() => setModalOpen(false)}
               readOnly={isReadOnly}
               rolActual={rol}
+              recargarKey={recargarKey}
             />
           )}
 
@@ -318,6 +373,9 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
         open={resumenOpen}
         onClose={() => setResumenOpen(false)}
       />
+
+      {/* ── Modal nuevo viaje ────────────────────────────────────── */}
+      <ModalNuevoViaje open={showModalViaje} onClose={() => setShowModalViaje(false)} onGuardado={() => setRecargarKey((k) => k + 1)} />
     </div>
   );
 }

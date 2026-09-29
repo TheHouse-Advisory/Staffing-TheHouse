@@ -18,6 +18,7 @@ import { PanelFitAsignacion } from "@/components/engagements/PanelFitAsignacion"
 import { PersonaResumenModal } from "@/components/personas/PersonaResumenModal";
 import { NavegadorFechas } from "@/components/ui/NavegadorFechas";
 import type { Persona } from "@/lib/types/database";
+import { esAdmin } from "@/lib/roles";
 
 const JERARQUIA_CARGOS = [
   "Socio", "Director de Proyectos", "Director", "Gerente de Proyectos", "Gerente",
@@ -145,7 +146,7 @@ export function InicioClient() {
         setRol(rolActual);
         // Vista por defecto para Admin y roles de solo lectura (AySr/GyD/Desarrollo/planificador):
         // Equipo colapsado, Tablero expandido
-        if (rolActual === "admin" || rolActual === "AySr" || rolActual === "GyD" || rolActual === "Desarrollo" || rolActual === "planificador") {
+        if (esAdmin(rolActual) || rolActual === "AySr" || rolActual === "GyD" || rolActual === "Desarrollo" || rolActual === "planificador") {
           setEquipoEstado("colapsado");
           setActiveQuadrant("tablero");
         }
@@ -433,7 +434,7 @@ export function InicioClient() {
                                   A
                                 </span>
                               )}
-                              {mostrarCarga && rol === "admin" && p.referente && (
+                              {mostrarCarga && esAdmin(rol) && p.referente && (
                                 <span className="absolute -top-0.5 -right-0.5 w-3 h-3 rounded-full bg-[#e2884a] border-2 border-white flex items-center justify-center text-white font-bold leading-none" style={{ fontSize: 7 }}>
                                   R
                                 </span>
@@ -466,7 +467,7 @@ export function InicioClient() {
               ocultarCarga={rol === "GyD" || rol === "AySr" || rol === "planificador"}
               ocultarApalancador={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
               ocultarInfoRestringida={rol === "planificador" || rol === "GyD" || rol === "AySr"}
-              isAdmin={rol === "admin"}
+              isAdmin={esAdmin(rol)}
             />
           )}
         </div>
@@ -505,7 +506,7 @@ export function InicioClient() {
               onOpenPanel={isReadOnly ? undefined : abrirPanel}
               externalReloadKey={tableroReloadKey}
               ocultarPctEquipo={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
-              isAdmin={rol === "admin"}
+              isAdmin={esAdmin(rol)}
               vistaResumida={vistaResumida}
               titulo="Tablero"
               onVistaResumidaChange={setVistaResumida}

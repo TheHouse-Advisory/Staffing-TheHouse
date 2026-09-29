@@ -34,6 +34,22 @@ export async function getNombreUsuarioActual(supabase: any): Promise<string | nu
   }
 }
 
+/** persona.id del usuario autenticado (para saber si es autor de una nota). */
+export async function getPersonaIdActual(supabase: any): Promise<string | null> {
+  try {
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) return null;
+    const { data } = await supabase
+      .from("persona")
+      .select("id")
+      .eq("auth_user_id", user.id)
+      .maybeSingle();
+    return data?.id ?? null;
+  } catch {
+    return null;
+  }
+}
+
 export async function createAnotacion(
   supabase: any,
   anotacion: Omit<Anotacion, "id" | "created_at" | "creado_por" | "editado_por">
@@ -46,7 +62,9 @@ export async function createAnotacion(
       titulo: anotacion.titulo,
       contenido: anotacion.contenido,
       categoria: anotacion.categoria ?? null,
-      autor_id: anotacion.autor_id ?? null,
+      autor_id: anotacion.autor_id ?? null, // el trigger lo reemplaza por el usuario actual
+      folder_id: anotacion.folder_id ?? null,
+      es_privada: anotacion.es_privada ?? false,
       creado_por: usuarioActual,
       editado_por: usuarioActual,
     })
@@ -59,7 +77,7 @@ export async function createAnotacion(
 export async function updateAnotacion(
   supabase: any,
   id: string,
-  cambios: Partial<Pick<Anotacion, "titulo" | "contenido" | "categoria" | "folder_id">>
+  cambios: Partial<Pick<Anotacion, "titulo" | "contenido" | "categoria" | "folder_id" | "es_privada">>
 ): Promise<{ error: string | null }> {
   const usuarioActual = await getNombreUsuarioActual(supabase);
 

@@ -27,6 +27,7 @@ import {
 import { cn } from "@/lib/utils";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
 import type { RolSistema } from "@/lib/types/database";
+import { esAdmin } from "@/lib/roles";
 
 interface SidebarProps {
   nombreCompleto: string;
@@ -51,23 +52,23 @@ const navItems: { section: string; items: NavItem[] }[] = [
   {
     section: "Principal",
     items: [
-      { href: "/inicio",      label: "Inicio",    icon: Home,            allowedRoles: ["admin", "GyD", "AySr", "proposer", "planificador"] },
-      { href: "/tablero",     label: "Tablero",   icon: LayoutDashboard, allowedRoles: ["admin", "GyD", "AySr", "Desarrollo", "proposer", "planificador"] },
-      { href: "/engagements", label: "Proyectos", icon: Briefcase,       allowedRoles: ["admin", "AySr", "proposer", "planificador", "GyD"] },
-      { href: "/personas",    label: "Personas",  icon: Users,           allowedRoles: ["admin", "GyD", "AySr", "proposer", "planificador"] },
-      { href: "/ausencias",   label: "Ausencias", icon: CalendarOff,     allowedRoles: ["admin", "GyD", "AySr", "Desarrollo", "proposer", "planificador"] },
-      { href: "/alertas",     label: "Alertas",   icon: Bell,            allowedRoles: ["admin", "proposer"] },
-      { href: "/anotaciones", label: "Anotaciones", icon: Notebook,      allowedRoles: ["admin"] },
-      { href: "/reportes",    label: "Reportes",  icon: BarChart2,       allowedRoles: ["admin", "proposer"] },
+      { href: "/inicio",      label: "Inicio",    icon: Home,            allowedRoles: ["admin", "personas", "GyD", "AySr", "proposer", "planificador"] },
+      { href: "/tablero",     label: "Tablero",   icon: LayoutDashboard, allowedRoles: ["admin", "personas", "GyD", "AySr", "Desarrollo", "proposer", "planificador"] },
+      { href: "/engagements", label: "Proyectos", icon: Briefcase,       allowedRoles: ["admin", "personas", "AySr", "proposer", "planificador", "GyD"] },
+      { href: "/personas",    label: "Personas",  icon: Users,           allowedRoles: ["admin", "personas", "GyD", "AySr", "proposer", "planificador"] },
+      { href: "/ausencias",   label: "Ausencias", icon: CalendarOff,     allowedRoles: ["admin", "personas", "GyD", "AySr", "Desarrollo", "proposer", "planificador"] },
+      { href: "/alertas",     label: "Alertas",   icon: Bell,            allowedRoles: ["admin", "personas", "proposer"] },
+      { href: "/anotaciones", label: "Anotaciones", icon: Notebook,      allowedRoles: ["personas"] },
+      { href: "/reportes",    label: "Reportes",  icon: BarChart2,       allowedRoles: ["admin", "personas", "proposer"] },
     ],
   },
   {
     section: "Gestión",
     items: [
-      { href: "/planificacion", label: "Planificación", icon: Kanban,      allowedRoles: ["admin", "planificador"] },
-      { href: "/capacity",      label: "Capacity",       icon: BarChart3,   allowedRoles: ["admin"] },
-      { href: "/accesos",       label: "Accesos",        icon: ShieldCheck, allowedRoles: ["admin"] },
-      { href: "/configuracion", label: "Configuración",  icon: Settings,    allowedRoles: ["admin"] },
+      { href: "/planificacion", label: "Planificación", icon: Kanban,      allowedRoles: ["admin", "personas", "planificador"] },
+      { href: "/capacity",      label: "Capacity",       icon: BarChart3,   allowedRoles: ["admin", "personas"] },
+      { href: "/accesos",       label: "Accesos",        icon: ShieldCheck, allowedRoles: ["admin", "personas"] },
+      { href: "/configuracion", label: "Configuración",  icon: Settings,    allowedRoles: ["admin", "personas"] },
     ],
   },
 ];
@@ -174,7 +175,7 @@ export function Sidebar({
                 pathname === item.href ||
                 (item.href !== "/tablero" && pathname.startsWith(item.href));
               const Icon = item.icon;
-              const showPlus = !isCollapsed && item.href === "/engagements" && rol === "admin";
+              const showPlus = !isCollapsed && item.href === "/engagements" && esAdmin(rol);
 
               return (
                 <div
@@ -239,7 +240,7 @@ export function Sidebar({
                   {nombreCompleto}
                 </p>
                 <p className="text-[10px] text-[#a0a8c0] truncate">
-                  {rol === "admin" ? "Admin" : rol === "GyD" ? "G&D" : rol === "AySr" ? "A&Sr" : rol === "Desarrollo" ? "Desarrollo" : cargo ?? "Equipo"}
+                  {rol === "admin" ? "Admin" : rol === "personas" ? "Personas" : rol === "GyD" ? "G&D" : rol === "AySr" ? "A&Sr" : rol === "Desarrollo" ? "Desarrollo" : cargo ?? "Equipo"}
                 </p>
               </div>
               {/* Logout */}

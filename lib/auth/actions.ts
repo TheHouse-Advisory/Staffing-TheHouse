@@ -28,9 +28,10 @@
 import { createClient, createServiceClient } from "@/lib/supabase/server";
 import { revalidatePath } from "next/cache";
 import { requireAdmin } from "@/lib/auth";
+import { esAdmin, ROLES_ADMIN } from "@/lib/roles";
 import type { Persona, RolSistema } from "@/lib/types/database";
 
-const ROLES_VALIDOS: RolSistema[] = ["admin", "GyD", "AySr", "Desarrollo", "proposer"];
+const ROLES_VALIDOS: RolSistema[] = ["admin", "personas", "GyD", "AySr", "Desarrollo", "proposer"];
 
 export interface ResultadoAccion {
   ok: boolean;
@@ -231,7 +232,7 @@ export async function cambiarRol({
   if (!ROLES_VALIDOS.includes(rol)) {
     return { ok: false, message: "Rol inválido." };
   }
-  if (personaId === admin.persona.id && rol !== "admin") {
+  if (personaId === admin.persona.id && !esAdmin(rol)) {
     return {
       ok: false,
       message: "No puedes quitarte a ti mismo el rol de administrador.",
@@ -251,11 +252,11 @@ export async function cambiarRol({
   }
 
   // Failsafe: solo bloquear si es el propio admin editándose Y es el último
-  if (actual.rol_sistema === "admin" && rol !== "admin" && personaId === admin.persona.id) {
+  if (esAdmin(actual.rol_sistema) && !esAdmin(rol) && personaId === admin.persona.id) {
     const { count } = await service
       .from("persona")
       .select("id", { count: "exact", head: true })
-      .eq("rol_sistema", "admin");
+      .in("rol_sistema", ROLES_ADMIN);
     if ((count ?? 0) <= 1)
       return { ok: false, message: "No puedes cambiar el rol, eres el último Admin dentro, si no queda inutilizada la plataforma." };
   }
