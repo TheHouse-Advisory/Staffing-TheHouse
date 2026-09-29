@@ -8,6 +8,7 @@ import {
   getAnotaciones,
   createAnotacion,
   getNombreUsuarioActual,
+  getPersonaIdActual,
   getAnotacionFolders,
   createAnotacionFolder,
   deleteAnotacionFolder,
@@ -21,11 +22,20 @@ import type { Anotacion, AnotacionFolder } from "@/lib/types/database";
 
 const TODOS = "todos";
 
+// Filtro de visibilidad
+const VISIBILIDAD_OPTIONS = [
+  { value: TODOS, label: "Todas las notas" },
+  { value: "privadas", label: "Solo privadas" },
+  { value: "compartidas", label: "Solo compartidas" },
+];
+
 export function AnotacionesList() {
   const [anotaciones, setAnotaciones] = useState<Anotacion[]>([]);
   const [loading, setLoading] = useState(true);
   const [creating, setCreating] = useState(false);
   const [currentUserNombre, setCurrentUserNombre] = useState<string | null>(null);
+  const [currentPersonaId, setCurrentPersonaId] = useState<string | null>(null);
+  const [selectedVisibilidad, setSelectedVisibilidad] = useState(TODOS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -37,13 +47,15 @@ export function AnotacionesList() {
   const cargar = useCallback(async () => {
     setLoading(true);
     const supabase = createAnyClient();
-    const [data, nombre, folderData] = await Promise.all([
+    const [data, nombre, personaId, folderData] = await Promise.all([
       getAnotaciones(supabase),
       getNombreUsuarioActual(supabase),
+      getPersonaIdActual(supabase),
       getAnotacionFolders(supabase),
     ]);
     setAnotaciones(data);
     setCurrentUserNombre(nombre);
+    setCurrentPersonaId(personaId);
     setFolders(folderData);
     setLoading(false);
   }, []);
@@ -62,6 +74,7 @@ export function AnotacionesList() {
       categoria: null,
       autor_id: null,
       folder_id: selectedFolderId,
+      es_privada: false, // nace compartida
     });
     setCreating(false);
     if (err || !data) {
@@ -128,9 +141,15 @@ export function AnotacionesList() {
         selectedCreator === TODOS || a.creado_por === selectedCreator;
       const coincideCarpeta =
         selectedFolderId === null || a.folder_id === selectedFolderId;
-      return coincideQuery && coincideCreador && coincideCarpeta;
+      const coincideVisibilidad =
+        selectedVisibilidad === TODOS ||
+        (selectedVisibilidad === "privadas") === !!a.es_privada;
+      return coincideQuery && coincideCreador && coincideCarpeta && coincideVisibilidad;
     });
-  }, [anotaciones, searchQuery, selectedCreator, selectedFolderId]);
+  }, [anotaciones, searchQuery, selectedCreator, selectedFolderId, selectedVisibilidad]);
+
+  // Solo el autor edita/elimina; notas antiguas sin autor quedan abiertas a todos
+  const puedeEditar = (a: Anotacion) => !a.autor_id || a.autor_id === currentPersonaId;
 
   const seleccionada = anotaciones.find((a) => a.id === selectedId) ?? null;
 
@@ -174,6 +193,12 @@ export function AnotacionesList() {
               className="text-xs py-1.5"
             />
           )}
+          <Select
+            value={selectedVisibilidad}
+            onChange={(e) => setSelectedVisibilidad(e.target.value)}
+            options={VISIBILIDAD_OPTIONS}
+            className="text-xs py-1.5"
+          />
         </div>
         <div className="border-b border-gray-200 flex-shrink-0 max-h-48 overflow-y-auto">
           <AnotacionFolderTree
@@ -199,6 +224,7 @@ export function AnotacionesList() {
               onSelect={setSelectedId}
               onDelete={handleDelete}
               searchQuery={searchQuery}
+              puedeEditar={puedeEditar(a)}
             />
           ))}
         </div>
@@ -217,6 +243,8 @@ export function AnotacionesList() {
             searchQuery={searchQuery}
             onClearSearch={() => setSearchQuery("")}
             folders={folders}
+            puedeEditar={puedeEditar(seleccionada)}
+            esAutor={!!currentPersonaId && seleccionada.autor_id === currentPersonaId}
           />
         ) : (
           <div className="h-full flex items-center justify-center text-sm text-gray-400">

@@ -6,6 +6,7 @@ import { COLOR_AUSENCIA, isHoliday } from "@/lib/queries/ausencias";
 import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import type { TipoAusencia } from "@/lib/types/database";
 import { PopoverPersona } from "./PopoverPersona";
+import { esAdmin } from "@/lib/roles";
 
 const MESES = [
   "Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
@@ -79,6 +80,8 @@ interface HeatmapTrimestralProps {
   // tipo que no esté en el catálogo estático COLOR_AUSENCIA cae al gris de fallback.
   tiposDinamicos?: TipoAusenciaDinamico[];
   rolActual?: string | null;
+  /** Viajes por persona/día (fetchViajesRango). Celda muy angosta → solo color indigo */
+  viajesData?: Record<string, Record<string, { engagement: string; nota: string | null }>>;
 }
 
 interface DiaCol {
@@ -175,7 +178,7 @@ function cuotaColor(pct: number): { bg: string; text: string } {
   return { bg: "#fef2f2", text: "#991b1b" };
 }
 
-export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasData, tiposDinamicos = [], rolActual }: HeatmapTrimestralProps) {
+export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasData, tiposDinamicos = [], rolActual, viajesData = {} }: HeatmapTrimestralProps) {
   const meses = useMemo(() => construirMeses(year, startMonth), [year, startMonth]);
 
   // Resuelve color de un tipo: dinámico (BD) > estático (COLOR_AUSENCIA) > gris de fallback.
@@ -387,7 +390,7 @@ export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasDat
                               A
                             </span>
                           )}
-                          {rolActual === "admin" && p.referente && (
+                          {esAdmin(rolActual) && p.referente && (
                             <span
                               className="w-3 h-3 rounded-full bg-[#e2884a] flex-shrink-0 flex items-center justify-center text-white font-black leading-none"
                               style={{ fontSize: 6 }}
@@ -420,15 +423,19 @@ export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasDat
                         const cfg = tipo ? colorDeTipo(tipo) : null;
                         // Tooltip: bloque consecutivo completo (funde tipos distintos si están pegados en el tiempo)
                         const bloque = cfg ? bloqueEnDia(p.id, iso) : null;
+                        // Viaje solo si no hay ausencia ni feriado ese día
+                        const viaje = !col.esFeriado && !cfg ? viajesData[p.id]?.[iso] : undefined;
                         const tooltip = col.esFeriado
                           ? "Feriado"
+                          : viaje
+                            ? `${p.nombre} ${p.apellido} - Viaje — ${viaje.engagement}${viaje.nota ? `: ${viaje.nota}` : ""}`
                           : bloque
                             ? `${p.nombre} ${p.apellido} - ${formatFechaCL(bloque.inicio)} al ${formatFechaCL(bloque.fin)} (${diasEntre(bloque.inicio, bloque.fin)} días)`
                             : undefined;
                         return (
                           <td
                             key={iso}
-                            className={`${DIA_CLS} border-b border-[#f5f5f5] ${bordeClass(col)} ${cfg ? "rounded-sm" : ""} ${col.esFeriado ? "bg-gray-200" : ""}`}
+                            className={`${DIA_CLS} border-b border-[#f5f5f5] ${bordeClass(col)} ${cfg || viaje ? "rounded-sm" : ""} ${col.esFeriado ? "bg-gray-200" : ""} ${viaje ? "bg-indigo-600" : ""}`}
                             style={cfg ? { background: cfg.bg } : undefined}
                             title={tooltip}
                           />

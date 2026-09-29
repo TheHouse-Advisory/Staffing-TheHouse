@@ -1,5 +1,9 @@
 import { isHoliday } from "@/lib/constants/holidays";
 
+/** yyyy-MM-dd en hora local (toISOString usa UTC y puede correr el día) */
+const toLocalISO = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
 /**
  * Días hábiles entre dos fechas ISO, excluyendo fines de semana y feriados Chile.
  * Reemplaza el conteo simple de expandirRango donde se necesite precisión.
@@ -11,7 +15,7 @@ export function calculateBusinessDays(startDate: string, endDate: string): numbe
 
   while (cur <= end) {
     const dow = cur.getDay();
-    const iso = cur.toISOString().split("T")[0];
+    const iso = toLocalISO(cur); // fecha local, no UTC
     if (dow !== 0 && dow !== 6 && !isHoliday(iso)) count++;
     cur.setDate(cur.getDate() + 1);
   }
@@ -91,7 +95,7 @@ export function expandirRangoHabil(inicio: string, fin: string): string[] {
 
   while (cur <= end) {
     const dow = cur.getDay();
-    const iso = cur.toISOString().split("T")[0];
+    const iso = toLocalISO(cur); // fecha local, no UTC
     if (dow !== 0 && dow !== 6 && !isHoliday(iso)) result.push(iso);
     cur.setDate(cur.getDate() + 1);
   }

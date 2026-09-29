@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { X, Loader2, Plus, ChevronDown, ChevronRight, RotateCcw, Pencil, Trash2 } from "lucide-react";
+import { X, Loader2, Plus, ChevronDown, ChevronRight, RotateCcw, Pencil, Trash2, Plane } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -11,6 +11,8 @@ import {
   eliminarAusencia,
   COLOR_AUSENCIA,
   isHoliday,
+  fetchViajesRango,
+  type ViajeDia,
   type FilaPersona,
   type CeldaAusencia,
   type PersonaConSeniority,
@@ -18,6 +20,7 @@ import {
 import type { TipoAusencia } from "@/lib/types/database";
 import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
 import { PopoverPersona } from "./PopoverPersona";
+import { esAdmin } from "@/lib/roles";
 
 const MESES_CORTO = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const DOW_LETRA   = ["L","M","X","J","V"];
@@ -314,9 +317,12 @@ interface Props {
   onExternalModalClose?: () => void;
   readOnly?: boolean;
   rolActual?: string | null;
+  /** Cambiarlo fuerza recarga (ej: tras guardar un viaje) */
+  recargarKey?: number;
 }
 
-export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false, onExternalModalClose, readOnly = false, rolActual }: Props) {
+export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false, onExternalModalClose, readOnly = false, rolActual, recargarKey = 0 }: Props) {
+  const [viajes, setViajes] = useState<Record<string, Record<string, ViajeDia>>>({});
   const weekDays = useMemo(() => getWeekDays(selectedDate), [selectedDate]);
   const { tipos: tiposDinamicos } = useTiposAusencia();
   const ocultarPctResumen = rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador";
@@ -368,10 +374,12 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
     const y2 = end.getFullYear(),   m2 = end.getMonth() + 1;
     const isSameMonth = y1 === y2 && m1 === m2;
 
-    const [r1, r2] = await Promise.all([
+    const [r1, r2, viajesSemana] = await Promise.all([
       fetchAusenciasMes(supabase, y1, m1),
       isSameMonth ? Promise.resolve(null) : fetchAusenciasMes(supabase, y2, m2),
+      fetchViajesRango(supabase, weekDays[0], weekDays[4]),
     ]);
+    setViajes(viajesSemana);
 
     setCargando(false);
     if (r1.error) { setError(r1.error); return; }
@@ -390,7 +398,7 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
       merged = Array.from(byId.values());
     }
     setFilas(merged);
-  }, [weekDays, rolActual]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [weekDays, rolActual, recargarKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { cargar(); }, [cargar]);
 
@@ -544,7 +552,7 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                           {fila.persona.is_leverager && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
                             <span className="w-4 h-4 rounded-full bg-[#3b5bdb] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>A</span>
                           )}
-                          {rolActual === "admin" && fila.persona.referente && (
+                          {esAdmin(rolActual) && fila.persona.referente && (
                             <span className="w-4 h-4 rounded-full bg-[#e2884a] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>R</span>
                           )}
                           <div className="min-w-0 flex-1 overflow-hidden">
@@ -576,6 +584,9 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                         const esFeriado = isHoliday(iso);
                         const isActive  = tooltip?.personaId === fila.persona.id && tooltip?.fecha === iso;
                         const cfg       = celda ? colorDeTipo(celda.tipo) : null;
+                        // Viaje solo si no hay ausencia ese día (la ausencia prevalece)
+                        const viaje     = !celda ? viajes[fila.persona.id]?.[iso] : undefined;
+                        const tituloViaje = viaje ? `Viaje — ${viaje.engagement}${viaje.nota ? `: ${viaje.nota}` : ""}` : undefined;
 
                         // Vista colapsada: solo barra de color, sin interacción
                         if (estaColapsadaPersona) {
@@ -584,6 +595,8 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                               title={cfg?.label}>
                               {celda
                                 ? <div className="w-full h-2.5 rounded-sm" style={{ background: cfg?.bg }} />
+                                : viaje
+                                ? <div className="w-full h-2.5 rounded-sm bg-indigo-600" title={tituloViaje} />
                                 : esFeriado
                                   ? <div className="w-full h-2.5 rounded-sm bg-gray-400 opacity-40" />
                                   : <div className="w-full h-2.5" />}
@@ -621,6 +634,11 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                                     tiposDinamicos={tiposDinamicos}
                                   />
                                 )}
+                              </div>
+                            ) : viaje ? (
+                              <div className="w-full h-5 rounded bg-indigo-600 text-white flex items-center justify-center gap-1 px-1" title={tituloViaje}>
+                                <Plane className="w-3 h-3 flex-shrink-0" />
+                                <span className="text-[9px] font-semibold leading-none truncate select-none">Viaje</span>
                               </div>
                             ) : esFeriado ? (
                               <div className="w-full h-5 rounded bg-gray-400 opacity-40" title="Feriado" />

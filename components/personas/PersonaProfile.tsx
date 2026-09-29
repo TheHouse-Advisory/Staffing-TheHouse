@@ -19,6 +19,7 @@ import { EngagementDetalleModal } from "./EngagementDetalleModal";
 import { NotebookPanel } from "./notebook/NotebookPanel";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT, CARGOS_OCULTOS_GYD } from "@/lib/constants";
 import type { Persona } from "@/lib/types/database";
+import { esAdmin } from "@/lib/roles";
 
 interface Props {
   id: string;
@@ -317,7 +318,7 @@ export function PersonaProfile({ id }: Props) {
                     Apalancador
                   </span>
                 )}
-                {persona.referente && rolActual === "admin" && (
+                {persona.referente && esAdmin(rolActual) && (
                   <span className="text-xs px-2.5 py-0.5 rounded-full font-semibold bg-[#fff7ed] text-[#b45309] border border-[#fed7aa]">
                     • Referente
                   </span>
@@ -890,7 +891,7 @@ export function PersonaProfile({ id }: Props) {
             load();
           }}
           persona={persona}
-          isAdmin={rolActual === "admin"}
+          isAdmin={esAdmin(rolActual)}
           initialSection={editSeccionInicial}
         />
       )}

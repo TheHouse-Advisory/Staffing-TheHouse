@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Maximize2, Minimize2, ChevronUp, ChevronDown, X } from "lucide-react";
+import { Maximize2, Minimize2, ChevronUp, ChevronDown, X, Lock, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createAnyClient } from "@/lib/supabase/client";
 import { updateAnotacion } from "@/lib/queries/anotaciones";
@@ -18,6 +18,10 @@ interface AnotacionEditorProps {
   searchQuery?: string;
   onClearSearch?: () => void;
   folders: AnotacionFolder[];
+  /** false → nota de solo lectura (no es el autor) */
+  puedeEditar?: boolean;
+  /** Solo el autor puede cambiar la visibilidad */
+  esAutor?: boolean;
 }
 
 export function AnotacionEditor({
@@ -29,6 +33,8 @@ export function AnotacionEditor({
   searchQuery = "",
   onClearSearch,
   folders,
+  puedeEditar = true,
+  esAutor = false,
 }: AnotacionEditorProps) {
   const [titulo, setTitulo] = useState(anotacion.titulo);
   const [contenido, setContenido] = useState(anotacion.contenido);
@@ -58,6 +64,14 @@ export function AnotacionEditor({
     const nuevoFolderId = folderId || null;
     const { error } = await updateAnotacion(supabase, anotacion.id, { folder_id: nuevoFolderId });
     if (!error) onSaved(anotacion.id, { folder_id: nuevoFolderId });
+  }
+
+  // Alterna privada ↔ compartida (solo autor)
+  async function toggleVisibilidad() {
+    const es_privada = !anotacion.es_privada;
+    const supabase = createAnyClient();
+    const { error } = await updateAnotacion(supabase, anotacion.id, { es_privada });
+    if (!error) onSaved(anotacion.id, { es_privada });
   }
 
   const mostrarEditadoPor = !!editadoPor && editadoPor !== anotacion.creado_por;
@@ -113,8 +127,28 @@ export function AnotacionEditor({
             Última edición por: {editadoPor}
           </span>
         )}
+        {esAutor ? (
+          <button
+            onClick={toggleVisibilidad}
+            title={anotacion.es_privada ? "Solo tú puedes verla. Clic para compartir" : "Visible para el equipo. Clic para hacerla privada"}
+            className={cn(
+              "flex items-center gap-1 text-[11px] font-medium px-2 py-0.5 rounded-full transition-colors",
+              anotacion.es_privada
+                ? "bg-amber-50 text-amber-700 hover:bg-amber-100"
+                : "bg-[#4a90e2]/10 text-[#2f6fb8] hover:bg-[#4a90e2]/20"
+            )}
+          >
+            {anotacion.es_privada ? <Lock className="w-3 h-3" /> : <Users className="w-3 h-3" />}
+            {anotacion.es_privada ? "Privada" : "Compartida"}
+          </button>
+        ) : !puedeEditar && (
+          <span className="text-[11px] font-medium text-gray-500 bg-black/5 px-2 py-0.5 rounded-full">
+            Solo lectura
+          </span>
+        )}
         {folders.length > 0 && (
           <Select
+            disabled={!puedeEditar}
             value={anotacion.folder_id ?? ""}
             onChange={(e) => moverACarpeta(e.target.value)}
             options={[
@@ -145,6 +179,7 @@ export function AnotacionEditor({
             if (titulo !== anotacion.titulo) guardar({ titulo });
           }}
           placeholder="Sin título"
+          readOnly={!puedeEditar}
           className="w-full bg-transparent border-none outline-none text-2xl font-bold text-gray-900 placeholder:text-gray-300 mb-4"
         />
       )}
@@ -161,6 +196,7 @@ export function AnotacionEditor({
             if (contenido !== anotacion.contenido) guardar({ contenido });
           }}
           placeholder="Escribe aquí..."
+          readOnly={!puedeEditar}
           className="flex-1 w-full bg-transparent border-none outline-none resize-none text-[15px] leading-relaxed text-gray-700 placeholder:text-gray-300"
         />
       )}

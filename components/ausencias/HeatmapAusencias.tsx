@@ -2,11 +2,14 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { X, Loader2, Plus, ChevronDown, ChevronRight, RotateCcw, Pencil, Trash2, GripVertical } from "lucide-react";
+import { X, Loader2, Plus, ChevronDown, ChevronRight, RotateCcw, Pencil, Trash2, GripVertical, Plane } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { createClient } from "@/lib/supabase/client";
 import {
   fetchAusenciasMes,
+  fetchViajesRango,
+  eliminarViaje,
+  type ViajeDia,
   crearAusencia,
   eliminarAusencia,
   COLOR_AUSENCIA,
@@ -19,6 +22,7 @@ import type { TipoAusencia } from "@/lib/types/database";
 import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
 import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import { PopoverPersona } from "./PopoverPersona";
+import { esAdmin } from "@/lib/roles";
 
 const DIAS_SEMANA_LETRA = ["L", "M", "X", "J", "V"];
 
@@ -76,7 +80,8 @@ function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar,
   return createPortal(
     <>
     {/* Portal: renderiza en body para escapar overflow:auto y stacking contexts */}
-    <div
+    {/* Se oculta mientras está abierto el diálogo de confirmación (evita superposición) */}
+    {!confirmOpen && <div
       className="w-52 rounded-xl bg-white border border-[#e8e8e8] shadow-lg p-3 text-left pointer-events-auto"
       style={{
         position: "fixed",
@@ -136,13 +141,85 @@ function CeldaTooltip({ celda, persona, fecha, onEliminar, eliminando, onEditar,
           {celda.descripcion}
         </p>
       )}
-    </div>
+    </div>}
     <ConfirmDialog
       open={confirmOpen}
       onClose={() => setConfirmOpen(false)}
       onConfirm={() => { setConfirmOpen(false); onEliminar(celda.ausencia_id); }}
       title="Eliminar ausencia"
       message="¿Estás seguro de que deseas eliminar esta ausencia? Esta acción es irreversible y actualizará el estado de la persona inmediatamente."
+      confirmLabel="Confirmar eliminación"
+      loading={eliminando}
+    />
+    </>,
+    document.body
+  );
+}
+
+// ─────────────────────────────────────────────────────────────
+//  Tooltip celda viaje (mismo formato que CeldaTooltip)
+// ─────────────────────────────────────────────────────────────
+
+interface ViajeTooltipProps {
+  viaje: ViajeDia;
+  persona: PersonaConSeniority;
+  onEliminar: (id: string) => void;
+  eliminando: boolean;
+  onCerrar: () => void;
+  anchorRect: DOMRect;
+  readOnly?: boolean;
+}
+
+function ViajeTooltip({ viaje, persona, onEliminar, eliminando, onCerrar, anchorRect, readOnly = false }: ViajeTooltipProps) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  return createPortal(
+    <>
+    {/* Se oculta mientras está abierto el diálogo de confirmación (evita superposición) */}
+    {!confirmOpen && <div
+      className="w-52 rounded-xl bg-white border border-[#e8e8e8] shadow-lg p-3 text-left pointer-events-auto"
+      style={{
+        position: "fixed",
+        zIndex: 9999,
+        top: anchorRect.top,
+        left: anchorRect.left + anchorRect.width / 2,
+        transform: "translate(-50%, calc(-100% - 8px))",
+      }}
+    >
+      <div className="flex items-center justify-between mb-2">
+        <span className="flex items-center gap-1 text-[10px] font-bold px-2 py-0.5 rounded-full text-white bg-indigo-600">
+          <Plane className="w-3 h-3" /> Viaje
+        </span>
+        <div className="flex items-center gap-1">
+          {!readOnly && <button
+            onClick={() => setConfirmOpen(true)}
+            disabled={eliminando}
+            className="text-[#bbb] hover:text-red-500 transition-colors"
+            title="Eliminar viaje"
+          >
+            {eliminando ? <Loader2 className="w-3 h-3 animate-spin" /> : <Trash2 className="w-3 h-3" />}
+          </button>}
+          <button onClick={onCerrar} className="text-[#bbb] hover:text-[#555] transition-colors" title="Cerrar">
+            <X className="w-3 h-3" />
+          </button>
+        </div>
+      </div>
+      <p className="text-[12px] font-semibold text-[#1a1a1a] leading-tight">
+        {persona.nombre} {persona.apellido}
+      </p>
+      {viaje.engagement && <p className="text-[10px] text-[#888] mt-0.5">{viaje.engagement}</p>}
+      <p className="text-[10px] text-[#999] mt-1.5">
+        {formatFechaCL(viaje.fecha_inicio)} al {formatFechaCL(viaje.fecha_fin)}
+      </p>
+      {viaje.nota && (
+        <p className="text-[11px] text-[#555] mt-1.5 leading-snug border-t border-[#f0f0f0] pt-1.5">{viaje.nota}</p>
+      )}
+    </div>}
+    <ConfirmDialog
+      open={confirmOpen}
+      onClose={() => setConfirmOpen(false)}
+      onConfirm={() => { setConfirmOpen(false); onEliminar(viaje.id); }}
+      title="Eliminar viaje"
+      message="¿Eliminar este viaje? Se borra el tramo completo de esta persona. Esta acción es irreversible."
       confirmLabel="Confirmar eliminación"
       loading={eliminando}
     />
@@ -516,7 +593,12 @@ interface HeatmapAusenciasProps {
   rolActual?: string | null;
   /** Vista limpia (toggle de admin): oculta insignias R/A y píldoras de días ya tomados. */
   showMetrics?: boolean;
+  /** Cambiarlo fuerza recarga (ej: tras guardar un viaje) */
+  recargarKey?: number;
 }
+
+// Color distintivo de viajes (indigo-600)
+const COLOR_VIAJE = "#4f46e5";
 
 export function HeatmapAusencias({
   year,
@@ -526,7 +608,9 @@ export function HeatmapAusencias({
   readOnly = false,
   rolActual,
   showMetrics = true,
+  recargarKey = 0,
 }: HeatmapAusenciasProps) {
+  const [viajes, setViajes] = useState<Record<string, Record<string, ViajeDia>>>({});
   const { tipos: tiposDinamicos } = useTiposAusencia(); // para colorear tooltip con tipos dinámicos
   const ocultarPctResumen = rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador";
   const [filas, setFilas]   = useState<FilaPersona[]>([]);
@@ -603,6 +687,10 @@ export function HeatmapAusencias({
     if (result.error) { setError(result.error); return; }
     setFilas(result.filas);
     setDias(result.dias);
+    // Viajes del mes visible (engagement_actividades tipo 'Viajes')
+    if (result.dias.length) {
+      setViajes(await fetchViajesRango(supabase, result.dias[0], result.dias[result.dias.length - 1]));
+    }
 
     if (ordenRes.data) {
       const map: Record<string, number | null> = {};
@@ -622,7 +710,7 @@ export function HeatmapAusencias({
       }
       setTotalesAnio(map);
     }
-  }, [year, month, rolActual]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [year, month, rolActual, recargarKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { cargar(); }, [cargar]);
 
@@ -637,6 +725,14 @@ export function HeatmapAusencias({
 
     setEliminando(ausenciaId);
     await eliminarAusencia(supabase, ausenciaId);
+    setEliminando(null);
+    setTooltip(null);
+    cargar();
+  }
+
+  async function handleEliminarViaje(viajeId: string) {
+    setEliminando(viajeId);
+    await eliminarViaje(supabase, viajeId);
     setEliminando(null);
     setTooltip(null);
     cargar();
@@ -917,7 +1013,7 @@ export function HeatmapAusencias({
                     {/* ── Filas de personas (Nivel 2, visibles solo cuando cargo expandido) ── */}
                     {!estaColapsadoCargo && filasGrupo.map((fila, rowIdx) => {
                       const estaColapsadaPersona = personaColapsados.has(fila.persona.id);
-                      const puedeReordenar = rolActual === "admin";
+                      const puedeReordenar = esAdmin(rolActual);
                       const esDragOver = dragOverPersonaId === fila.persona.id;
                       return (
                         <tr key={fila.persona.id}
@@ -951,7 +1047,7 @@ export function HeatmapAusencias({
                                   {showMetrics && fila.persona.is_leverager && !(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
                                     <span className="w-4 h-4 rounded-full bg-[#3b5bdb] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>A</span>
                                   )}
-                                  {showMetrics && rolActual === "admin" && fila.persona.referente && (
+                                  {showMetrics && esAdmin(rolActual) && fila.persona.referente && (
                                     <span className="w-4 h-4 rounded-full bg-[#e2884a] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>R</span>
                                   )}
                                   {ocultarPctResumen ? (
@@ -999,6 +1095,9 @@ export function HeatmapAusencias({
                             const celda      = ocultarPctResumen && celdaReal?.tipo === "vacaciones_por_confirmar" ? null : celdaReal;
                             const esLunes    = isMonday(fecha);
                             const esFeriado  = isHoliday(fecha);
+                            // Viaje solo se pinta si no hay ausencia ese día (la ausencia prevalece)
+                            const viaje      = !celda ? viajes[fila.persona.id]?.[fecha] : undefined;
+                            const tituloViaje = viaje ? `Viaje — ${viaje.engagement}${viaje.nota ? `: ${viaje.nota}` : ""}` : undefined;
 
                             if (estaColapsadaPersona) {
                               return (
@@ -1009,6 +1108,8 @@ export function HeatmapAusencias({
                                 >
                                   {celda
                                     ? <div className="w-full h-2.5 rounded-sm" style={{ background: colorDeTipo(celda.tipo).bg }} />
+                                    : viaje
+                                    ? <div className="w-full h-2.5 rounded-sm" style={{ background: COLOR_VIAJE }} title={tituloViaje} />
                                     : esFeriado
                                       ? <div className="w-full h-2.5 rounded-sm bg-gray-400 opacity-40" />
                                       : <div className="w-full h-2.5" />
@@ -1043,6 +1144,30 @@ export function HeatmapAusencias({
                                         onCerrar={() => setTooltip(null)}
                                         anchorRect={tooltip!.rect}
                                         tiposDinamicos={tiposDinamicos}
+                                      />
+                                    )}
+                                  </div>
+                                ) : viaje ? (
+                                  /* Celda viaje: fondo indigo + avión centrado */
+                                  <div className="relative">
+                                    {/* Mismo handler que las celdas de ausencia */}
+                                    <button type="button"
+                                      onClick={(e) => {
+                                        if (isActive) { setTooltip(null); return; }
+                                        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                        setTooltip({ personaId: fila.persona.id, fecha, rect });
+                                      }}
+                                      className="w-full h-[18px] rounded bg-indigo-600 text-white shadow-sm flex items-center justify-center transition-opacity hover:opacity-80"
+                                      title={tituloViaje}
+                                    >
+                                      <Plane size={18} strokeWidth={2.5} />
+                                    </button>
+                                    {isActive && (
+                                      <ViajeTooltip viaje={viaje} persona={fila.persona}
+                                        onEliminar={handleEliminarViaje} eliminando={eliminando === viaje.id}
+                                        readOnly={readOnly}
+                                        onCerrar={() => setTooltip(null)}
+                                        anchorRect={tooltip!.rect}
                                       />
                                     )}
                                   </div>

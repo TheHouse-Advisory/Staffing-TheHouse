@@ -16,6 +16,7 @@ import { CARGOS, CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import { diasRestantesPapelera, limpiarPersonasCaducadas } from "@/lib/tasks/cleanupEngagements";
 import type { Persona, RolSistema } from "@/lib/types/database";
 import { getIniciales } from "@/lib/utils/iniciales";
+import { esAdmin } from "@/lib/roles";
 
 interface PersonasListProps { rolActual: RolSistema | null; }
 type Vista = "principal" | "ex_housers" | "papelera";
@@ -155,7 +156,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   // Diálogo de destino al restaurar desde papelera
   const [restaurando, setRestaurando] = useState<PersonaEliminada | null>(null);
 
-  const isAdmin         = rolActual === "admin";
+  const isAdmin         = esAdmin(rolActual);
   const isGyD           = rolActual === "GyD";
   const isDesarrollo    = rolActual === "Desarrollo";
   const sb = createAnyClient();

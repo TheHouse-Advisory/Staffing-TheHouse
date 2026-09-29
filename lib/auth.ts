@@ -4,6 +4,7 @@
 import { createClient, createAnyClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
 import type { Persona, RolSistema } from "@/lib/types/database";
+import { esAdmin } from "@/lib/roles";
 
 export interface AuthUser {
   authId: string;
@@ -94,7 +95,7 @@ export async function requireAuth(): Promise<AuthUser> {
  */
 export async function requireAdmin(): Promise<AuthUser> {
   const authUser = await requireAuth();
-  if (authUser.rol !== "admin") {
+  if (!esAdmin(authUser.rol)) {
     redirect("/tablero?error=sin_permisos");
   }
   return authUser;

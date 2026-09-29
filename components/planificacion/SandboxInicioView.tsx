@@ -25,6 +25,7 @@ import { PersonaResumenModal } from "@/components/personas/PersonaResumenModal";
 import { Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
 import type { Persona } from "@/lib/types/database";
+import { esAdmin } from "@/lib/roles";
 
 // ── Tipos ausencia ────────────────────────────────────────────
 interface AusenciaPeriodo { fecha_inicio: string; fecha_fin: string; tipo: string; }
@@ -389,7 +390,7 @@ export function SandboxInicioView({ planNombre, planId, snapshot, onSnapshotChan
       const { data: { user } } = await sb.auth.getUser();
       if (user) {
         const { data: personaData } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
-        setIsAdmin((personaData as any)?.rol_sistema === "admin");
+        setIsAdmin(esAdmin((personaData as any)?.rol_sistema));
       }
 
       const [persRes, asigDetalleRes, ausRes] = await Promise.all([

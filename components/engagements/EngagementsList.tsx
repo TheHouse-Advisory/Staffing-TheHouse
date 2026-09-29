@@ -22,6 +22,7 @@ import { EngagementForm } from "./EngagementForm";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import type { EngagementConCobertura } from "@/lib/queries/engagements";
 import type { Engagement, RolSistema } from "@/lib/types/database";
+import { esAdmin } from "@/lib/roles";
 
 interface Props { rolActual: RolSistema | null; }
 interface EngEliminado extends Engagement { deleted_at: string; }
@@ -392,7 +393,7 @@ export function EngagementsList({ rolActual }: Props) {
   const [toast, setToast] = useState<string | null>(null);
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 4000); };
 
-  const isAdmin = rolActual === "admin";
+  const isAdmin = esAdmin(rolActual);
   const sb = createAnyClient();
 
   const load = useCallback(async () => {

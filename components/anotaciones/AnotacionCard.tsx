@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Trash2 } from "lucide-react";
+import { Trash2, Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createAnyClient } from "@/lib/supabase/client";
 import { deleteAnotacion } from "@/lib/queries/anotaciones";
@@ -14,9 +14,11 @@ interface AnotacionCardProps {
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
   searchQuery?: string;
+  /** false → no se muestra el botón eliminar */
+  puedeEditar?: boolean;
 }
 
-export function AnotacionCard({ anotacion, selected, onSelect, onDelete, searchQuery = "" }: AnotacionCardProps) {
+export function AnotacionCard({ anotacion, selected, onSelect, onDelete, searchQuery = "", puedeEditar = true }: AnotacionCardProps) {
   const [deleting, setDeleting] = useState(false);
 
   async function handleDelete(e: React.MouseEvent) {
@@ -40,9 +42,13 @@ export function AnotacionCard({ anotacion, selected, onSelect, onDelete, searchQ
       )}
     >
       <div className="flex items-start justify-between gap-2">
-        <h3 className="text-sm font-semibold text-gray-900 truncate min-w-0">
-          {highlightText(anotacion.titulo || "Sin título", searchQuery)}
+        <h3 className="text-sm font-semibold text-gray-900 truncate min-w-0 flex items-center gap-1">
+          {anotacion.es_privada && (
+            <Lock className="w-3 h-3 text-gray-400 flex-shrink-0" aria-label="Nota privada" />
+          )}
+          <span className="truncate">{highlightText(anotacion.titulo || "Sin título", searchQuery)}</span>
         </h3>
+        {puedeEditar && (
         <span
           onClick={handleDelete}
           role="button"
@@ -54,6 +60,7 @@ export function AnotacionCard({ anotacion, selected, onSelect, onDelete, searchQ
         >
           <Trash2 className="w-3.5 h-3.5" />
         </span>
+        )}
       </div>
 
       {anotacion.contenido && (

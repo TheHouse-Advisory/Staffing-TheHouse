@@ -6,10 +6,11 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { syncExcelResumenProyectos } from "@/lib/utils/excel-sync";
+import { esAdmin } from "@/lib/roles";
 
 export async function POST() {
   const authUser = await requireAuth();
-  if (authUser.rol !== "admin" && authUser.rol !== "planificador") {
+  if (!esAdmin(authUser.rol) && authUser.rol !== "planificador") {
     return NextResponse.json({ error: "Sin permisos para sincronizar el Excel." }, { status: 403 });
   }
 

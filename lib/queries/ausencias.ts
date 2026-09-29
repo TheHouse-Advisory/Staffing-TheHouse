@@ -229,6 +229,106 @@ export async function crearAusencia(
   return { error: error?.message ?? null };
 }
 
+// ─────────────────────────────────────────────────────────────
+//  Viajes (engagement_actividades tipo 'Viajes' con persona_id)
+// ─────────────────────────────────────────────────────────────
+
+/** Engagements tipo proyecto activos, para el selector de viajes */
+export async function getProyectosActivos(
+  supabase: any
+): Promise<{ id: string; nombre: string; cliente: string | null }[]> {
+  const { data } = await supabase
+    .from("engagement")
+    .select("id, nombre, cliente")
+    .eq("tipo", "proyecto")
+    .eq("estado", "activo")
+    .eq("is_deleted", false)
+    .order("nombre");
+  return data ?? [];
+}
+
+/** Personas con asignación activa en el engagement (sin duplicados) */
+export async function getPersonasAsignadas(
+  supabase: any,
+  engagementId: string
+): Promise<{ id: string; nombre: string; apellido: string }[]> {
+  const { data } = await supabase
+    .from("asignacion")
+    .select("persona_id, persona:persona_id(id, nombre, apellido)")
+    .eq("engagement_id", engagementId)
+    .eq("estado", "activa");
+  const map = new Map<string, { id: string; nombre: string; apellido: string }>();
+  for (const a of data ?? []) if (a.persona) map.set(a.persona.id, a.persona);
+  return Array.from(map.values()).sort((a, b) => a.nombre.localeCompare(b.nombre));
+}
+
+export type ViajeDia = { id: string; engagement: string; nota: string | null; fecha_inicio: string; fecha_fin: string };
+
+/** Viajes por persona que tocan el rango → { persona_id: { yyyy-MM-dd: ViajeDia } } */
+export async function fetchViajesRango(
+  supabase: any,
+  desde: string,
+  hasta: string
+): Promise<Record<string, Record<string, ViajeDia>>> {
+  const { data } = await supabase
+    .from("engagement_actividades")
+    .select("id, persona_id, fecha_inicio, fecha_fin, descripcion, engagement:engagement_id(nombre)")
+    .eq("tipo", "Viajes")
+    .not("persona_id", "is", null)
+    .lte("fecha_inicio", hasta)
+    .gte("fecha_fin", desde);
+  const map: Record<string, Record<string, ViajeDia>> = {};
+  for (const v of data ?? []) {
+    const ini = v.fecha_inicio > desde ? v.fecha_inicio : desde;
+    const fin = v.fecha_fin < hasta ? v.fecha_fin : hasta;
+    const dias = (map[v.persona_id] ??= {});
+    const info: ViajeDia = {
+      id: v.id, engagement: v.engagement?.nombre ?? "", nota: v.descripcion,
+      fecha_inicio: v.fecha_inicio, fecha_fin: v.fecha_fin,
+    };
+    for (const d of expandirRango(ini, fin)) dias[d] = info;
+  }
+  return map;
+}
+
+export async function crearViaje(
+  supabase: any,
+  data: {
+    engagement_id: string;
+    persona_ids: string[];
+    /** persona_id → nombre visible (para el título) */
+    nombres: Record<string, string>;
+    fecha_inicio: string;
+    fecha_fin: string;
+    nota?: string;
+  }
+): Promise<{ error: string | null }> {
+  // Inserción masiva: una fila por persona
+  const filas = data.persona_ids.map((persona_id) => ({
+    engagement_id: data.engagement_id,
+    persona_id,
+    tipo: "Viajes",
+    titulo: `Viaje — ${data.nombres[persona_id] ?? ""}`,
+    descripcion: data.nota?.trim() || null,
+    fecha_inicio: data.fecha_inicio,
+    fecha_fin: data.fecha_fin,
+  }));
+  const { error } = await supabase.from("engagement_actividades").insert(filas);
+  return { error: error?.message ?? null };
+}
+
+export async function eliminarViaje(
+  supabase: any,
+  viajeId: string
+): Promise<{ error: string | null }> {
+  const { error } = await supabase
+    .from("engagement_actividades")
+    .delete()
+    .eq("id", viajeId)
+    .eq("tipo", "Viajes"); // seguridad: solo borra viajes
+  return { error: error?.message ?? null };
+}
+
 export async function eliminarAusencia(
   supabase: any,
   ausenciaId: string
