@@ -1,7 +1,7 @@
-import { requireAuth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 import { PersonasClient } from "./PersonasClient";
 
 export default async function PersonasPage() {
-  await requireAuth();
+  await requireAdmin();
   return <PersonasClient />;
 }

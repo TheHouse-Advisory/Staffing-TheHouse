@@ -14,6 +14,7 @@ import {
   deleteAnotacionFolder,
 } from "@/lib/queries/anotaciones";
 import { Button } from "@/components/ui/Button";
+import { htmlToText } from "@/components/ui/RichTextEditor";
 import { Select } from "@/components/ui/FormField";
 import { AnotacionCard } from "./AnotacionCard";
 import { AnotacionEditor } from "./AnotacionEditor";
@@ -136,7 +137,7 @@ export function AnotacionesList() {
       const coincideQuery =
         !q ||
         a.titulo.toLowerCase().includes(q) ||
-        a.contenido.toLowerCase().includes(q);
+        htmlToText(a.contenido).toLowerCase().includes(q); // ignora etiquetas HTML
       const coincideCreador =
         selectedCreator === TODOS || a.creado_por === selectedCreator;
       const coincideCarpeta =

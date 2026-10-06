@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { requireAuth } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 import { Topbar } from "@/components/layout/Topbar";
 import { PersonaProfile } from "@/components/personas/PersonaProfile";
 
@@ -12,7 +12,7 @@ export const metadata: Metadata = {
 };
 
 export default async function PersonaDetailPage({ params }: Props) {
-  await requireAuth();
+  await requireAdmin();
   const { id } = await params;
 
   return (

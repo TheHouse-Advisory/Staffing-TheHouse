@@ -17,6 +17,7 @@ import { PersonaForm } from "./PersonaForm";
 import { TalentMatrix, getTalentBoxName } from "./TalentMatrix";
 import { EngagementDetalleModal } from "./EngagementDetalleModal";
 import { NotebookPanel } from "./notebook/NotebookPanel";
+import { PersonaRemuneraciones } from "./PersonaRemuneraciones";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT, CARGOS_OCULTOS_GYD } from "@/lib/constants";
 import type { Persona } from "@/lib/types/database";
 import { esAdmin } from "@/lib/roles";
@@ -861,6 +862,18 @@ export function PersonaProfile({ id }: Props) {
           </>
           )}
         </div>}
+
+        {/* ── Remuneraciones (solo admin/personas) ─────────── */}
+        {esAdmin(rolActual) && (
+          <PersonaRemuneraciones
+            personaId={id}
+            colapsada={seccionesColapsadas.has("remuneraciones")}
+            cargoActual={persona.cargo_actual}
+            cargosSugeridos={ESCALONES_SENIORITY}
+            historialCargos={historialCargosDB}
+            botonColapsar={<BotonColapsarSeccion colapsada={seccionesColapsadas.has("remuneraciones")} onClick={() => toggleSeccion("remuneraciones")} />}
+          />
+        )}
 
         {/* ── Notebook de Desarrollo ──────────────────────── */}
         {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
