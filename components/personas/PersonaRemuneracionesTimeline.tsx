@@ -46,7 +46,7 @@ export interface PeriodoCargo {
 }
 
 // Cargo vigente en una fecha (si hay solapes, gana el periodo que empezó más tarde)
-function cargoEnFecha(historial: PeriodoCargo[], fecha: string): string | null {
+export function cargoEnFecha(historial: PeriodoCargo[], fecha: string): string | null {
   const vigentes = historial.filter(
     (p) => p.fechaInicio <= fecha && (p.fechaFin === "Presente" || fecha <= p.fechaFin)
   );

@@ -58,7 +58,6 @@ interface FormState {
   cargo_actual: string;
   fecha_ingreso: string;
   fecha_nacimiento: string;
-  mentor_id: string;
   industrias: string[];
   capacidades: string[];
   tematicas: string[];
@@ -72,7 +71,6 @@ const EMPTY: FormState = {
   cargo_actual: "",
   fecha_ingreso: "",
   fecha_nacimiento: "",
-  mentor_id: "",
   industrias: [],
   capacidades: [],
   tematicas: [],
@@ -89,7 +87,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
   const [industrias, setIndustrias] = useState<Option[]>([]);
   const [capacidades, setCapacidades] = useState<Option[]>([]);
   const [tematicas, setTematicas] = useState<Option[]>([]);
-  const [mentoresOpciones, setMentoresOpciones] = useState<Option[]>([]);
   const [periodosCargo, setPeriodosCargo] = useState<PeriodoCargo[]>([]);
   // Marca cuando terminó de cargar los datos de relaciones (industrias/capacidades/temáticas/historial),
   // para no hacer scroll a una sección antes de que su layout final (chips, filas) esté renderizado
@@ -100,23 +97,16 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
     if (!open) return;
     async function loadCatalogs() {
       const supabase = createAnyClient();
-      const [c, i, cap, t, pers] = await Promise.all([
+      const [c, i, cap, t] = await Promise.all([
         supabase.from("config_cargo").select("nombre").order("nombre"),
         supabase.from("cat_industria").select("id,nombre").eq("activo", true).order("nombre"),
         supabase.from("cat_capacidad").select("id,nombre").eq("activo", true).order("nombre"),
         supabase.from("cat_tematica").select("id,nombre").eq("activo", true).order("nombre"),
-        supabase.from("persona").select("id,nombre,apellido").eq("activo", true).order("apellido"),
       ]);
       setCargos((c.data ?? []).map((r: any) => ({ value: r.nombre, label: r.nombre })));
       setIndustrias((i.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
       setCapacidades((cap.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
       setTematicas((t.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
-      // Excluir a la persona que se está editando de la lista de mentores
-      setMentoresOpciones(
-        ((pers.data ?? []) as { id: string; nombre: string; apellido: string }[])
-          .filter((r) => r.id !== persona?.id)
-          .map((r) => ({ value: r.id, label: `${r.nombre} ${r.apellido}` }))
-      );
     }
     loadCatalogs();
   }, [open, persona?.id]);
@@ -155,7 +145,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
         cargo_actual: persona!.cargo_actual ?? "",
         fecha_ingreso: persona!.fecha_ingreso ?? "",
         fecha_nacimiento: persona!.fecha_nacimiento ?? "",
-        mentor_id: persona!.mentor_id ?? "",
         industrias: (pi.data ?? []).map((r: any) => r.industria_id),
         capacidades: (pc.data ?? []).map((r: any) => r.capacidad_id),
         tematicas: (pt.data ?? []).map((r: any) => r.tematica_id),
@@ -209,7 +198,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
       cargo_actual: form.cargo_actual,
       fecha_ingreso: form.fecha_ingreso || null,
       fecha_nacimiento: form.fecha_nacimiento || null,
-      mentor_id: form.mentor_id || null,
       // Si el cargo ya no es elegible, forzar false al guardar
       is_leverager: !!periodoActual && CARGOS_LEVERAGER.includes(periodoActual.cargo) && periodoActual.es_apalancador,
       referente: !!periodoActual && CARGOS_REFERENTE.includes(periodoActual.cargo) && periodoActual.es_referente,
@@ -371,15 +359,6 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
             type="date"
             value={form.fecha_nacimiento}
             onChange={(e) => set("fecha_nacimiento")(e.target.value)}
-          />
-        </FieldWrapper>
-
-        <FieldWrapper label="Mentor" hint="Persona del equipo que guía su desarrollo">
-          <Select
-            value={form.mentor_id}
-            onChange={(e) => set("mentor_id")(e.target.value)}
-            options={mentoresOpciones}
-            placeholder="Sin mentor asignado"
           />
         </FieldWrapper>
 

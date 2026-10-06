@@ -3,14 +3,18 @@
  * información consolidada de personas (Reportes > Descargables).
  */
 import { NextResponse } from "next/server";
-import { requireAdmin } from "@/lib/auth";
+import { requireAuth } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/server";
 import { getPersonasResguardoInfo } from "@/lib/queries/personas";
 import { getAnotaciones, getAnotacionFolders } from "@/lib/queries/anotaciones";
 import { buildExcelPersonasResguardo } from "@/lib/utils/excel-resguardo-personas";
 
 export async function POST() {
-  await requireAdmin();
+  // Datos de personas: exclusivo rol "personas" (usa service client, sin RLS)
+  const authUser = await requireAuth();
+  if (authUser.rol !== "personas") {
+    return NextResponse.json({ error: "Sin permisos" }, { status: 403 });
+  }
 
   try {
     const sb = createServiceClient();

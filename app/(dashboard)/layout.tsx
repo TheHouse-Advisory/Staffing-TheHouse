@@ -78,7 +78,7 @@ export default function DashboardLayout({ children }: DashboardLayoutProps) {
       <main className="flex-1 flex flex-col w-full overflow-x-auto overflow-y-hidden transition-all duration-300">
         <CargosColapsadosProvider>{children}</CargosColapsadosProvider>
       </main>
-      <CommandPalette />
+      <CommandPalette rol={persona?.rol_sistema ?? null} />
     </div>
   );
 }
