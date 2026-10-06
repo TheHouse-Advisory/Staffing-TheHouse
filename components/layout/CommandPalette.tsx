@@ -24,7 +24,8 @@ type Resultado =
   | { tipo: "engagement"; item: EngagementResult };
 
 /** Paleta global (Ctrl+K / Cmd+K) para saltar a una persona o engagement. */
-export function CommandPalette() {
+export function CommandPalette({ rol }: { rol?: string | null }) {
+  const verPersonas = rol === "personas"; // perfiles de persona: exclusivo rol Personas
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -66,11 +67,13 @@ export function CommandPalette() {
     const timeout = setTimeout(async () => {
       const sb = createAnyClient();
       const [personas, engagements] = await Promise.all([
-        sb
-          .from("persona")
-          .select("id, nombre, apellido, cargo_actual")
-          .or(`nombre.ilike.%${t}%,apellido.ilike.%${t}%`)
-          .limit(5),
+        verPersonas
+          ? sb
+              .from("persona")
+              .select("id, nombre, apellido, cargo_actual")
+              .or(`nombre.ilike.%${t}%,apellido.ilike.%${t}%`)
+              .limit(5)
+          : Promise.resolve({ data: [] }),
         sb
           .from("engagement")
           .select("id, nombre, cliente, estado")
@@ -93,7 +96,7 @@ export function CommandPalette() {
     }, 250);
 
     return () => clearTimeout(timeout);
-  }, [query]);
+  }, [query, verPersonas]);
 
   const irA = useCallback(
     (r: Resultado) => {

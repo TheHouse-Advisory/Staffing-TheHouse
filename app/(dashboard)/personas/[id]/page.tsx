@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { requireAdmin } from "@/lib/auth";
+import { redirect } from "next/navigation";
+import { requireAuth } from "@/lib/auth";
 import { Topbar } from "@/components/layout/Topbar";
 import { PersonaProfile } from "@/components/personas/PersonaProfile";
 
@@ -12,7 +13,9 @@ export const metadata: Metadata = {
 };
 
 export default async function PersonaDetailPage({ params }: Props) {
-  await requireAdmin();
+  // Exclusivo rol "personas": cualquier otro rol (incluido admin) es redirigido
+  const authUser = await requireAuth();
+  if (authUser.rol !== "personas") redirect("/tablero?error=sin_permisos");
   const { id } = await params;
 
   return (

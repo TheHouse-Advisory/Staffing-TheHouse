@@ -13,25 +13,28 @@ interface AnotacionCardProps {
   anotacion: Anotacion;
   selected: boolean;
   onSelect: (id: string) => void;
-  onDelete: (id: string) => void;
+  onDelete: (id: string, deletedAt: string) => void;
+  /** Error al enviar a la papelera */
+  onError?: (mensaje: string) => void;
   searchQuery?: string;
   /** false → no se muestra el botón eliminar */
   puedeEditar?: boolean;
 }
 
-export function AnotacionCard({ anotacion, selected, onSelect, onDelete, searchQuery = "", puedeEditar = true }: AnotacionCardProps) {
+export function AnotacionCard({ anotacion, selected, onSelect, onDelete, onError, searchQuery = "", puedeEditar = true }: AnotacionCardProps) {
   const [deleting, setDeleting] = useState(false);
 
   async function handleDelete(e: React.MouseEvent) {
     e.stopPropagation();
     setDeleting(true);
     const supabase = createAnyClient();
-    const { error } = await deleteAnotacion(supabase, anotacion.id);
+    const { error, deleted_at } = await deleteAnotacion(supabase, anotacion.id);
     if (error) {
       setDeleting(false);
+      onError?.(/deleted_at/.test(error) ? "Falta habilitar la papelera en la base de datos (columna deleted_at). Ejecuta la migración 20261006_anotaciones_papelera.sql en Supabase." : `No se pudo eliminar: ${error}`);
       return;
     }
-    onDelete(anotacion.id);
+    onDelete(anotacion.id, deleted_at); // pasa a la papelera
   }
 
   return (

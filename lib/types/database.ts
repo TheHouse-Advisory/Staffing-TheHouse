@@ -361,6 +361,8 @@ export interface Anotacion {
   folder_id?: string | null;
   /** true → solo la ve su autor; false → visible para rol 'personas' */
   es_privada?: boolean;
+  /** Papelera: null = activa; fecha = eliminada (se purga a los 15 días) */
+  deleted_at?: string | null;
 }
 
 /** anotacion_folders: carpetas anidadas para Anotaciones (ver supabase/add_anotacion_folders.sql) */
@@ -370,6 +372,8 @@ export interface AnotacionFolder {
   nombre: string;
   parent_id: string | null;
   creado_por: string | null;
+  /** Papelera: null = activa; fecha = eliminada (se purga a los 15 días) */
+  deleted_at?: string | null;
 }
 
 // ─────────────────────────────────────────────────────────────

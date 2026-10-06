@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { Pencil, ChevronDown } from "lucide-react";
+import { Pencil, ChevronDown, TrendingUp } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { format, intervalToDuration } from "date-fns";
 import { es } from "date-fns/locale";
@@ -18,6 +18,9 @@ import { TalentMatrix, getTalentBoxName } from "./TalentMatrix";
 import { EngagementDetalleModal } from "./EngagementDetalleModal";
 import { NotebookPanel } from "./notebook/NotebookPanel";
 import { PersonaRemuneraciones } from "./PersonaRemuneraciones";
+import { MentoresMenteesSection } from "./MentoresMenteesSection";
+import { PersonaEvaluacionesTimeline } from "./PersonaEvaluacionesTimeline";
+import { PersonaMatrizTimeline } from "./PersonaMatrizTimeline";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT, CARGOS_OCULTOS_GYD } from "@/lib/constants";
 import type { Persona } from "@/lib/types/database";
 import { esAdmin } from "@/lib/roles";
@@ -123,9 +126,6 @@ export function PersonaProfile({ id }: Props) {
   const [loading, setLoading] = useState(true);
   const [editando, setEditando] = useState(false);
   const [editSeccionInicial, setEditSeccionInicial] = useState<"desarrollo-carrera" | undefined>(undefined);
-  const [isEditingTalent, setIsEditingTalent] = useState(false);
-  const [showMatriz, setShowMatriz] = useState(false);
-  const [talentDraft, setTalentDraft] = useState<{ p: number | null; d: number | null }>({ p: null, d: null });
   const [ausenciasDetalle, setAusenciasDetalle] = useState<DetalleAusenciasPersona | null>(null);
   const [detalleEngId,     setDetalleEngId]     = useState<string | null>(null);
   const [historialCargosDB, setHistorialCargosDB] = useState<CargoDBRow[]>([]);
@@ -421,72 +421,33 @@ export function PersonaProfile({ id }: Props) {
           )}
         </div>
 
-        {/* ── Matriz de Talento 9-Box ──────────────────────── */}
+        {/* ── Desempeño: Matriz de Talento 9-Box + EPP y EDD ── */}
         {rolActual !== "planificador" && rolActual !== "GyD" && rolActual !== "AySr" && <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="font-semibold">Matriz de Talento</h3>
-            <BotonColapsarSeccion colapsada={seccionesColapsadas.has("matriz-talento")} onClick={() => toggleSeccion("matriz-talento")} />
+            <div>
+              <h3 className="font-semibold">Desempeño</h3>
+              <p className="text-xs text-[#aaa] mt-0.5">Matriz de talento y evaluaciones</p>
+            </div>
+            <BotonColapsarSeccion colapsada={seccionesColapsadas.has("desempeno")} onClick={() => toggleSeccion("desempeno")} />
           </div>
-          {!seccionesColapsadas.has("matriz-talento") && (
-          <>
-          <div className="flex items-center justify-between mb-4">
-            <button
-              onClick={() => setShowMatriz((s) => !s)}
-              className="flex items-center gap-1.5 hover:opacity-80 transition-opacity"
-            >
-              <span className="text-sm font-medium text-[#555]">Ver matriz 9-box</span>
-              <ChevronDown
-                className="w-4 h-4 text-gray-400"
-                style={{ transform: showMatriz ? "rotate(180deg)" : "none", transition: "transform 0.2s" }}
-              />
-            </button>
-            {!isEditingTalent ? (
-              <button
-                onClick={() => {
-                  setTalentDraft({ p: persona.talento_potencial, d: persona.talento_desempeno });
-                  setIsEditingTalent(true);
-                }}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-[#e8e8e8] text-[#555] hover:bg-[#f5f5f5] transition-colors"
-              >
-                <Pencil className="w-3.5 h-3.5" /> Editar
-              </button>
-            ) : (
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => setIsEditingTalent(false)}
-                  className="text-xs px-3 py-1.5 rounded-lg border border-[#e8e8e8] text-[#888] hover:bg-[#f5f5f5] transition-colors"
-                >
-                  Cancelar
-                </button>
-                <button
-                  onClick={async () => {
-                    if (talentDraft.p == null || talentDraft.d == null) return;
-                    const supabase = createAnyClient();
-                    const { error } = await supabase
-                      .from("persona")
-                      .update({ talento_potencial: talentDraft.p, talento_desempeno: talentDraft.d })
-                      .eq("id", persona.id);
-                    if (!error) {
-                      setPersona((prev) => prev ? { ...prev, talento_potencial: talentDraft.p, talento_desempeno: talentDraft.d } : prev);
-                      setIsEditingTalent(false);
-                    }
-                  }}
-                  className="text-xs px-3 py-1.5 rounded-lg bg-[#1a1a2e] text-white hover:bg-[#2d2d4e] transition-colors"
-                >
-                  Guardar
-                </button>
-              </div>
-            )}
-          </div>
-          {showMatriz && (
-            <TalentMatrix
-              potencial={isEditingTalent ? talentDraft.p : persona.talento_potencial}
-              desempeno={isEditingTalent ? talentDraft.d : persona.talento_desempeno}
-              isEditable={isEditingTalent}
-              onUpdate={(p, d) => setTalentDraft({ p, d })}
+          {!seccionesColapsadas.has("desempeno") && (
+          <div className="space-y-6">
+          {/* Subsección 1: Matriz de Talento (carpetas por año; el toggle de vista vive dentro de cada carpeta) */}
+          <div>
+            <h4 className="text-xs font-semibold uppercase tracking-wide text-[#888] mb-3">Matriz de Talento</h4>
+            <PersonaMatrizTimeline
+              personaId={id}
+              cargoActual={persona.cargo_actual}
+              cargosSugeridos={ESCALONES_SENIORITY}
+              historialCargos={historialCargosDB}
             />
-          )}
-          </>
+          </div>
+
+          {/* Subsección 2: EPP y EDD (línea temporal de evaluaciones) */}
+          <div className="pt-6 border-t border-[#f0f0f0]">
+            <PersonaEvaluacionesTimeline personaId={id} cargoActual={persona.cargo_actual} cargosSugeridos={ESCALONES_SENIORITY} historialCargos={historialCargosDB} />
+          </div>
+          </div>
           )}
         </div>}
 
@@ -651,11 +612,23 @@ export function PersonaProfile({ id }: Props) {
           )}
         </div>
         )}
-        {/* ── Desarrollo de Carrera ───────────────────────── */}
+        {/* ── Desarrollo de carrera: Evolución de cargo + Remuneraciones ── */}
         {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <h3 className="font-semibold">Desarrollo de carrera</h3>
+              <p className="text-xs text-[#aaa] mt-0.5">Evolución de cargo y remuneraciones</p>
+            </div>
+            <BotonColapsarSeccion colapsada={seccionesColapsadas.has("desarrollo-carrera-grupo")} onClick={() => toggleSeccion("desarrollo-carrera-grupo")} />
+          </div>
+
+          {!seccionesColapsadas.has("desarrollo-carrera-grupo") && (
+          <div className="space-y-6">
+          {/* Subsección 1: Evolución de cargo (card) */}
+          <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
           <div className="flex items-center justify-between mb-6">
             <div>
-              <h3 className="font-semibold">Desarrollo de Carrera</h3>
+              <h4 className="flex items-center gap-2 text-sm font-semibold text-gray-700 tracking-wide uppercase"><TrendingUp className="w-4 h-4 text-gray-400" /> Evolución de cargo</h4>
               <p className="text-xs text-[#aaa] mt-0.5">Escalones de seniority recorridos</p>
             </div>
             <div className="flex items-center gap-2">
@@ -665,7 +638,7 @@ export function PersonaProfile({ id }: Props) {
               <button
                 onClick={() => { setEditSeccionInicial("desarrollo-carrera"); setEditando(true); }}
                 className="p-1 rounded hover:bg-[#f5f5f5] text-[#888] hover:text-[#1a1a1a] transition-colors"
-                title="Editar Desarrollo de Carrera"
+                title="Editar Evolución de cargo"
               >
                 <Pencil className="w-3.5 h-3.5" />
               </button>
@@ -861,11 +834,13 @@ export function PersonaProfile({ id }: Props) {
           </div>
           </>
           )}
-        </div>}
+          </div>
 
-        {/* ── Remuneraciones (solo admin/personas) ─────────── */}
-        {esAdmin(rolActual) && (
+          {/* Subsección 2: Remuneraciones (solo admin/personas) */}
+          {esAdmin(rolActual) && (
+          <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
           <PersonaRemuneraciones
+            embebido
             personaId={id}
             colapsada={seccionesColapsadas.has("remuneraciones")}
             cargoActual={persona.cargo_actual}
@@ -873,7 +848,26 @@ export function PersonaProfile({ id }: Props) {
             historialCargos={historialCargosDB}
             botonColapsar={<BotonColapsarSeccion colapsada={seccionesColapsadas.has("remuneraciones")} onClick={() => toggleSeccion("remuneraciones")} />}
           />
-        )}
+          </div>
+          )}
+
+          {/* Subsección 3: Mentores y Mentees (card) */}
+          <div className="bg-white border border-gray-200 rounded-xl p-5 shadow-sm">
+            <MentoresMenteesSection
+              personaId={id}
+              colapsada={seccionesColapsadas.has("mentores")}
+              botonColapsar={<BotonColapsarSeccion colapsada={seccionesColapsadas.has("mentores")} onClick={() => toggleSeccion("mentores")} />}
+              mentor={mentor}
+              mentees={mentoreados}
+              onMentorChange={(m) => {
+                setMentor(m as Persona | null);
+                setPersona((prev) => prev ? { ...prev, mentor_id: m?.id ?? null } : prev);
+              }}
+            />
+          </div>
+          </div>
+          )}
+        </div>}
 
         {/* ── Notebook de Desarrollo ──────────────────────── */}
         {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (

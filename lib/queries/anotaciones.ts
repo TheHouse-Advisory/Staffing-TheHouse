@@ -93,12 +93,39 @@ export async function updateAnotacion(
   return { error: error?.message ?? null };
 }
 
+/** Envía la anotación a la papelera (soft delete). */
 export async function deleteAnotacion(
+  supabase: any,
+  id: string
+): Promise<{ error: string | null; deleted_at: string }> {
+  const deleted_at = new Date().toISOString();
+  const { error } = await supabase.from("anotacion").update({ deleted_at }).eq("id", id);
+  return { error: error?.message ?? null, deleted_at };
+}
+
+/** Restaura una anotación de la papelera (folder_id null si su carpeta ya no existe). */
+export async function restoreAnotacion(
+  supabase: any,
+  id: string,
+  folder_id: string | null
+): Promise<{ error: string | null }> {
+  const { error } = await supabase.from("anotacion").update({ deleted_at: null, folder_id }).eq("id", id);
+  return { error: error?.message ?? null };
+}
+
+/** Borrado definitivo de una anotación. */
+export async function purgeAnotacion(
   supabase: any,
   id: string
 ): Promise<{ error: string | null }> {
   const { error } = await supabase.from("anotacion").delete().eq("id", id);
   return { error: error?.message ?? null };
+}
+
+/** Borra definitivamente lo que lleva en la papelera desde antes de `corte` (RLS limita a lo propio). */
+export async function purgeAnotacionesVencidas(supabase: any, corte: string): Promise<void> {
+  await supabase.from("anotacion").delete().lt("deleted_at", corte);
+  await supabase.from("anotacion_folders").delete().lt("deleted_at", corte);
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -136,7 +163,31 @@ export async function createAnotacionFolder(
   return { data: (data as AnotacionFolder) ?? null, error: error?.message ?? null };
 }
 
+/** Envía carpetas a la papelera (la carpeta y sus subcarpetas, con el mismo sello). */
 export async function deleteAnotacionFolder(
+  supabase: any,
+  ids: string[]
+): Promise<{ error: string | null; deleted_at: string }> {
+  const deleted_at = new Date().toISOString();
+  const { error } = await supabase.from("anotacion_folders").update({ deleted_at }).in("id", ids);
+  return { error: error?.message ?? null, deleted_at };
+}
+
+/** Restaura carpetas de la papelera; `rootId` vuelve a raíz si su padre ya no existe. */
+export async function restoreAnotacionFolders(
+  supabase: any,
+  ids: string[],
+  rootId: string,
+  rootParentId: string | null
+): Promise<{ error: string | null }> {
+  const { error } = await supabase.from("anotacion_folders").update({ deleted_at: null }).in("id", ids);
+  if (error) return { error: error.message };
+  const { error: e2 } = await supabase.from("anotacion_folders").update({ parent_id: rootParentId }).eq("id", rootId);
+  return { error: e2?.message ?? null };
+}
+
+/** Borrado definitivo de una carpeta (subcarpetas en cascada; sus anotaciones quedan sin carpeta). */
+export async function purgeAnotacionFolder(
   supabase: any,
   id: string
 ): Promise<{ error: string | null }> {

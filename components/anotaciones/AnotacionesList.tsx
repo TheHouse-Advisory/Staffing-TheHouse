@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, Trash2, RotateCcw, ArrowLeft, Folder, FileText } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createAnyClient } from "@/lib/supabase/client";
 import {
@@ -12,6 +12,11 @@ import {
   getAnotacionFolders,
   createAnotacionFolder,
   deleteAnotacionFolder,
+  restoreAnotacion,
+  purgeAnotacion,
+  restoreAnotacionFolders,
+  purgeAnotacionFolder,
+  purgeAnotacionesVencidas,
 } from "@/lib/queries/anotaciones";
 import { Button } from "@/components/ui/Button";
 import { htmlToText } from "@/components/ui/RichTextEditor";
@@ -22,6 +27,12 @@ import { AnotacionFolderTree } from "./AnotacionFolderTree";
 import type { Anotacion, AnotacionFolder } from "@/lib/types/database";
 
 const TODOS = "todos";
+
+// Papelera: días que se conserva un elemento eliminado antes del borrado definitivo
+const DIAS_PAPELERA = 15;
+const DIA_MS = 86_400_000;
+const diasRestantes = (deletedAt: string) =>
+  Math.max(0, DIAS_PAPELERA - Math.floor((Date.now() - new Date(deletedAt).getTime()) / DIA_MS));
 
 // Filtro de visibilidad
 const VISIBILIDAD_OPTIONS = [
@@ -44,10 +55,13 @@ export function AnotacionesList() {
   const [selectedCreator, setSelectedCreator] = useState(TODOS);
   const [folders, setFolders] = useState<AnotacionFolder[]>([]);
   const [selectedFolderId, setSelectedFolderId] = useState<string | null>(null);
+  const [verPapelera, setVerPapelera] = useState(false);
 
   const cargar = useCallback(async () => {
     setLoading(true);
     const supabase = createAnyClient();
+    // Purga automática: lo que lleva más de 15 días en la papelera se borra definitivamente
+    await purgeAnotacionesVencidas(supabase, new Date(Date.now() - DIAS_PAPELERA * DIA_MS).toISOString());
     const [data, nombre, personaId, folderData] = await Promise.all([
       getAnotaciones(supabase),
       getNombreUsuarioActual(supabase),
@@ -86,9 +100,10 @@ export function AnotacionesList() {
     setSelectedId(data.id);
   }
 
-  function handleDelete(id: string) {
-    setAnotaciones((prev) => prev.filter((a) => a.id !== id));
+  function handleDelete(id: string, deletedAt: string) {
+    setAnotaciones((prev) => prev.map((a) => (a.id === id ? { ...a, deleted_at: deletedAt } : a)));
     setSelectedId((prev) => (prev === id ? null : prev));
+    setError(null);
   }
 
   function handleSaved(id: string, cambios: Partial<Anotacion>) {
@@ -112,28 +127,75 @@ export function AnotacionesList() {
 
   async function handleEliminarCarpeta(id: string) {
     const supabase = createAnyClient();
-    const { error: err } = await deleteAnotacionFolder(supabase, id);
+    // Carpeta + subcarpetas activas van a la papelera (sus anotaciones conservan folder_id para restaurar)
+    const aEliminar = new Set([id, ...descendientesDe(id, foldersActivas)]);
+    const { error: err, deleted_at } = await deleteAnotacionFolder(supabase, [...aEliminar]);
     if (err) {
-      setError(err);
+      setError(/deleted_at/.test(err) ? "Falta habilitar la papelera en la base de datos (columna deleted_at). Ejecuta la migración 20261006_anotaciones_papelera.sql en Supabase." : err);
       return;
     }
-    const aEliminar = new Set([id, ...descendientesDe(id, folders)]);
-    setFolders((prev) => prev.filter((f) => !aEliminar.has(f.id)));
+    setError(null);
+    setFolders((prev) => prev.map((f) => (aEliminar.has(f.id) ? { ...f, deleted_at } : f)));
     if (selectedFolderId && aEliminar.has(selectedFolderId)) {
       setSelectedFolderId(null);
     }
   }
 
+  // Activas (fuera de la papelera)
+  const activas = useMemo(() => anotaciones.filter((a) => !a.deleted_at), [anotaciones]);
+  const foldersActivas = useMemo(() => folders.filter((f) => !f.deleted_at), [folders]);
+
+  // Papelera: anotaciones propias (solo el autor puede eliminarlas) y carpetas "raíz" eliminadas
+  const papeleraNotas = anotaciones.filter((a) => a.deleted_at && (!a.autor_id || a.autor_id === currentPersonaId));
+  const idsCarpetasPapelera = new Set(folders.filter((f) => f.deleted_at).map((f) => f.id));
+  const papeleraCarpetas = folders.filter((f) => f.deleted_at && (!f.parent_id || !idsCarpetasPapelera.has(f.parent_id)));
+  const totalPapelera = papeleraNotas.length + papeleraCarpetas.length;
+
+  async function restaurarNota(a: Anotacion) {
+    const supabase = createAnyClient();
+    const folder_id = a.folder_id && foldersActivas.some((f) => f.id === a.folder_id) ? a.folder_id : null;
+    const { error: err } = await restoreAnotacion(supabase, a.id, folder_id);
+    if (err) { setError(err); return; }
+    setAnotaciones((prev) => prev.map((x) => (x.id === a.id ? { ...x, deleted_at: null, folder_id } : x)));
+  }
+
+  async function restaurarCarpeta(f: AnotacionFolder) {
+    const supabase = createAnyClient();
+    // La carpeta vuelve con sus subcarpetas eliminadas; a raíz si su padre ya no está activo
+    const ids = [f.id, ...descendientesDe(f.id, folders).filter((id) => idsCarpetasPapelera.has(id))];
+    const parent = f.parent_id && foldersActivas.some((x) => x.id === f.parent_id) ? f.parent_id : null;
+    const { error: err } = await restoreAnotacionFolders(supabase, ids, f.id, parent);
+    if (err) { setError(err); return; }
+    setFolders((prev) => prev.map((x) => (ids.includes(x.id) ? { ...x, deleted_at: null, parent_id: x.id === f.id ? parent : x.parent_id } : x)));
+  }
+
+  async function eliminarDefinitivo(tipo: "nota" | "carpeta", id: string) {
+    if (!confirm("Se eliminará de forma permanente. ¿Continuar?")) return;
+    const supabase = createAnyClient();
+    if (tipo === "nota") {
+      const { error: err } = await purgeAnotacion(supabase, id);
+      if (err) { setError(err); return; }
+      setAnotaciones((prev) => prev.filter((a) => a.id !== id));
+      return;
+    }
+    const { error: err } = await purgeAnotacionFolder(supabase, id);
+    if (err) { setError(err); return; }
+    // Subcarpetas se borran en cascada; las anotaciones quedan sin carpeta (FK ON DELETE SET NULL)
+    const ids = new Set([id, ...descendientesDe(id, folders)]);
+    setFolders((prev) => prev.filter((x) => !ids.has(x.id)));
+    setAnotaciones((prev) => prev.map((a) => (a.folder_id && ids.has(a.folder_id) ? { ...a, folder_id: null } : a)));
+  }
+
   const creadores = useMemo(() => {
-    const nombres = anotaciones
+    const nombres = activas
       .map((a) => a.creado_por)
       .filter((n): n is string => !!n);
     return Array.from(new Set(nombres)).sort();
-  }, [anotaciones]);
+  }, [activas]);
 
   const anotacionesFiltradas = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
-    return anotaciones.filter((a) => {
+    return activas.filter((a) => {
       const coincideQuery =
         !q ||
         a.titulo.toLowerCase().includes(q) ||
@@ -147,12 +209,12 @@ export function AnotacionesList() {
         (selectedVisibilidad === "privadas") === !!a.es_privada;
       return coincideQuery && coincideCreador && coincideCarpeta && coincideVisibilidad;
     });
-  }, [anotaciones, searchQuery, selectedCreator, selectedFolderId, selectedVisibilidad]);
+  }, [activas, searchQuery, selectedCreator, selectedFolderId, selectedVisibilidad]);
 
   // Solo el autor edita/elimina; notas antiguas sin autor quedan abiertas a todos
   const puedeEditar = (a: Anotacion) => !a.autor_id || a.autor_id === currentPersonaId;
 
-  const seleccionada = anotaciones.find((a) => a.id === selectedId) ?? null;
+  const seleccionada = activas.find((a) => a.id === selectedId) ?? null;
 
   return (
     <div className="flex h-full overflow-hidden">
@@ -203,18 +265,47 @@ export function AnotacionesList() {
         </div>
         <div className="border-b border-gray-200 flex-shrink-0 max-h-48 overflow-y-auto">
           <AnotacionFolderTree
-            folders={folders}
+            folders={foldersActivas}
             selectedFolderId={selectedFolderId}
             onSelect={setSelectedFolderId}
             onCreate={handleCrearCarpeta}
             onDelete={handleEliminarCarpeta}
           />
         </div>
+        {verPapelera ? (
         <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-1">
-          {!loading && anotaciones.length === 0 && (
+          <button onClick={() => setVerPapelera(false)} className="flex items-center gap-1 px-2 py-1 text-xs font-medium text-gray-500 hover:text-[#4a90e2]">
+            <ArrowLeft className="w-3.5 h-3.5" /> Volver a anotaciones
+          </button>
+          <p className="text-[11px] text-gray-400 px-2 pb-1">Se eliminan definitivamente a los {DIAS_PAPELERA} días.</p>
+          {totalPapelera === 0 && <p className="text-xs text-gray-400 text-center p-4">La papelera está vacía.</p>}
+          {[
+            ...papeleraCarpetas.map((f) => ({ key: f.id, carpeta: true, titulo: f.nombre, deletedAt: f.deleted_at!, restaurar: () => restaurarCarpeta(f), borrar: () => eliminarDefinitivo("carpeta", f.id) })),
+            ...papeleraNotas.map((a) => ({ key: a.id, carpeta: false, titulo: a.titulo || "Sin título", deletedAt: a.deleted_at!, restaurar: () => restaurarNota(a), borrar: () => eliminarDefinitivo("nota", a.id) })),
+          ].map((it) => (
+            <div key={it.key} className="flex items-center gap-2 px-2.5 py-2 rounded-md border border-gray-100 hover:bg-gray-50">
+              {it.carpeta ? <Folder className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" /> : <FileText className="w-3.5 h-3.5 text-gray-400 flex-shrink-0" />}
+              <div className="min-w-0 flex-1">
+                <p className="text-xs text-gray-700 truncate">{it.titulo}</p>
+                <p className="text-[10px] text-gray-400">
+                  Expira en {diasRestantes(it.deletedAt)} {diasRestantes(it.deletedAt) === 1 ? "día" : "días"}
+                </p>
+              </div>
+              <button onClick={it.restaurar} title="Restaurar" className="p-1 rounded text-gray-400 hover:text-[#4a90e2] hover:bg-white">
+                <RotateCcw className="w-3.5 h-3.5" />
+              </button>
+              <button onClick={it.borrar} title="Eliminar definitivamente" className="p-1 rounded text-gray-400 hover:text-red-500 hover:bg-white">
+                <Trash2 className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          ))}
+        </div>
+        ) : (
+        <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-1">
+          {!loading && activas.length === 0 && (
             <p className="text-xs text-gray-400 text-center p-4">Aún no hay anotaciones.</p>
           )}
-          {!loading && anotaciones.length > 0 && anotacionesFiltradas.length === 0 && (
+          {!loading && activas.length > 0 && anotacionesFiltradas.length === 0 && (
             <p className="text-xs text-gray-400 text-center p-4">Sin resultados para el filtro actual.</p>
           )}
           {anotacionesFiltradas.map((a) => (
@@ -224,11 +315,25 @@ export function AnotacionesList() {
               selected={a.id === selectedId}
               onSelect={setSelectedId}
               onDelete={handleDelete}
+              onError={setError}
               searchQuery={searchQuery}
               puedeEditar={puedeEditar(a)}
             />
           ))}
         </div>
+        )}
+
+        {/* Acceso a la papelera */}
+        <button
+          onClick={() => setVerPapelera((v) => !v)}
+          className={cn(
+            "flex items-center gap-1.5 px-4 py-2.5 border-t border-gray-200 text-xs font-medium transition-colors flex-shrink-0",
+            verPapelera ? "text-[#4a90e2] bg-gray-50" : "text-gray-400 hover:text-gray-600 hover:bg-gray-50"
+          )}
+        >
+          <Trash2 className="w-3.5 h-3.5" /> Papelera
+          {totalPapelera > 0 && <span className="ml-auto text-[10px] bg-gray-200 text-gray-500 rounded-full px-1.5">{totalPapelera}</span>}
+        </button>
       </div>
 
       {/* Panel derecho: editor */}
@@ -243,7 +348,7 @@ export function AnotacionesList() {
             onToggleExpand={() => setIsExpanded((v) => !v)}
             searchQuery={searchQuery}
             onClearSearch={() => setSearchQuery("")}
-            folders={folders}
+            folders={foldersActivas}
             puedeEditar={puedeEditar(seleccionada)}
             esAutor={!!currentPersonaId && seleccionada.autor_id === currentPersonaId}
           />

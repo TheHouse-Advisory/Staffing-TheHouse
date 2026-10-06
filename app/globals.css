@@ -38,3 +38,26 @@
     border-radius: 3px;
   }
 }
+
+/* ── Tiptap: listas de tareas (checkbox + texto en la misma línea) ── */
+.ProseMirror ul[data-type="taskList"] {
+  list-style: none;
+  padding: 0;
+}
+
+.ProseMirror ul[data-type="taskList"] > li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  margin-bottom: 0.25rem;
+}
+
+.ProseMirror ul[data-type="taskList"] > li > label {
+  flex-shrink: 0;
+  margin-top: 0.2rem;
+  user-select: none;
+}
+
+.ProseMirror ul[data-type="taskList"] > li > div {
+  flex: 1 1 0%;
+}

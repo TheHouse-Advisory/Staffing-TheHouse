@@ -4,7 +4,7 @@ import { useRef } from "react";
 import { MapPin } from "lucide-react";
 
 // ─── Definición de los 9 cuadrantes (fila 0 = alto potencial) ───
-const BOXES = [
+export const BOXES = [
   // fila 0 – Alto potencial
   { title: "Diamante en bruto",         sub: "Alto potencial, bajo desempeño",           bg: "#8c9e99", text: "#fff" },
   { title: "Talento Emergente",          sub: "Alto potencial, desempeño esperado",        bg: "#4a7075", text: "#fff" },
@@ -22,14 +22,19 @@ const BOXES = [
 const COL_LABELS = ["1-2", "3", "4-5"];
 const ROW_LABELS = ["Alto (5)", "Medio (4)", "Bajo (2-3)"];
 
-export function getTalentBoxName(potencial: number | null, desempeno: number | null): string | null {
-  if (potencial == null || desempeno == null) return null;
+/** Índice (0-8) en BOXES para una posición continua (1-5, 1-5) */
+export function getTalentBoxIndex(potencial: number, desempeno: number): number {
   // La cuadrícula divide el rango [1,5] en 3 tercios iguales → cortes en 7/3 y 11/3
   const b1 = 7 / 3;  // ≈ 2.33
   const b2 = 11 / 3; // ≈ 3.67
   const row = potencial > b2 ? 0 : potencial > b1 ? 1 : 2;
   const col = desempeno <= b1 ? 0 : desempeno <= b2 ? 1 : 2;
-  return BOXES[row * 3 + col].title;
+  return row * 3 + col;
+}
+
+export function getTalentBoxName(potencial: number | null, desempeno: number | null): string | null {
+  if (potencial == null || desempeno == null) return null;
+  return BOXES[getTalentBoxIndex(potencial, desempeno)].title;
 }
 
 interface Props {
@@ -40,6 +45,20 @@ interface Props {
   onUpdate?:  (potencial: number, desempeno: number) => void;
   /** "full" muestra etiquetas y ejes; "compact" solo la cuadrícula + marcador */
   size?: "full" | "compact";
+  /** Pines históricos (solo vista full): posición 1-5, color del cargo y etiqueta de fecha */
+  pines?: PinHistorico[];
+}
+
+export interface PinHistorico {
+  id: string;
+  potencial: number;
+  desempeno: number;
+  color: string;
+  etiqueta: string;   // ej. "6 oct"
+  detalle?: string;   // tooltip (fecha completa · cargo)
+  actual?: boolean;
+  /** Desplazamiento vertical en px para apilar pines en el mismo punto */
+  offsetY?: number;
 }
 
 /** Convierte coordenadas (1-5) a porcentaje de posición en la cuadrícula */
@@ -50,7 +69,7 @@ function toPercent(desempeno: number, potencial: number) {
   };
 }
 
-export function TalentMatrix({ potencial, desempeno, isEditable, onUpdate, size = "full" }: Props) {
+export function TalentMatrix({ potencial, desempeno, isEditable, onUpdate, size = "full", pines = [] }: Props) {
   const gridRef = useRef<HTMLDivElement>(null);
 
   function handleClick(e: React.MouseEvent<HTMLDivElement>) {
@@ -128,12 +147,52 @@ export function TalentMatrix({ potencial, desempeno, isEditable, onUpdate, size 
               <div
                 key={i}
                 className="flex flex-col justify-start p-2 border-[0.5px] border-white/20"
-                style={{ background: b.bg, color: b.text }}
+                // Con pines: fondos atenuados (pastel) para que los pines resalten
+                style={{ background: b.bg, color: b.text, opacity: pines.length ? 0.45 : 1 }}
               >
                 <p className="text-[11px] font-bold leading-tight">{b.title}</p>
                 <p className="text-[9px] opacity-80 mt-0.5 leading-tight">{b.sub}</p>
               </div>
             ))}
+
+            {/* Pines históricos: MapPin con color del cargo + fecha "d/mmm" (no capturan clics) */}
+            {pines.map((pin) => {
+              const pos = toPercent(pin.desempeno, pin.potencial);
+              return (
+                <div
+                  key={pin.id}
+                  title={pin.detalle}
+                  className="absolute pointer-events-none flex flex-col items-center"
+                  // La punta del pin queda sobre la posición exacta
+                  style={{
+                    left: `${pos.x}%`,
+                    top: `calc(${pos.y}% + ${pin.offsetY ?? 0}px)`,
+                    transform: "translate(-50%, -100%)",
+                    zIndex: pin.actual ? 3 : 2,
+                  }}
+                >
+                  {pin.actual && (
+                    <span className="mb-0.5 text-[8px] font-bold uppercase tracking-wide px-1.5 py-px rounded-full bg-white text-[#1a1a2e] shadow">
+                      Actual
+                    </span>
+                  )}
+                  <span className="relative flex">
+                    {pin.actual && <span className="absolute inset-0 rounded-full animate-ping opacity-40" style={{ background: pin.color }} />}
+                    <MapPin
+                      className={pin.actual ? "w-6 h-6" : "w-5 h-5"}
+                      style={{ color: "#fff", fill: pin.color, filter: "drop-shadow(0 1px 2px rgba(0,0,0,0.45))" }}
+                      strokeWidth={pin.actual ? 2.5 : 2}
+                    />
+                  </span>
+                  <span
+                    className="mt-0.5 text-[9px] font-semibold leading-none px-1 py-0.5 rounded bg-white/90 shadow-sm whitespace-nowrap"
+                    style={{ color: pin.color }}
+                  >
+                    {pin.etiqueta}
+                  </span>
+                </div>
+              );
+            })}
 
             {/* Marcador */}
             {marker && (
