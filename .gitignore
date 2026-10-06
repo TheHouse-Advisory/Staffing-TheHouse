@@ -37,3 +37,6 @@ lib/tasks/*.xlsx
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Worktrees temporales de Claude Code
+.claude/worktrees/
