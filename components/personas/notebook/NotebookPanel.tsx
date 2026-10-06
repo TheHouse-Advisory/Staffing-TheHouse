@@ -8,6 +8,7 @@ import {
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { createAnyClient } from "@/lib/supabase/client";
+import { RichTextEditor } from "@/components/ui/RichTextEditor";
 
 // ── Tipos ──────────────────────────────────────────────────────
 interface NFolder { id: string; nombre: string; creado_en: string; parent_id: string | null; }
@@ -388,11 +389,11 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
               <div className="mx-5 border-b border-slate-100" />
 
               {/* Contenido */}
-              <textarea
+              <RichTextEditor
                 value={draftContent}
-                onChange={e => { setDraftContent(e.target.value); scheduleSave(draftTitle, e.target.value, draftFolderId); }}
+                onChange={html => { setDraftContent(html); scheduleSave(draftTitle, html, draftFolderId); }}
                 placeholder="Escribe tus anotaciones aquí…"
-                className="flex-1 px-5 py-3 text-[13px] text-slate-600 leading-relaxed outline-none resize-none placeholder:text-slate-200 border-none bg-transparent"
+                className="flex-1"
               />
             </>
           ) : (

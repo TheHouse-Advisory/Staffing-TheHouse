@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import { createAnyClient } from "@/lib/supabase/client";
 import { deleteAnotacion } from "@/lib/queries/anotaciones";
 import { highlightText } from "./highlightText";
+import { htmlToText } from "@/components/ui/RichTextEditor";
 import type { Anotacion } from "@/lib/types/database";
 
 interface AnotacionCardProps {
@@ -65,7 +66,7 @@ export function AnotacionCard({ anotacion, selected, onSelect, onDelete, searchQ
 
       {anotacion.contenido && (
         <p className="text-xs text-gray-500 mt-1 truncate">
-          {highlightText(anotacion.contenido, searchQuery)}
+          {highlightText(htmlToText(anotacion.contenido), searchQuery)}
         </p>
       )}
 

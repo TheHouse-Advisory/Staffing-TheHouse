@@ -55,7 +55,7 @@ const navItems: { section: string; items: NavItem[] }[] = [
       { href: "/inicio",      label: "Inicio",    icon: Home,            allowedRoles: ["admin", "personas", "GyD", "AySr", "proposer", "planificador"] },
       { href: "/tablero",     label: "Tablero",   icon: LayoutDashboard, allowedRoles: ["admin", "personas", "GyD", "AySr", "Desarrollo", "proposer", "planificador"] },
       { href: "/engagements", label: "Proyectos", icon: Briefcase,       allowedRoles: ["admin", "personas", "AySr", "proposer", "planificador", "GyD"] },
-      { href: "/personas",    label: "Personas",  icon: Users,           allowedRoles: ["admin", "personas", "GyD", "AySr", "proposer", "planificador"] },
+      { href: "/personas",    label: "Personas",  icon: Users,           allowedRoles: ["admin", "personas"] },
       { href: "/ausencias",   label: "Ausencias", icon: CalendarOff,     allowedRoles: ["admin", "personas", "GyD", "AySr", "Desarrollo", "proposer", "planificador"] },
       { href: "/alertas",     label: "Alertas",   icon: Bell,            allowedRoles: ["admin", "personas", "proposer"] },
       { href: "/anotaciones", label: "Anotaciones", icon: Notebook,      allowedRoles: ["personas"] },

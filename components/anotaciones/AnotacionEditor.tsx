@@ -7,6 +7,7 @@ import { createAnyClient } from "@/lib/supabase/client";
 import { updateAnotacion } from "@/lib/queries/anotaciones";
 import { highlightText, countMatches } from "./highlightText";
 import { Select } from "@/components/ui/FormField";
+import { RichTextEditor, htmlToText } from "@/components/ui/RichTextEditor";
 import type { Anotacion, AnotacionFolder } from "@/lib/types/database";
 
 interface AnotacionEditorProps {
@@ -79,7 +80,8 @@ export function AnotacionEditor({
 
   const tituloParaResaltar = titulo || "Sin título";
   const matchesEnTitulo = countMatches(tituloParaResaltar, searchQuery);
-  const matchesEnContenido = countMatches(contenido, searchQuery);
+  const contenidoTexto = htmlToText(contenido);
+  const matchesEnContenido = countMatches(contenidoTexto, searchQuery);
   const totalMatches = matchesEnTitulo + matchesEnContenido;
 
   function irAMatch(delta: number) {
@@ -185,19 +187,21 @@ export function AnotacionEditor({
       )}
 
       {buscando ? (
+        // En búsqueda se muestra texto plano para poder resaltar coincidencias
         <div className="flex-1 w-full overflow-y-auto text-[15px] leading-relaxed text-gray-700 whitespace-pre-wrap">
-          {highlightText(contenido, searchQuery, currentMatchIndex, matchesEnTitulo)}
+          {highlightText(contenidoTexto, searchQuery, currentMatchIndex, matchesEnTitulo)}
         </div>
       ) : (
-        <textarea
+        <RichTextEditor
           value={contenido}
-          onChange={(e) => setContenido(e.target.value)}
-          onBlur={() => {
-            if (contenido !== anotacion.contenido) guardar({ contenido });
+          onChange={setContenido}
+          onBlur={(html) => {
+            if (html !== anotacion.contenido) guardar({ contenido: html });
           }}
           placeholder="Escribe aquí..."
-          readOnly={!puedeEditar}
-          className="flex-1 w-full bg-transparent border-none outline-none resize-none text-[15px] leading-relaxed text-gray-700 placeholder:text-gray-300"
+          editable={puedeEditar}
+          className="flex-1 -mx-4"
+          contentClassName="px-4 py-2 text-[15px] text-gray-700"
         />
       )}
     </div>
