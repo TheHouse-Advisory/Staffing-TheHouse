@@ -159,13 +159,13 @@ export function InicioClient() {
           .select("id, nombre, apellido, iniciales, cargo_actual, is_leverager, referente, fecha_ingreso")
           .eq("activo", true).order("cargo_actual").order("apellido"),
         (sb as any).from("asignacion")
-          .select("persona_id, pct_dedicacion, engagement:engagement_id!inner(tipo)")
+          .select("persona_id, pct_dedicacion, estado_staffing, engagement:engagement_id!inner(tipo)")
           .eq("estado", "activa")
           .lte("fecha_inicio", hoy)
           .gte("fecha_fin", hoy)
           .neq("engagement.tipo", "posibles_proyectos"),
         (sb as any).from("asignacion")
-          .select("persona_id, fecha_fin, engagement:engagement_id(tipo)")
+          .select("persona_id, fecha_fin, estado_staffing, engagement:engagement_id(tipo)")
           .eq("estado", "activa")
           .lte("fecha_inicio", hoy)
           .gte("fecha_fin", hoy),
@@ -178,16 +178,19 @@ export function InicioClient() {
       const pers = (persRes.data ?? []) as Persona[];
       setPersonas(pers);
 
+      // A&Sr (rol "AySr"): ocupación y "Disponibles próximamente" sin asignaciones "Por confirmar" (PLAN)
+      const visibleParaRol = (a: { estado_staffing?: string | null }) => !(rolActual === "AySr" && a.estado_staffing === "PLAN");
+
       // Mapa ocupación hoy
       const map: Record<string, number> = {};
-      for (const a of (asigRes.data ?? []) as { persona_id: string; pct_dedicacion: number }[]) {
+      for (const a of ((asigRes.data ?? []) as { persona_id: string; pct_dedicacion: number; estado_staffing?: string | null }[]).filter(visibleParaRol)) {
         map[a.persona_id] = (map[a.persona_id] ?? 0) + Number(a.pct_dedicacion);
       }
       setOcupacionMap(map);
 
       // Detalle de asignaciones para DisponiblesTablero
       setAsignacionesDetalle(
-        ((asigDetalleRes.data ?? []) as any[]).map((a) => ({
+        ((asigDetalleRes.data ?? []) as any[]).filter(visibleParaRol).map((a) => ({
           persona_id: a.persona_id,
           fecha_fin: a.fecha_fin,
           tipo: a.engagement?.tipo ?? "proyecto",
@@ -215,17 +218,18 @@ export function InicioClient() {
     const sb = createAnyClient();
     const hoy = format(new Date(), "yyyy-MM-dd");
     const { data } = await (sb as any).from("asignacion")
-      .select("persona_id, pct_dedicacion, engagement:engagement_id!inner(tipo)")
+      .select("persona_id, pct_dedicacion, estado_staffing, engagement:engagement_id!inner(tipo)")
       .eq("estado", "activa")
       .lte("fecha_inicio", hoy)
       .gte("fecha_fin", hoy)
       .neq("engagement.tipo", "posibles_proyectos");
     const map: Record<string, number> = {};
-    for (const a of (data ?? []) as { persona_id: string; pct_dedicacion: number }[]) {
+    for (const a of (data ?? []) as { persona_id: string; pct_dedicacion: number; estado_staffing?: string | null }[]) {
+      if (rol === "AySr" && a.estado_staffing === "PLAN") continue; // A&Sr: sin "Por confirmar"
       map[a.persona_id] = (map[a.persona_id] ?? 0) + Number(a.pct_dedicacion);
     }
     setOcupacionMap(map);
-  }, []);
+  }, [rol]);
 
   // Escucha cambios de asignación/engagement desde cualquier componente (tablero, formularios, etc.)
   useEffect(() => {
@@ -506,6 +510,7 @@ export function InicioClient() {
               onOpenPanel={isReadOnly ? undefined : abrirPanel}
               externalReloadKey={tableroReloadKey}
               ocultarPctEquipo={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
+              ocultarPorConfirmar={rol === "AySr"}
               isAdmin={esAdmin(rol)}
               vistaResumida={vistaResumida}
               titulo="Tablero"

@@ -266,6 +266,8 @@ interface Props {
   onSimDesasignarRequest?: (payload: { asignacionId: string; engId: string; nombrePersona: string }) => void;
   /** Oculta el % de carga en "Equipo asignado" para roles restringidos (G&D, A&Sr, planificador, Desarrollo) */
   ocultarPctEquipo?: boolean;
+  /** Oculta personas con asignación "Por confirmar" (estado_staffing PLAN) — rol A&Sr */
+  ocultarPorConfirmar?: boolean;
   /** Solo admin puede ver el botón de colapsar/desplegar cargos dentro de un engagement */
   isAdmin?: boolean;
   /** Vista Resumida (oculta tabla y acciones secundarias, muestra placeholder) vs Detallada. Controlado por el padre. */
@@ -295,7 +297,7 @@ type UndoEntry =
   | { type: "color_semana"; engId: string; label: string; fecha: string; fecha_fin: string; prevEntry: { fecha: string; fecha_fin: string | null; intensidad: string } | null }
   | { type: "edit_reqs";   engId: string; label: string; engNombre: string; prevReqs: ReqData[]; prevPersonas: PersonaAsig[] };
 
-export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest, ocultarPctEquipo = false, isAdmin = false, vistaResumida = false, titulo, onVistaResumidaChange, cuadranteExpandido = false, onToggleCuadrante }: Props) {
+export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalReloadKey, vistaExterna, baseExterna, onPersonaClick, openEngagementId, readOnly = false, simulationMode = false, onSimPersonaAsignada, initialEngs, onSimEngsChange, onSimDirty, onSimDropRequest, onRegisterUndoPush, onSimDesasignarRequest, ocultarPctEquipo = false, ocultarPorConfirmar = false, isAdmin = false, vistaResumida = false, titulo, onVistaResumidaChange, cuadranteExpandido = false, onToggleCuadrante }: Props) {
   const [vistaInterna, setVistaInterna] = useState<Vista>("semana");
   const [baseInterna, setBaseInterna] = useState<Date>(() => startOfISOWeek(new Date()));
 
@@ -305,6 +307,11 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const [engs, setEngs] = useState<EngRow[]>(() =>
     simulationMode && initialEngs ? structuredClone(initialEngs) : []
   );
+  // A&Sr (rol "AySr"): engs sin asignaciones "Por confirmar" (PLAN) para renderizar —
+  // filtro a nivel render, independiente de carreras entre cargas con/sin rol
+  const engsVisibles = useMemo(() => ocultarPorConfirmar
+    ? engs.map((e) => ({ ...e, personas: e.personas.filter((p) => p.estado_staffing !== "PLAN") }))
+    : engs, [engs, ocultarPorConfirmar]);
   const [ausencias, setAusencias] = useState<{ persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string; descripcion: string | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [ultimaActualizacion, setUltimaActualizacion] = useState<Date | null>(null);
@@ -906,6 +913,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       for (const a of (asigRes.data ?? []) as any[]) {
         const eng = engMap.get(a.engagement_id);
         if (!eng) continue;
+        // A&Sr: no ve asignaciones "Por confirmar"
+        if (ocultarPorConfirmar && a.estado_staffing === "PLAN") continue;
         eng.personas.push({
           id: a.persona_id,
           nombre: a.persona?.nombre ?? "?",
@@ -989,7 +998,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       fetchUltimaActualizacionReal(sb).then(setUltimaActualizacion);
     }
     load();
-  }, [inicioStr, finStr, lookbackStr, reloadKey, externalReloadKey]);
+  }, [inicioStr, finStr, lookbackStr, reloadKey, externalReloadKey, ocultarPorConfirmar]);
 
   async function abrirDetalleEng(eng: EngRow) {
     setEngModal(eng);
@@ -1985,7 +1994,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
       {vistaResumida ? (
         <VistaResumidaEngagements
-          engs={engs}
+          engs={engsVisibles}
           base={base}
           ausencias={ausencias}
           onNavAnterior={vistaExterna ? undefined : () => setBaseInterna((b) => addDays(b, -7))}
@@ -2107,7 +2116,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                   // crea múltiples asignacion records para la misma persona → evita filas fantasma).
                   // segsPersona: personaId → todos sus segmentos de asignación en este engagement.
                   const segsPersona = new Map<string, PersonaAsig[]>();
-                  for (const p of eng.personas.filter((p) => p?.id)) {
+                  // A&Sr: excluye asignaciones "Por confirmar" (PLAN) de filas y barras
+                  for (const p of eng.personas.filter((p) => p?.id && !(ocultarPorConfirmar && p.estado_staffing === "PLAN"))) {
                     if (!segsPersona.has(p.id)) segsPersona.set(p.id, []);
                     segsPersona.get(p.id)!.push(p);
                   }
@@ -3412,7 +3422,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
             <div className="flex-shrink-0 pb-4">
               <LeyendaCargosColor />
             </div>
-            <VistaResumidaEngagements engs={engs} base={base} ausencias={ausencias} modoExport />
+            <VistaResumidaEngagements engs={engsVisibles} base={base} ausencias={ausencias} modoExport />
             {/* Separador Proyectos/Propuestas ↔ Ausencias con margen amplio: evita colisión visual
                 cuando la tabla de arriba crece con más filas. */}
             <div className="flex-shrink-0 mt-8 pt-4 border-t-2 border-gray-200">

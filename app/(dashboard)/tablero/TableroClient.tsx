@@ -133,6 +133,7 @@ function TableroContent() {
                 onOpenPanel={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo" ? undefined : abrirPanel}
                 readOnly={isReadOnly}
                 ocultarPctEquipo={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
+                ocultarPorConfirmar={rol === "AySr"}
                 isAdmin={esAdmin(rol)}
               />
             </div>

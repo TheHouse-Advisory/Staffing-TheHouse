@@ -435,11 +435,12 @@ export function EngagementsList({ rolActual }: Props) {
   useEffect(() => {
     if (engagements.length === 0) { setPrincipalExtra(new Map()); return; }
     const ids = engagements.map((e) => e.id);
+    let cancelado = false; // evita que una carga previa (sin rol) pise la filtrada
     Promise.all([
       sb.from("cat_industria").select("id, nombre"),
       (sb as any).from("engagement_tematica").select("engagement_id, cat_tematica(nombre)").in("engagement_id", ids),
       (sb as any).from("engagement_capacidad").select("engagement_id, cat_capacidad(nombre)").in("engagement_id", ids),
-      (sb as any).from("asignacion").select("engagement_id, persona:persona_id(nombre, apellido, cargo_actual, iniciales)").in("engagement_id", ids),
+      (sb as any).from("asignacion").select("engagement_id, estado_staffing, persona:persona_id(nombre, apellido, cargo_actual, iniciales)").in("engagement_id", ids),
     ]).then(([indRes, temRes, capRes, asigRes]) => {
       const indMap = new Map<string, string>((indRes.data ?? []).map((r: any) => [r.id, r.nombre]));
       const map = new Map<string, EngExtra>();
@@ -449,14 +450,16 @@ export function EngagementsList({ rolActual }: Props) {
           tematicas: ((temRes.data ?? []) as any[]).filter((r) => r.engagement_id === eng.id).map((r) => r.cat_tematica?.nombre).filter(Boolean),
           capacidades: ((capRes.data ?? []) as any[]).filter((r) => r.engagement_id === eng.id).map((r) => r.cat_capacidad?.nombre).filter(Boolean),
           participantes: ((asigRes.data ?? []) as any[])
-            .filter((r) => r.engagement_id === eng.id && r.persona)
+            // A&Sr (rol "AySr"): sin participantes "Por confirmar" (PLAN)
+            .filter((r) => r.engagement_id === eng.id && r.persona && !(rolActual === "AySr" && r.estado_staffing === "PLAN"))
             .map((r) => ({ nombre: r.persona.nombre, apellido: r.persona.apellido, cargo: r.persona.cargo_actual ?? "", iniciales: r.persona.iniciales ?? null }))
             .filter((p, i, arr) => arr.findIndex((x) => x.nombre === p.nombre && x.apellido === p.apellido) === i),
         });
       }
-      setPrincipalExtra(map);
+      if (!cancelado) setPrincipalExtra(map);
     });
-  }, [engagements]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => { cancelado = true; };
+  }, [engagements, rolActual]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Filtro client-side vista principal
   const engagementsFiltrados = useMemo(() => {
@@ -476,11 +479,12 @@ export function EngagementsList({ rolActual }: Props) {
   useEffect(() => {
     if (archivados.length === 0) { setArchivadosExtra(new Map()); return; }
     const ids = archivados.map((e) => e.id);
+    let cancelado = false;
     Promise.all([
       sb.from("cat_industria").select("id, nombre"),
       (sb as any).from("engagement_tematica").select("engagement_id, cat_tematica(nombre)").in("engagement_id", ids),
       (sb as any).from("engagement_capacidad").select("engagement_id, cat_capacidad(nombre)").in("engagement_id", ids),
-      (sb as any).from("asignacion").select("engagement_id, persona:persona_id(nombre, apellido, cargo_actual, iniciales)").in("engagement_id", ids),
+      (sb as any).from("asignacion").select("engagement_id, estado_staffing, persona:persona_id(nombre, apellido, cargo_actual, iniciales)").in("engagement_id", ids),
     ]).then(([indRes, temRes, capRes, asigRes]) => {
       const indMap = new Map<string, string>((indRes.data ?? []).map((r: any) => [r.id, r.nombre]));
       const map = new Map<string, EngExtra>();
@@ -490,14 +494,16 @@ export function EngagementsList({ rolActual }: Props) {
           tematicas: ((temRes.data ?? []) as any[]).filter((r) => r.engagement_id === eng.id).map((r) => r.cat_tematica?.nombre).filter(Boolean),
           capacidades: ((capRes.data ?? []) as any[]).filter((r) => r.engagement_id === eng.id).map((r) => r.cat_capacidad?.nombre).filter(Boolean),
           participantes: ((asigRes.data ?? []) as any[])
-            .filter((r) => r.engagement_id === eng.id && r.persona)
+            // A&Sr (rol "AySr"): sin participantes "Por confirmar" (PLAN)
+            .filter((r) => r.engagement_id === eng.id && r.persona && !(rolActual === "AySr" && r.estado_staffing === "PLAN"))
             .map((r) => ({ nombre: r.persona.nombre, apellido: r.persona.apellido, cargo: r.persona.cargo_actual ?? "", iniciales: r.persona.iniciales ?? null }))
             .filter((p, i, arr) => arr.findIndex((x) => x.nombre === p.nombre && x.apellido === p.apellido) === i),
         });
       }
-      setArchivadosExtra(map);
+      if (!cancelado) setArchivadosExtra(map);
     });
-  }, [archivados]); // eslint-disable-line react-hooks/exhaustive-deps
+    return () => { cancelado = true; };
+  }, [archivados, rolActual]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function moverAPapelera(id: string) {
     setAccionando(true);

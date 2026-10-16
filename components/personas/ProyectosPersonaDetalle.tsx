@@ -158,19 +158,31 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
       const hoy = new Date().toISOString().split("T")[0];
       // !inner + filtro por estado/is_deleted del engagement: descarta asignaciones "fantasma"
       // de engagements borrados, en papelera o no activos
-      const { data } = await sb
-        .from("asignacion")
-        .select("id, fecha_inicio, fecha_fin, pct_dedicacion, engagement:engagement_id!inner(id, nombre, cliente, industria:industria_id(nombre), estado, is_deleted, tipo)")
-        .eq("persona_id", personaId)
-        .eq("estado", "activa")
-        .eq("engagement.estado", "activo")
-        .eq("engagement.is_deleted", false)
-        .neq("engagement.tipo", "posibles_proyectos")
-        .or(`fecha_fin.gte.${hoy},fecha_fin.is.null`) // sin fecha_fin = en curso, no debe excluirse
-        .order("fecha_inicio");
+      const [{ data }, rolUsuario] = await Promise.all([
+        sb
+          .from("asignacion")
+          .select("id, fecha_inicio, fecha_fin, pct_dedicacion, estado_staffing, engagement:engagement_id!inner(id, nombre, cliente, industria:industria_id(nombre), estado, is_deleted, tipo)")
+          .eq("persona_id", personaId)
+          .eq("estado", "activa")
+          .eq("engagement.estado", "activo")
+          .eq("engagement.is_deleted", false)
+          .neq("engagement.tipo", "posibles_proyectos")
+          .or(`fecha_fin.gte.${hoy},fecha_fin.is.null`) // sin fecha_fin = en curso, no debe excluirse
+          .order("fecha_inicio"),
+        // Rol resuelto en la misma carga → filtro A&Sr sin depender de props/efectos
+        (async () => {
+          const { data: { user } } = await sb.auth.getUser();
+          if (!user) return null;
+          const { data: p } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
+          return ((p as any)?.rol_sistema ?? null) as string | null;
+        })(),
+      ]);
 
       setAsignaciones(
-        ((data ?? []) as AsignacionConEngagement[]).map((a) => {
+        ((data ?? []) as (AsignacionConEngagement & { estado_staffing?: string | null })[])
+          // A&Sr (rol "AySr"): oculta asignaciones "Por confirmar" (PLAN)
+          .filter((a) => !(rolUsuario === "AySr" && a.estado_staffing === "PLAN"))
+          .map((a) => {
           const { dias, esFuturo } = calcDias(a.fecha_inicio, a.fecha_fin);
           const diasRestantes = a.fecha_fin && !esFuturo
             ? diasHabiles(hoy, a.fecha_fin)
