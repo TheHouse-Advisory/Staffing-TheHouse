@@ -113,6 +113,8 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
   const [searchQuery, setSearchQuery] = useState("");
   const [esGYD, setEsGYD] = useState(false);
   const [ocultarVacacionesPorConfirmar, setOcultarVacacionesPorConfirmar] = useState(false);
+  // A&Sr (rol "AySr"): oculta asignaciones "Por confirmar" (estado_staffing PLAN)
+  const [ocultarPorConfirmar, setOcultarPorConfirmar] = useState(false);
   const [refreshTick, setRefreshTick] = useState(0);
 
   // Re-fetch cuando cambia una asignación o un engagement desde cualquier vista
@@ -143,6 +145,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
       const rol = (data as any)?.rol_sistema;
       setEsGYD(rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo");
       setOcultarVacacionesPorConfirmar(rol === "GyD" || rol === "AySr" || rol === "planificador");
+      setOcultarPorConfirmar(rol === "AySr");
     }
     checkRol();
   }, []);
@@ -205,7 +208,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
       const [persRes, asigRes, ausenRes] = await Promise.all([
         sb.from("persona").select("id, nombre, apellido, cargo_actual").eq("activo", true),
         sb.from("asignacion")
-          .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin, engagement:engagement_id(id, codigo, nombre, cliente, tipo)" as any)
+          .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin, estado_staffing, engagement:engagement_id(id, codigo, nombre, cliente, tipo)" as any)
           .eq("estado", "activa")
           .lte("fecha_inicio", fechaFin)
           .gte("fecha_fin", fechaInicio),
@@ -224,6 +227,8 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
         .map((p) => {
           const asigsSinDedup = ((asigRes.data ?? []) as any[])
             .filter((a) => a.persona_id === p.id)
+            // A&Sr: excluye "Por confirmar" antes de deduplicar por engagement
+            .filter((a) => !(ocultarPorConfirmar && a.estado_staffing === "PLAN"))
             .filter((a) => {
               const eng = Array.isArray(a.engagement) ? a.engagement[0] : a.engagement;
               return eng?.tipo !== "posibles_proyectos";
@@ -255,14 +260,17 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
         })
         .filter((p) => p.proyectos.length > 0 || p.ausencias.length > 0);
 
+      if (cancelado) return; // evita que una carga previa (sin rol) pise la filtrada
       setFilas(personas);
       setLoading(false);
     }
+    let cancelado = false;
     load();
+    return () => { cancelado = true; };
   // simulationSnapshot referencia cambia con cada render de SandboxInicioView,
   // usar JSON como dependencia evita re-fetches infinitos
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fechaInicio, fechaFin, simulationSnapshot, refreshTick]);
+  }, [fechaInicio, fechaFin, simulationSnapshot, refreshTick, ocultarPorConfirmar]);
 
   if (loading) return <p className="text-sm text-gray-300 p-2">Cargando...</p>;
   if (filas.length === 0) return <p className="text-sm text-gray-300 italic p-2">Sin actividad en este período.</p>;

@@ -138,25 +138,45 @@ export function EngagementDetail({ id }: Props) {
       persona: { nombre: string; apellido: string } | null;
     }
 
-    const [{ data: eng, error: engErr }, cobResult, asigResult, capResult, temResult, actResult] = await Promise.all([
+    const [{ data: eng, error: engErr }, cobResult, asigResult, capResult, temResult, actResult, rolUsuario] = await Promise.all([
       sb.from("engagement").select("*, cat_industria(nombre)").eq("id", id).single(),
       fetchCoberturaEngagement(supabase, id),
       sb
         .from("asignacion")
-        .select("id, persona_id, cargo_al_momento, pct_dedicacion, fecha_inicio, fecha_fin, requerimiento_id, persona:persona_id(nombre, apellido)")
+        .select("id, persona_id, cargo_al_momento, pct_dedicacion, fecha_inicio, fecha_fin, requerimiento_id, estado_staffing, persona:persona_id(nombre, apellido)")
         .eq("engagement_id", id)
         .eq("estado", "activa")
         .order("fecha_inicio"),
       (sb as any).from("engagement_capacidad").select("cat_capacidad(nombre)").eq("engagement_id", id),
       (sb as any).from("engagement_tematica").select("cat_tematica(nombre)").eq("engagement_id", id),
       (sb as any).from("engagement_actividades").select("id, tipo, titulo, descripcion, fecha_inicio, fecha_fin").eq("engagement_id", id),
+      // Rol resuelto en la misma carga → el filtro A&Sr no depende del orden de efectos
+      (async () => {
+        const { data: { user } } = await sb.auth.getUser();
+        if (!user) return null;
+        const { data } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
+        return ((data as any)?.rol_sistema ?? null) as string | null;
+      })(),
     ]);
 
     if (engErr || !eng) {
       setError(engErr?.message ?? "No encontrado");
     } else {
       setEngagement(eng as Engagement);
-      setCobertura(cobResult.data);
+      // A&Sr: la vista cobertura_engagement suma también PLAN → se descuenta "Por confirmar" por requerimiento
+      if (rolUsuario === "AySr") {
+        const pctPlanPorReq = new Map<string, number>();
+        for (const a of (asigResult.data ?? []) as any[]) {
+          if (a.estado_staffing !== "PLAN" || !a.requerimiento_id) continue;
+          pctPlanPorReq.set(a.requerimiento_id, (pctPlanPorReq.get(a.requerimiento_id) ?? 0) + Number(a.pct_dedicacion));
+        }
+        setCobertura(cobResult.data.map((c) => {
+          const cubierto = Math.max(0, Number(c.pct_cubierto) - (pctPlanPorReq.get(c.requerimiento_id) ?? 0));
+          return { ...c, pct_cubierto: cubierto, pct_descubierto: Math.max(0, Number(c.pct_requerido) - cubierto) };
+        }));
+      } else {
+        setCobertura(cobResult.data);
+      }
       if (cobResult.error) setError(cobResult.error);
       setCaracteristicas({
         industria: (eng as any).cat_industria?.nombre ?? null,
@@ -165,7 +185,9 @@ export function EngagementDetail({ id }: Props) {
       });
     }
 
-    const asigData = (asigResult.data ?? []) as unknown as AsignacionRaw[];
+    // A&Sr (rol "AySr"): oculta asignaciones "Por confirmar" (estado_staffing PLAN)
+    const asigData = ((asigResult.data ?? []) as unknown as (AsignacionRaw & { estado_staffing?: string | null })[])
+      .filter((a) => !(rolUsuario === "AySr" && a.estado_staffing === "PLAN"));
 
     const asigs: AsignacionReq[] = asigData.map((a) => ({
       id: a.id,
