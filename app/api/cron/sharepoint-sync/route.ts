@@ -12,8 +12,10 @@ import { syncExcelResumenProyectos } from "@/lib/utils/excel-sync";
 import { uploadToSharePoint } from "@/lib/services/sharepoint";
 
 export async function GET(request: NextRequest) {
+  const secret = process.env.CRON_SECRET;
   const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${process.env.CRON_SECRET}`) {
+  // Sin secreto configurado se rechaza todo (evita "Bearer undefined")
+  if (!secret || authHeader !== `Bearer ${secret}`) {
     return NextResponse.json({ success: false, error: "No autorizado." }, { status: 401 });
   }
 
