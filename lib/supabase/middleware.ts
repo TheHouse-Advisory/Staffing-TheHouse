@@ -49,8 +49,7 @@ export async function updateSession(request: NextRequest) {
   // /auth/set-password es pública: la propia página valida la sesión del
   // enlace y muestra "Enlace inválido" si no la hay. Sin esto, el middleware
   // redirige a /login antes de que la persona vea ese mensaje.
-  // /api/cron valida su propio CRON_SECRET (Vercel Cron no tiene sesión).
-  const publicRoutes = ["/login", "/auth/callback", "/auth/set-password", "/api/cron"];
+  const publicRoutes = ["/login", "/auth/callback", "/auth/set-password"];
   // Coincidencia exacta o por subruta (evita que "/login-x" pase como pública)
   const isPublicRoute = publicRoutes.some(
     (r) => pathname === r || pathname.startsWith(`${r}/`)
