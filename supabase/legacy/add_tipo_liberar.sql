@@ -1,3 +1,6 @@
+-- ⚠️ OBSOLETO: reemplazado por supabase/migrations/. NO EJECUTAR (puede desactivar seguridad o borrar datos).
+DO $$ BEGIN RAISE EXCEPTION 'Script obsoleto (supabase/legacy). No ejecutar.'; END $$;
+
 -- ================================================================
 -- Migración: soporte para liberaciones (terminar asignación)
 -- dentro de un plan propuesto.

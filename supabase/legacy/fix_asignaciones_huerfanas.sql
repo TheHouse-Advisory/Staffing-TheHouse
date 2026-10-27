@@ -1,3 +1,6 @@
+-- ⚠️ OBSOLETO: reemplazado por supabase/migrations/. NO EJECUTAR (puede desactivar seguridad o borrar datos).
+DO $$ BEGIN RAISE EXCEPTION 'Script obsoleto (supabase/legacy). No ejecutar.'; END $$;
+
 -- Elimina asignaciones "fantasma" que siguen sumando a la carga de las personas:
 --   1) el engagement_id ya no existe (FK huerfana), o
 --   2) el engagement esta en papelera (is_deleted = true)

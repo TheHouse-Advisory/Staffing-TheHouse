@@ -1,3 +1,6 @@
+-- ⚠️ OBSOLETO: reemplazado por supabase/migrations/. NO EJECUTAR (puede desactivar seguridad o borrar datos).
+DO $$ BEGIN RAISE EXCEPTION 'Script obsoleto (supabase/legacy). No ejecutar.'; END $$;
+
 -- ══════════════════════════════════════════════════════════════════════════════
 -- plan_simulacion_approval.sql — Staffing Hub
 -- ══════════════════════════════════════════════════════════════════════════════

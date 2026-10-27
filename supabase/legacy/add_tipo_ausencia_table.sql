@@ -1,3 +1,6 @@
+-- ⚠️ OBSOLETO: reemplazado por supabase/migrations/. NO EJECUTAR (puede desactivar seguridad o borrar datos).
+DO $$ BEGIN RAISE EXCEPTION 'Script obsoleto (supabase/legacy). No ejecutar.'; END $$;
+
 -- ══════════════════════════════════════════════════════════════════════════════
 -- add_tipo_ausencia_table.sql — Staffing Hub
 -- ══════════════════════════════════════════════════════════════════════════════
