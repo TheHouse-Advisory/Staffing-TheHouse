@@ -49,14 +49,19 @@ export async function updateSession(request: NextRequest) {
   // /auth/set-password es pública: la propia página valida la sesión del
   // enlace y muestra "Enlace inválido" si no la hay. Sin esto, el middleware
   // redirige a /login antes de que la persona vea ese mensaje.
-  const publicRoutes = ["/login", "/auth/callback", "/auth/set-password"];
-  const isPublicRoute = publicRoutes.some((r) => pathname.startsWith(r));
+  // /api/cron valida su propio CRON_SECRET (Vercel Cron no tiene sesión).
+  const publicRoutes = ["/login", "/auth/callback", "/auth/set-password", "/api/cron"];
+  // Coincidencia exacta o por subruta (evita que "/login-x" pase como pública)
+  const isPublicRoute = publicRoutes.some(
+    (r) => pathname === r || pathname.startsWith(`${r}/`)
+  );
 
   // ── Expiración forzada por uso prolongado / inactividad (7h) ─────────────
   let sessionExpired = false;
   if (user) {
     const now = Date.now();
-    const started = Number(request.cookies.get(COOKIE_STARTED)?.value);
+    // Inicio real de sesión según Supabase: el cliente no puede reiniciarlo
+    const started = user.last_sign_in_at ? Date.parse(user.last_sign_in_at) : 0;
     const lastActivity = Number(request.cookies.get(COOKIE_ACTIVITY)?.value);
 
     if (
@@ -75,7 +80,6 @@ export async function updateSession(request: NextRequest) {
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax" as const,
       };
-      if (!started) supabaseResponse.cookies.set(COOKIE_STARTED, String(now), cookieOpts);
       supabaseResponse.cookies.set(COOKIE_ACTIVITY, String(now), cookieOpts);
     }
   }
