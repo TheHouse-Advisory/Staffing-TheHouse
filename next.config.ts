@@ -6,10 +6,10 @@ const securityHeaders = [
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
   { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
-  // CSP en modo observación: reporta violaciones en consola sin bloquear.
-  // Pasar a "Content-Security-Policy" cuando la consola quede limpia.
+  // CSP activa: bloquea recursos fuera de la app y Supabase.
+  // Si se agrega un servicio externo (analytics, fuentes, etc.), sumarlo aquí.
   {
-    key: "Content-Security-Policy-Report-Only",
+    key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline'",
