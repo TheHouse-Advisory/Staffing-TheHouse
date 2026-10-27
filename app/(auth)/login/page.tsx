@@ -71,14 +71,13 @@ function LoginForm() {
     if (!result.ok) {
       switch (result.kind) {
         case "credenciales_invalidas":
-          // Mensaje genérico para no filtrar si el correo existe o no.
-          setError("Email o contraseña incorrectos.");
+          // Mensaje único (incluye cuenta bloqueada) para no revelar qué correos existen.
+          setError(
+            "Email o contraseña incorrectos. Tras 10 intentos fallidos la cuenta se bloquea por 30 minutos."
+          );
           break;
-        case "recien_bloqueada":
-          setError(`Demasiados intentos fallidos. Tu cuenta quedó bloqueada por ${formatearDuracion(result.minutosRestantes)}.`);
-          break;
-        case "ya_bloqueada":
-          setError(`Demasiados intentos fallidos. Intenta de nuevo en ${formatearDuracion(result.minutosRestantes)}.`);
+        case "no_disponible":
+          setError("No se pudo iniciar sesión en este momento. Intenta de nuevo en unos minutos.");
           break;
         case "ip_bloqueada":
           // No se asocia a ninguna cuenta en particular: es un límite por conexión.
