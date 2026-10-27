@@ -433,6 +433,11 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     setToast(msg);
     setTimeout(() => setToast(null), 15000); // 15 s según spec de negocio
   };
+  // Error al guardar desde drag & drop: antes se perdía en silencio
+  const avisarErrorDrop = (accion: string, err: { message?: string } | null) => {
+    console.error(`[D&D] No se pudo ${accion}:`, err);
+    showToast(`No se pudo ${accion}. ${err?.message ?? ""}`.trim());
+  };
 
   // Modal de ausencias parciales (Inicio, modo real)
   type AusenciaItem = { fecha_inicio: string; fecha_fin: string; dias: number };
@@ -1167,16 +1172,17 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       // EngagementForm muestra fecha_inicio/fecha_fin del requerimiento, no de la asignación,
       // así que si no se actualiza queda descalzado (ej. Frente comercial con fin placeholder).
       if (reqMatch.fecha_inicio !== fechaInicio || reqMatch.fecha_fin !== fechaFin) {
-        await (sb as any).from("requerimiento_engagement")
+        const { error: updReqErr } = await (sb as any).from("requerimiento_engagement")
           .update({ fecha_inicio: fechaInicio, fecha_fin: fechaFin })
           .eq("id", reqId);
+        if (updReqErr) return avisarErrorDrop("actualizar el requerimiento", updReqErr);
       }
     } else {
       const { data: newReq, error: reqErr } = await (sb as any)
         .from("requerimiento_engagement")
         .insert({ engagement_id: eng.id, cargo_requerido: cargoRequerido, fase_nombre: null, pct_dedicacion: pctReq, fecha_inicio: fechaInicio, fecha_fin: fechaFin, descripcion: null })
         .select("id").single();
-      if (reqErr || !newReq) return;
+      if (reqErr || !newReq) return avisarErrorDrop("crear el requerimiento", reqErr);
       reqId = (newReq as any).id;
     }
 
@@ -1192,7 +1198,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
     const createdIds: string[] = [];
     if (!ausPersonaDrop || ausPersonaDrop.length === 0) {
-      const { data: ins } = await (sb as any).from("asignacion").insert({ ...baseInsert, fecha_inicio: fechaInicio, fecha_fin: fechaFin }).select("id");
+      const { data: ins, error: insErr } = await (sb as any).from("asignacion").insert({ ...baseInsert, fecha_inicio: fechaInicio, fecha_fin: fechaFin }).select("id");
+      if (insErr) avisarErrorDrop("crear la asignación", insErr);
       if (ins) createdIds.push(...(ins as any[]).map((r: any) => r.id));
     } else {
       const segments: { fecha_inicio: string; fecha_fin: string }[] = [];
@@ -1223,7 +1230,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         nombre: nombreCompleto, ausencias: ausItems,
         onConfirm: async () => {
           for (const seg of segments) {
-            const { data: ins } = await (sb as any).from("asignacion").insert({ ...baseInsert, ...seg }).select("id");
+            const { data: ins, error: insErr } = await (sb as any).from("asignacion").insert({ ...baseInsert, ...seg }).select("id");
+            if (insErr) avisarErrorDrop("crear la asignación", insErr);
             if (ins) createdIds.push(...(ins as any[]).map((r: any) => r.id));
           }
           if (createdIds.length) pushUndo({ type: "staffear", engId: eng.id, label: `Staffear ${nombreCompleto}`, ids: createdIds });
