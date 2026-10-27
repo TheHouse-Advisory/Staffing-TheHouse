@@ -83,19 +83,27 @@ export async function updateSession(request: NextRequest) {
     }
   }
 
+  // Redirige conservando las cookies escritas arriba (p. ej. el borrado de
+  // sesión tras signOut); un redirect nuevo las perdería.
+  const redirigir = (url: URL) => {
+    const res = NextResponse.redirect(url);
+    supabaseResponse.cookies.getAll().forEach((c) => res.cookies.set(c));
+    return res;
+  };
+
   if ((!user || sessionExpired) && !isPublicRoute) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("redirectTo", pathname);
     if (sessionExpired) loginUrl.searchParams.set("error", "sesion_expirada");
-    return NextResponse.redirect(loginUrl);
+    return redirigir(loginUrl);
   }
 
   if (user && !sessionExpired && pathname === "/login") {
     const tableroUrl = request.nextUrl.clone();
     tableroUrl.pathname = "/tablero";
     tableroUrl.searchParams.delete("redirectTo");
-    return NextResponse.redirect(tableroUrl);
+    return redirigir(tableroUrl);
   }
 
   return supabaseResponse;
