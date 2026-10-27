@@ -62,7 +62,8 @@ export function CommandPalette({ rol }: { rol?: string | null }) {
       setResultados([]);
       return;
     }
-    const t = query.trim();
+    // Quita caracteres con significado en filtros de Supabase: , ( ) * % \ :
+    const t = query.trim().replace(/[,()*%\\:]/g, " ");
     setLoading(true);
     const timeout = setTimeout(async () => {
       const sb = createAnyClient();
