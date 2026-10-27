@@ -23,7 +23,8 @@ import type { EmailOtpType } from "@supabase/supabase-js";
 
 /** Solo permite rutas internas — evita open redirects vía `?next=`. */
 function rutaInterna(next: string | null): string {
-  if (next && next.startsWith("/") && !next.startsWith("//")) {
+  // Rechaza "//", "/\" y caracteres de control (los navegadores convierten \ en /)
+  if (next && /^\/(?![\/\\])/.test(next) && !/[\\\u0000-\u001f]/.test(next)) {
     return next;
   }
   // "/" deja que app/page.tsx decida el destino según el rol.
@@ -40,10 +41,8 @@ export async function GET(request: NextRequest) {
   const errorParam = searchParams.get("error");
   const errorCode = searchParams.get("error_code");
 
-  // Respeta el host real cuando hay un proxy delante (producción).
-  const forwardedHost = request.headers.get("x-forwarded-host");
-  const isLocalEnv = process.env.NODE_ENV === "development";
-  const base = !isLocalEnv && forwardedHost ? `https://${forwardedHost}` : origin;
+  // origin ya refleja el host real en Vercel; no se confía en headers del cliente
+  const base = origin;
   const redirectTo = (path: string) => NextResponse.redirect(`${base}${path}`);
 
   // El enlace llegó con un error (expirado, ya consumido, etc.).

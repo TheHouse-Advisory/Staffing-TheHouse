@@ -64,7 +64,14 @@ function mensajeErrorCorreo(
       "(Authentication → Emails)."
     );
   }
-  return err?.message ?? fallback;
+  if (err) console.error("[accesos] error de correo:", err.message);
+  return fallback;
+}
+
+/** Registra el detalle en el servidor y devuelve un mensaje sin datos internos. */
+function errorInterno(contexto: string, err: { message?: string } | string): string {
+  console.error(`[accesos] ${contexto}:`, typeof err === "string" ? err : err.message);
+  return "Ocurrió un error al guardar el cambio. Inténtalo de nuevo.";
 }
 
 /**
@@ -131,6 +138,22 @@ async function enviarCorreoInvitacion(
 }
 
 /**
+ * Bloquea o desbloquea la cuenta de Supabase Auth. Bloqueada no puede
+ * iniciar sesión ni renovar su sesión, aunque llame a Supabase directo.
+ */
+async function bloquearCuentaAuth(
+  service: ServiceClient,
+  authUserId: string | null,
+  bloquear: boolean
+): Promise<string | null> {
+  if (!authUserId) return null;
+  const { error } = await service.auth.admin.updateUserById(authUserId, {
+    ban_duration: bloquear ? "876000h" : "none", // ~100 años = indefinido
+  });
+  return error ? error.message : null;
+}
+
+/**
  * Otorga acceso al sistema a una persona existente: le asigna un rol,
  * marca la invitación como pendiente y envía el correo de invitación.
  */
@@ -176,7 +199,14 @@ export async function otorgarAcceso({
     .eq("id", persona.id);
 
   if (updErr) {
-    return { ok: false, message: updErr.message };
+    return { ok: false, message: errorInterno("otorgar acceso", updErr) };
+  }
+
+  // Si tuvo acceso antes y se le quitó, su cuenta quedó bloqueada
+  const errBan = await bloquearCuentaAuth(service, persona.auth_user_id, false);
+  if (errBan) {
+    errorInterno("desbloquear cuenta", errBan);
+    return { ok: false, message: "No se pudo desbloquear la cuenta. Inténtalo de nuevo." };
   }
 
   return enviarCorreoInvitacion(service, persona, origin);
@@ -267,7 +297,7 @@ export async function cambiarRol({
     .eq("id", personaId);
 
   if (error) {
-    return { ok: false, message: error.message };
+    return { ok: false, message: errorInterno("actualizar persona", error) };
   }
 
   revalidatePath("/", "layout"); // refresca el layout para que el Sidebar refleje el nuevo rol
@@ -290,7 +320,7 @@ export async function suspenderAcceso({
 
   const { data: actual } = await service
     .from("persona")
-    .select("rol_sistema")
+    .select("rol_sistema, auth_user_id")
     .eq("id", personaId)
     .single();
 
@@ -304,7 +334,14 @@ export async function suspenderAcceso({
     .eq("id", personaId);
 
   if (error) {
-    return { ok: false, message: error.message };
+    return { ok: false, message: errorInterno("actualizar persona", error) };
+  }
+
+  // Corta también el acceso directo a Supabase (login y renovación de sesión)
+  const errBan = await bloquearCuentaAuth(service, actual.auth_user_id, true);
+  if (errBan) {
+    errorInterno("bloquear cuenta", errBan);
+    return { ok: false, message: "Acceso suspendido, pero no se pudo bloquear la cuenta. Inténtalo de nuevo." };
   }
 
   return { ok: true, message: "Acceso suspendido." };
@@ -322,12 +359,18 @@ export async function reactivarAcceso({
 
   const { data: actual } = await service
     .from("persona")
-    .select("rol_sistema")
+    .select("rol_sistema, auth_user_id")
     .eq("id", personaId)
     .single();
 
   if (!actual?.rol_sistema) {
     return { ok: false, message: "La persona no tiene un acceso asignado." };
+  }
+
+  const errBan = await bloquearCuentaAuth(service, actual.auth_user_id, false);
+  if (errBan) {
+    errorInterno("desbloquear cuenta", errBan);
+    return { ok: false, message: "No se pudo desbloquear la cuenta. Inténtalo de nuevo." };
   }
 
   const { error } = await service
@@ -336,7 +379,7 @@ export async function reactivarAcceso({
     .eq("id", personaId);
 
   if (error) {
-    return { ok: false, message: error.message };
+    return { ok: false, message: errorInterno("actualizar persona", error) };
   }
 
   return { ok: true, message: "Acceso reactivado." };
@@ -359,13 +402,22 @@ export async function revocarAcceso({
 
   const service: ServiceClient = createServiceClient();
 
-  const { error } = await service
+  const { data: actual, error } = await service
     .from("persona")
     .update({ rol_sistema: null, acceso_estado: null })
-    .eq("id", personaId);
+    .eq("id", personaId)
+    .select("auth_user_id")
+    .single();
 
   if (error) {
-    return { ok: false, message: error.message };
+    return { ok: false, message: errorInterno("actualizar persona", error) };
+  }
+
+  // Corta también el acceso directo a Supabase; otorgarAcceso lo desbloquea
+  const errBan = await bloquearCuentaAuth(service, actual?.auth_user_id ?? null, true);
+  if (errBan) {
+    errorInterno("bloquear cuenta", errBan);
+    return { ok: false, message: "Acceso eliminado, pero no se pudo bloquear la cuenta. Inténtalo de nuevo." };
   }
 
   return { ok: true, message: "Acceso eliminado." };

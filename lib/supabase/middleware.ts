@@ -50,13 +50,17 @@ export async function updateSession(request: NextRequest) {
   // enlace y muestra "Enlace inválido" si no la hay. Sin esto, el middleware
   // redirige a /login antes de que la persona vea ese mensaje.
   const publicRoutes = ["/login", "/auth/callback", "/auth/set-password"];
-  const isPublicRoute = publicRoutes.some((r) => pathname.startsWith(r));
+  // Coincidencia exacta o por subruta (evita que "/login-x" pase como pública)
+  const isPublicRoute = publicRoutes.some(
+    (r) => pathname === r || pathname.startsWith(`${r}/`)
+  );
 
   // ── Expiración forzada por uso prolongado / inactividad (7h) ─────────────
   let sessionExpired = false;
   if (user) {
     const now = Date.now();
-    const started = Number(request.cookies.get(COOKIE_STARTED)?.value);
+    // Inicio real de sesión según Supabase: el cliente no puede reiniciarlo
+    const started = user.last_sign_in_at ? Date.parse(user.last_sign_in_at) : 0;
     const lastActivity = Number(request.cookies.get(COOKIE_ACTIVITY)?.value);
 
     if (
@@ -75,24 +79,31 @@ export async function updateSession(request: NextRequest) {
         secure: process.env.NODE_ENV === "production",
         sameSite: "lax" as const,
       };
-      if (!started) supabaseResponse.cookies.set(COOKIE_STARTED, String(now), cookieOpts);
       supabaseResponse.cookies.set(COOKIE_ACTIVITY, String(now), cookieOpts);
     }
   }
+
+  // Redirige conservando las cookies escritas arriba (p. ej. el borrado de
+  // sesión tras signOut); un redirect nuevo las perdería.
+  const redirigir = (url: URL) => {
+    const res = NextResponse.redirect(url);
+    supabaseResponse.cookies.getAll().forEach((c) => res.cookies.set(c));
+    return res;
+  };
 
   if ((!user || sessionExpired) && !isPublicRoute) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     loginUrl.searchParams.set("redirectTo", pathname);
     if (sessionExpired) loginUrl.searchParams.set("error", "sesion_expirada");
-    return NextResponse.redirect(loginUrl);
+    return redirigir(loginUrl);
   }
 
   if (user && !sessionExpired && pathname === "/login") {
     const tableroUrl = request.nextUrl.clone();
     tableroUrl.pathname = "/tablero";
     tableroUrl.searchParams.delete("redirectTo");
-    return NextResponse.redirect(tableroUrl);
+    return redirigir(tableroUrl);
   }
 
   return supabaseResponse;

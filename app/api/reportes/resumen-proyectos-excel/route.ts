@@ -25,7 +25,8 @@ export async function POST() {
       },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error desconocido";
-    return NextResponse.json({ error: message }, { status: 500 });
+    // Detalle solo en el log del servidor; al navegador, mensaje genérico
+    console.error("[reportes] resumen proyectos:", err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: "No se pudo generar el archivo." }, { status: 500 });
   }
 }

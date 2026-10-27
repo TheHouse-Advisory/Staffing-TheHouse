@@ -31,6 +31,8 @@ const HEADERS = [
 
 /** Escapa un campo para CSV plano delimitado por comas (RFC 4180). */
 function csvField(valor: string): string {
+  // Evita que Excel interprete el texto como fórmula (= + - @ tab CR al inicio)
+  if (/^[=+\-@\t\r]/.test(valor)) valor = `'${valor}`;
   if (/[",\n\r]/.test(valor)) {
     return `"${valor.replace(/"/g, '""')}"`;
   }

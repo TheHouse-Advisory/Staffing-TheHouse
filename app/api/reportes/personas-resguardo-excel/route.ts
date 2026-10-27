@@ -8,11 +8,12 @@ import { createServiceClient } from "@/lib/supabase/server";
 import { getPersonasResguardoInfo } from "@/lib/queries/personas";
 import { getAnotaciones, getAnotacionFolders } from "@/lib/queries/anotaciones";
 import { buildExcelPersonasResguardo } from "@/lib/utils/excel-resguardo-personas";
+import { esAdmin } from "@/lib/roles";
 
 export async function POST() {
-  // Datos de personas: exclusivo rol "personas" (usa service client, sin RLS)
+  // Datos de personas: solo roles admin y "personas" (usa service client, sin RLS)
   const authUser = await requireAuth();
-  if (authUser.rol !== "personas") {
+  if (!esAdmin(authUser.rol)) {
     return NextResponse.json({ error: "Sin permisos" }, { status: 403 });
   }
 
@@ -32,7 +33,8 @@ export async function POST() {
       },
     });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Error desconocido";
-    return NextResponse.json({ error: message }, { status: 500 });
+    // Detalle solo en el log del servidor; al navegador, mensaje genérico
+    console.error("[reportes] info personas:", err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: "No se pudo generar el archivo." }, { status: 500 });
   }
 }
