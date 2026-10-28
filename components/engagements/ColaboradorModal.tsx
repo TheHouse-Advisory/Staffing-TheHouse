@@ -217,10 +217,8 @@ export function ColaboradorModal({
     // ─────────────────────────────────────────────────────────────────────────────
 
     const sb = createAnyClient();
-    const delQ = (sb as any).from("asignacion").delete()
-      .eq("persona_id", personaId).eq("engagement_id", engagementId);
-    await (requerimientoId ? delQ.eq("requerimiento_id", requerimientoId) : delQ);
-    await (sb as any).from("asignacion").insert(
+    // 1) Insertar primero: si falla, las asignaciones previas quedan intactas
+    const { data: nuevas, error: insErr } = await (sb as any).from("asignacion").insert(
       rangos.map(r => ({
         engagement_id:    engagementId,
         requerimiento_id: requerimientoId,
@@ -232,7 +230,26 @@ export function ColaboradorModal({
         fecha_inicio:     r.inicio,
         fecha_fin:        r.fin,
       }))
-    );
+    ).select("id");
+    if (insErr) {
+      setError(`No se pudo guardar la asignación: ${insErr.message}`);
+      setSaving(false);
+      return;
+    }
+
+    // 2) Recién ahora reemplazar: borrar las anteriores, excluyendo las recién creadas
+    const nuevasIds = ((nuevas ?? []) as { id: string }[]).map(n => n.id);
+    let delQ = (sb as any).from("asignacion").delete()
+      .eq("persona_id", personaId).eq("engagement_id", engagementId);
+    if (requerimientoId) delQ = delQ.eq("requerimiento_id", requerimientoId);
+    if (nuevasIds.length > 0) delQ = delQ.not("id", "in", `(${nuevasIds.join(",")})`);
+    const { error: delErr } = await delQ;
+    if (delErr) {
+      setError(`Asignación guardada, pero no se pudieron limpiar los períodos anteriores: ${delErr.message}`);
+      setSaving(false);
+      return;
+    }
+
     setSaving(false);
     onGuardado();
   }
