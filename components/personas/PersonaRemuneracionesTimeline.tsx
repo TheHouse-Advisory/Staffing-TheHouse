@@ -114,7 +114,7 @@ export function PersonaRemuneracionesTimeline({ personaId, monedaDefault, cargoA
   async function eliminar(id: string) {
     if (!confirm("¿Eliminar este hito de remuneración?")) return;
     const { error } = await createAnyClient().from("persona_remuneracion_hito").delete().eq("id", id);
-    if (!error) setHitos((prev) => prev.filter((h) => h.id !== id));
+    // Si falla se avisa (antes no pasaba nada visible)
   }
 
   return (

@@ -76,13 +76,13 @@ export function DisponiblesTablero({ personas, asignaciones, ausencias = [], exp
         continue;
       }
 
-      // Liberación pronta: alguna asignación termina en ≤7 días
-      const terminaProx = asigs
-        .filter((a) => a.fecha_fin >= hoyStr && a.fecha_fin <= en7diasStr)
-        .sort((a, b) => a.fecha_fin.localeCompare(b.fecha_fin))[0];
+      // Liberación pronta: TODAS sus asignaciones vigentes terminan en ≤7 días. Antes bastaba
+      // con que terminara una, y aparecía como disponible quien seguía al 100% en otro proyecto.
+      const vigentes = asigs.filter((a) => a.fecha_fin >= hoyStr);
+      const ultimaEnTerminar = [...vigentes].sort((a, b) => b.fecha_fin.localeCompare(a.fecha_fin))[0];
 
-      if (terminaProx) {
-        const dias = Math.max(0, differenceInCalendarDays(parseISO(terminaProx.fecha_fin), hoy));
+      if (ultimaEnTerminar && ultimaEnTerminar.fecha_fin <= en7diasStr) {
+        const dias = Math.max(0, differenceInCalendarDays(parseISO(ultimaEnTerminar.fecha_fin), hoy));
         result.push({ persona: p, estado: "pronto", dias });
         continue;
       }

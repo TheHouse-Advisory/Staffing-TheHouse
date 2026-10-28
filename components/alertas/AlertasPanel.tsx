@@ -40,12 +40,12 @@ interface AlertaEPP {
 }
 
 /** Recordatorio de enviar planes de acción — engagements que pasaron (o nacieron) a tipo "proyecto"
- *  recientemente (created_at o updated_at dentro de la ventana). Color ámbar, distinto del morado EDD/EPP. */
+ *  recientemente (escalado_a_proyecto_en dentro de la ventana). Color ámbar, distinto del morado EDD/EPP. */
 interface AlertaPlanAccion {
   engagement_id: string;
   engagement_nombre: string;
   cliente: string;
-  fecha: string; // created_at o updated_at, lo más reciente
+  fecha: string; // fecha en que pasó a ser "proyecto" (escalado_a_proyecto_en)
   personas: { id: string; nombre: string; apellido: string; cargo_actual: string | null }[];
 }
 
@@ -70,25 +70,31 @@ interface AlertaChecked {
   fechaCheck: string;
 }
 
-const LS_KEY = "staffinghub_alertas_checked";
-const HISTORIAL_DIAS = 30; // el registro del chequeo se borra del navegador pasado este plazo
+// Las alertas revisadas se guardan en la tabla compartida alerta_revisada (antes en el
+// navegador de cada persona: el resto del equipo no las veía y se perdían al cambiar de equipo).
+const LS_KEY = "staffinghub_alertas_checked"; // solo para traspasar las marcas antiguas del navegador
+const HISTORIAL_DIAS = 30; // el historial visible muestra los últimos 30 días
 const OCULTAR_CHECK_DIAS = 7; // alertas chequeadas hace más de 7 días corridos se ocultan del panel
 
-function leerChecks(): AlertaChecked[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const todos: AlertaChecked[] = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]");
-    const limite = Date.now() - HISTORIAL_DIAS * 24 * 60 * 60 * 1000;
-    const vigentes = todos.filter((c) => new Date(c.fechaCheck).getTime() >= limite);
-    if (vigentes.length !== todos.length) guardarChecks(vigentes); // purga silenciosa de las vencidas
-    return vigentes;
-  } catch {
-    return [];
-  }
-}
+type FilaRevisada = { alerta_id: string; tipo: string; descripcion: string; revisada_en: string };
+const aCheck = (r: FilaRevisada): AlertaChecked =>
+  ({ alertaId: r.alerta_id, tipo: r.tipo, descripcion: r.descripcion, fechaCheck: r.revisada_en });
 
-function guardarChecks(checks: AlertaChecked[]) {
-  localStorage.setItem(LS_KEY, JSON.stringify(checks));
+/** Carga las revisadas desde la base y traspasa (una vez) las que estaban en el navegador. */
+async function cargarRevisadas(): Promise<{ checks: AlertaChecked[]; error: string | null }> {
+  const sb = createAnyClient();
+  let locales: AlertaChecked[] = [];
+  try { locales = JSON.parse(localStorage.getItem(LS_KEY) ?? "[]"); } catch { /* sin marcas antiguas */ }
+  if (locales.length > 0) {
+    const { error: upErr } = await (sb as any).from("alerta_revisada").upsert(
+      locales.map((c) => ({ alerta_id: c.alertaId, tipo: c.tipo, descripcion: c.descripcion, revisada_en: c.fechaCheck })),
+      { onConflict: "alerta_id", ignoreDuplicates: true }
+    );
+    if (!upErr) { try { localStorage.removeItem(LS_KEY); } catch { /* sin acceso al navegador */ } }
+  }
+  const { data, error } = await (sb as any).from("alerta_revisada").select("alerta_id, tipo, descripcion, revisada_en");
+  if (error) return { checks: [], error: error.message };
+  return { checks: ((data ?? []) as FilaRevisada[]).map(aCheck), error: null };
 }
 
 // ── Helpers de fecha ─────────────────────────────────────────────
@@ -445,11 +451,17 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
   const [propuesta20AlertasAnterioresRaw, setPropuesta20AlertasAnteriores] = useState<AlertaPropuesta20Dias[]>([]);
   const [propuesta20HistAbierto, setPropuesta20HistAbierto] = useState(false); // colapsado por defecto
   const [loading, setLoading] = useState(true);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [checks, setChecks] = useState<AlertaChecked[]>([]);
   const [historialAbierto, setHistorialAbierto] = useState(false);
   const [planAccionAbierto, setPlanAccionAbierto] = useState(false); // colapsado por defecto
 
-  useEffect(() => { setChecks(leerChecks()); }, []);
+  useEffect(() => {
+    cargarRevisadas().then(({ checks: c, error }) => {
+      setChecks(c);
+      if (error) setErrorCarga(`No se pudieron cargar las alertas revisadas: ${error}`);
+    });
+  }, []);
 
   // Marca "vista hoy" para ESTE usuario → el badge rojo de Alertas en el sidebar
   // deja de mostrarse solo para él; otros usuarios que no hayan entrado lo siguen viendo.
@@ -482,6 +494,7 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
         sb.from("engagement")
           .select("id, nombre, cliente, fecha_fin_estimada, fecha_fin_real, estado, tipo")
           .neq("tipo", "posibles_proyectos")
+          .eq("is_deleted", false) // sin proyectos en la papelera
           .or(
             // por terminar: activo, fin estimado entre hoy y hoy+7
             `and(estado.eq.activo,fecha_fin_estimada.gte.${hoyStr},fecha_fin_estimada.lte.${en7Str}),` +
@@ -494,22 +507,27 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
           .eq("estado", "activa"),
 
         // Engagements de tipo "proyecto" creados o escalados (tipo cambiado) en los últimos 7 días
-        // → recordatorio de enviar planes de acción. No hay columna dedicada de "fecha de escalado",
-        // así que se aproxima con created_at/updated_at (igual criterio que "Última actualización" del Tablero).
+        // → recordatorio de enviar planes de acción. Usa escalado_a_proyecto_en (la llena un trigger
+        // en la base); antes se aproximaba con updated_at y saltaba con cualquier edición.
         sb.from("engagement")
-          .select("id, nombre, cliente, tipo, estado, created_at, updated_at")
+          .select("id, nombre, cliente, tipo, estado, created_at, updated_at, escalado_a_proyecto_en")
           .eq("tipo", "proyecto")
           .eq("estado", "activo")
           .eq("is_deleted", false)
-          .or(`created_at.gte.${hace7Str},updated_at.gte.${hace7Str}`),
+          .gte("escalado_a_proyecto_en", hace7Str),
 
         // Engagements tipo "propuesta" (Propuesta comercial) activos → base para la
         // alerta de 20 días hábiles acumulados por persona asignada.
         sb.from("engagement")
           .select("id, nombre, cliente, tipo, estado")
           .eq("tipo", "propuesta")
-          .eq("estado", "activo"),
+          .eq("estado", "activo")
+          .eq("is_deleted", false), // sin propuestas en la papelera
       ]);
+
+      // Antes un error mostraba "sin alertas" como si todo estuviera bien
+      const errCarga = [personasRes, engRes, asigRes, engProyectoRecienteRes, engPropuestaRes].find((r: any) => r.error)?.error;
+      if (errCarga) setErrorCarga(`No se pudieron cargar todas las alertas: ${errCarga.message}`);
 
       const personas = (personasRes.data ?? []) as {
         id: string; nombre: string; apellido: string;
@@ -609,7 +627,7 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
       // ── Planes de acción (engagements recién creados/escalados a "proyecto") ──
       const planAccionArr: AlertaPlanAccion[] = [];
       for (const eng of (engProyectoRecienteRes.data ?? []) as any[]) {
-        const fecha: string = eng.updated_at && eng.updated_at > eng.created_at ? eng.updated_at : eng.created_at;
+        const fecha: string = eng.escalado_a_proyecto_en ?? eng.created_at;
         const personaIds = [...new Set(asigPorEng.get(eng.id) ?? [])];
         const personasEng = personaIds
           .map((pid) => personaMap.get(pid))
@@ -704,7 +722,8 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
       setPropuesta20AlertasAnteriores(propuesta20ArrAnteriores);
       setLoading(false);
     }
-    load();
+    // Si algo inesperado falla, no queda cargando para siempre: se muestra el error
+    load().catch((e) => { setErrorCarga(`No se pudieron cargar las alertas: ${e?.message ?? e}`); setLoading(false); });
   }, []);
 
   function toggleAniversario(p: PersonaAniversario, esHoy: boolean) {
@@ -738,22 +757,26 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
     toggleCheck(id, "propuesta20", desc);
   }
 
-  function toggleCheck(id: string, tipo: string, descripcion: string) {
-    const yaChecked = checks.some((c) => c.alertaId === id);
-    let nuevos: AlertaChecked[];
-    if (yaChecked) {
-      nuevos = checks.filter((c) => c.alertaId !== id);
+  // Marca o desmarca en la base compartida; la pantalla cambia solo si se guardó
+  async function toggleCheck(id: string, tipo: string, descripcion: string) {
+    const sb = createAnyClient();
+    if (checks.some((c) => c.alertaId === id)) {
+      const { error } = await (sb as any).from("alerta_revisada").delete().eq("alerta_id", id);
+      if (error) { setErrorCarga(`No se pudo desmarcar: ${error.message}`); return; }
+      setChecks((prev) => prev.filter((c) => c.alertaId !== id));
     } else {
-      nuevos = [...checks, { alertaId: id, tipo, descripcion, fechaCheck: new Date().toISOString() }];
+      const { data, error } = await (sb as any).from("alerta_revisada")
+        .insert({ alerta_id: id, tipo, descripcion })
+        .select("alerta_id, tipo, descripcion, revisada_en").single();
+      if (error || !data) { setErrorCarga(`No se pudo marcar como revisada: ${error?.message ?? ""}`); return; }
+      setChecks((prev) => [...prev, aCheck(data as FilaRevisada)]);
     }
-    setChecks(nuevos);
-    guardarChecks(nuevos);
   }
 
-  function eliminarDelHistorial(id: string) {
-    const nuevos = checks.filter((c) => c.alertaId !== id);
-    setChecks(nuevos);
-    guardarChecks(nuevos);
+  async function eliminarDelHistorial(id: string) {
+    const { error } = await (createAnyClient() as any).from("alerta_revisada").delete().eq("alerta_id", id);
+    if (error) { setErrorCarga(`No se pudo quitar del historial: ${error.message}`); return; }
+    setChecks((prev) => prev.filter((c) => c.alertaId !== id));
   }
 
   const idAniv = (p: PersonaAniversario) => alertaId("aniversario", p.id, p.años);
@@ -767,6 +790,10 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
   const limiteOculto = Date.now() - OCULTAR_CHECK_DIAS * 24 * 60 * 60 * 1000;
   const visible = <T,>(idFn: (x: T) => string) => (x: T) =>
     !checks.some((c) => c.alertaId === idFn(x) && new Date(c.fechaCheck).getTime() < limiteOculto);
+
+  // El historial muestra solo los últimos HISTORIAL_DIAS (la base guarda todo, para que no reaparezcan)
+  const limiteHistorial = Date.now() - HISTORIAL_DIAS * 24 * 60 * 60 * 1000;
+  const historialReciente = checks.filter((c) => new Date(c.fechaCheck).getTime() >= limiteHistorial);
 
   const isCheckedAniv = (p: PersonaAniversario) => esChecked(idAniv(p));
   const isCheckedCumple = (p: PersonaCumpleanos) => esChecked(idCumple(p));
@@ -804,6 +831,9 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
 
   return (
     <div className="space-y-8">
+      {errorCarga && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">{errorCarga}</p>
+      )}
 
       {/* ══ EDD y EPP ════════════════════════════════════════════ */}
       <div className="space-y-5">
@@ -1031,7 +1061,7 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
       )}
 
       {/* ── Historial ────────────────────────────────────────────── */}
-      {checks.length > 0 && (
+      {historialReciente.length > 0 && (
         <section className="border-t border-gray-100 pt-4">
           <button onClick={() => setHistorialAbierto((v) => !v)}
             className="flex items-center gap-2 w-full text-left group">
@@ -1039,7 +1069,7 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
             <h2 className="text-sm font-bold text-gray-500 uppercase tracking-wide flex-1">
               Historial gestionadas
               <span className="ml-2 text-xs font-semibold text-white bg-[#27ae60] rounded-full px-2 py-0.5 normal-case tracking-normal">
-                {checks.length}
+                {historialReciente.length}
               </span>
             </h2>
             {historialAbierto ? <ChevronUp className="w-4 h-4 text-gray-400" /> : <ChevronDown className="w-4 h-4 text-gray-400" />}
@@ -1047,7 +1077,7 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
 
           {historialAbierto && (
             <div className="mt-3 space-y-2">
-              {[...checks].sort((a, b) => b.fechaCheck.localeCompare(a.fechaCheck)).map((c) => (
+              {[...historialReciente].sort((a, b) => b.fechaCheck.localeCompare(a.fechaCheck)).map((c) => (
                 <div key={c.alertaId}
                   className="flex items-center gap-3 px-4 py-3 rounded-xl bg-gray-50 border border-gray-100">
                   <CheckCircle2 className="w-4 h-4 text-[#27ae60] flex-shrink-0" />

@@ -23,7 +23,8 @@ function TableroContent() {
   const openEngagementId = searchParams.get("openEngagementId") ?? undefined;
   const [vistaPrincipal, setVistaPrincipal] = useState<VistaPrincipal>("proyectos");
   const [rol, setRol] = useState<RolSistema | null>(null);
-  const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD" || rol === "AySr";
+  // Rol aún sin cargar (null) = solo lectura, para no mostrar botones de edición por un instante
+  const isReadOnly = rol === null || rol === "proposer" || rol === "Desarrollo" || rol === "planificador" || rol === "GyD" || rol === "AySr";
 
   useEffect(() => {
     (async () => {
@@ -130,9 +131,9 @@ function TableroContent() {
                 baseExterna={base}
                 openEngagementId={openEngagementId}
                 externalReloadKey={tableroReloadKey}
-                onOpenPanel={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo" ? undefined : abrirPanel}
+                onOpenPanel={isReadOnly ? undefined : abrirPanel}
                 readOnly={isReadOnly}
-                ocultarPctEquipo={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
+                ocultarPctEquipo={rol === null || rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
                 ocultarPorConfirmar={rol === "AySr"}
                 isAdmin={esAdmin(rol)}
               />

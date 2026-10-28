@@ -388,18 +388,11 @@ export async function quitarAsignacionSemana(
   },
   semana: { inicio: string; fin: string }
 ): Promise<{ error: string | null }> {
-  const partesRestantes: { inicio: string; fin: string | null }[] = [];
+  const partesRestantes = partesFueraDeSemana(asignacion.fechaInicio, asignacion.fechaFin, semana);
 
-  if (asignacion.fechaInicio < semana.inicio) {
-    partesRestantes.push({ inicio: asignacion.fechaInicio, fin: diaAntes(semana.inicio) });
-  }
-  if (asignacion.fechaFin === null || asignacion.fechaFin > semana.fin) {
-    partesRestantes.push({ inicio: diaDespues(semana.fin), fin: asignacion.fechaFin });
-  }
-
-  const { error: delError } = await sb.from("asignacion").delete().eq("id", asignacion.id);
-  if (delError) return { error: delError.message };
-
+  // Primero se crean las partes que se conservan y después se borra la original:
+  // si algo falla, la persona no pierde el resto de sus semanas
+  let nuevasIds: string[] = [];
   if (partesRestantes.length > 0) {
     const inserts = partesRestantes.map((p) => ({
       engagement_id: asignacion.engagementId,
@@ -412,11 +405,30 @@ export async function quitarAsignacionSemana(
       fecha_inicio: p.inicio,
       fecha_fin: p.fin,
     }));
-    const { error: insError } = await sb.from("asignacion").insert(inserts);
+    const { data, error: insError } = await sb.from("asignacion").insert(inserts).select("id");
     if (insError) return { error: insError.message };
+    nuevasIds = ((data ?? []) as { id: string }[]).map((r) => r.id);
+  }
+
+  const { error: delError } = await sb.from("asignacion").delete().eq("id", asignacion.id);
+  if (delError) {
+    if (nuevasIds.length > 0) await sb.from("asignacion").delete().in("id", nuevasIds);
+    return { error: delError.message };
   }
 
   return { error: null };
+}
+
+/** Tramos de [inicio, fin] que quedan fuera de la semana indicada (antes y/o después). */
+function partesFueraDeSemana(
+  inicio: string,
+  fin: string | null,
+  semana: { inicio: string; fin: string }
+): { inicio: string; fin: string | null }[] {
+  const partes: { inicio: string; fin: string | null }[] = [];
+  if (inicio < semana.inicio) partes.push({ inicio, fin: diaAntes(semana.inicio) });
+  if (fin === null || fin > semana.fin) partes.push({ inicio: diaDespues(semana.fin), fin });
+  return partes;
 }
 
 export interface AsignacionActual {
@@ -449,54 +461,72 @@ export async function actualizarAsignacionSemana(
   }
 ): Promise<{ error: string | null }> {
   const { engagementId, requerimientoId, cargo, pctDedicacion, semana, actuales, deseados, actorNombre } = params;
-  let huboCambios = false;
 
-  for (const actual of actuales) {
-    const sigueIgual = deseados.some(
-      (d) => d.personaId === actual.personaId && d.estado === actual.estadoStaffing
-    );
-    if (sigueIgual) continue;
+  // Todos los cambios de la celda se aplican juntos: primero se inserta todo lo nuevo en un
+  // solo paso y recién después se borra lo antiguo. Si el insert falla no cambia nada; si el
+  // borrado falla se deshace el insert. Antes cada paso iba por separado y la celda podía
+  // quedar a medio cambiar, o perder las demás semanas de una persona.
+  const aQuitar = actuales.filter(
+    (a) => !deseados.some((d) => d.personaId === a.personaId && d.estado === a.estadoStaffing)
+  );
+  const aAgregar = deseados.filter(
+    (d) => !actuales.some((a) => a.personaId === d.personaId && a.estadoStaffing === d.estado)
+  );
+  if (aQuitar.length === 0 && aAgregar.length === 0) return { error: null };
 
-    const { error } = await quitarAsignacionSemana(
-      sb,
-      {
-        id: actual.id,
-        engagementId,
-        requerimientoId,
-        personaId: actual.personaId,
-        cargo,
-        pctDedicacion,
-        estadoStaffing: actual.estadoStaffing,
-        fechaInicio: actual.fechaInicio,
-        fechaFin: actual.fechaFin,
-      },
-      semana
-    );
-    if (error) return { error };
-    huboCambios = true;
+  // Las semanas que se conservan de cada asignación recortada mantienen SUS datos (cargo, %,
+  // requerimiento, extensión), no los de la línea del reporte (antes podía quedar al 100% y sin cargo)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let originales: any[] = [];
+  if (aQuitar.length > 0) {
+    const { data, error } = await sb.from("asignacion")
+      .select("id, engagement_id, requerimiento_id, persona_id, cargo_al_momento, pct_dedicacion, estado_staffing, fecha_inicio, fecha_fin, extension_id")
+      .in("id", aQuitar.map((a) => a.id));
+    if (error) return { error: error.message };
+    originales = data ?? [];
   }
 
-  for (const deseado of deseados) {
-    const yaEstaba = actuales.some(
-      (a) => a.personaId === deseado.personaId && a.estadoStaffing === deseado.estado
-    );
-    if (yaEstaba) continue;
+  const inserts = [
+    ...originales.flatMap((o) => partesFueraDeSemana(o.fecha_inicio, o.fecha_fin, semana).map((p) => ({
+      engagement_id: o.engagement_id,
+      requerimiento_id: o.requerimiento_id,
+      persona_id: o.persona_id,
+      cargo_al_momento: o.cargo_al_momento,
+      pct_dedicacion: o.pct_dedicacion,
+      estado: "activa",
+      estado_staffing: o.estado_staffing,
+      extension_id: o.extension_id ?? null,
+      fecha_inicio: p.inicio,
+      fecha_fin: p.fin,
+    }))),
+    ...aAgregar.map((d) => ({
+      engagement_id: engagementId,
+      requerimiento_id: requerimientoId,
+      persona_id: d.personaId,
+      cargo_al_momento: cargo,
+      pct_dedicacion: pctDedicacion,
+      estado: "activa",
+      estado_staffing: d.estado,
+      fecha_inicio: semana.inicio,
+      fecha_fin: semana.fin,
+    })),
+  ];
 
-    const { error } = await agregarAsignacionSemana(sb, {
-      engagementId,
-      requerimientoId,
-      personaId: deseado.personaId,
-      cargo,
-      pctDedicacion,
-      estadoStaffing: deseado.estado,
-      semanaInicio: semana.inicio,
-      semanaFin: semana.fin,
-    });
-    if (error) return { error };
-    huboCambios = true;
+  let insertadosIds: string[] = [];
+  if (inserts.length > 0) {
+    const { data, error } = await sb.from("asignacion").insert(inserts).select("id");
+    if (error) return { error: error.message };
+    insertadosIds = ((data ?? []) as { id: string }[]).map((r) => r.id);
+  }
+  if (originales.length > 0) {
+    const { error } = await sb.from("asignacion").delete().in("id", originales.map((o) => o.id));
+    if (error) {
+      if (insertadosIds.length > 0) await sb.from("asignacion").delete().in("id", insertadosIds);
+      return { error: error.message };
+    }
   }
 
-  if (huboCambios && actorNombre) {
+  if (actorNombre) {
     await sb.from("resumen_proyectos_log").insert({
       actor_nombre: actorNombre,
       engagement_id: engagementId,

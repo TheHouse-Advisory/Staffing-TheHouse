@@ -221,11 +221,14 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
       .lte("fecha_inicio", finAnio)
       .gte("fecha_fin", inicioAnio),
   ]);
+  // Antes se ignoraban: las semanas sin datos quedaban como "1" sin aviso
+  if (persRes.error) throw new Error(`Error leyendo personas: ${persRes.error.message}`);
+  if (ausRes.error) throw new Error(`Error leyendo ausencias: ${ausRes.error.message}`);
 
   // Historial de cargos vigente durante el año: si una persona tiene 2+ periodos
   // que se solapan con el año evaluado (ascenso), se generará una fila por periodo.
   const personaIds = ((persRes.data ?? []) as any[]).map((p) => p.id);
-  const { data: histData } = personaIds.length
+  const { data: histData, error: histErr } = personaIds.length
     ? await supabase
         .from("historial_cargos")
         .select("persona_id, cargo, fecha_inicio, fecha_fin")
@@ -233,7 +236,8 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
         .lte("fecha_inicio", finAnio)
         .or(`fecha_fin.gte.${inicioAnio},fecha_fin.is.null`)
         .order("fecha_inicio", { ascending: true })
-    : { data: [] as any[] };
+    : { data: [] as any[], error: null };
+  if (histErr) throw new Error(`Error leyendo historial de cargos: ${histErr.message}`);
 
   const historialPorPersona = new Map<string, { cargo: string; fecha_inicio: string; fecha_fin: string | null }[]>();
   for (const row of (histData ?? []) as any[]) {
@@ -252,8 +256,13 @@ export async function fetchCapacityData(supabase: any, year: number): Promise<Ca
       .select("persona_id, semana_inicio, capacidad")
       .gte("semana_inicio", primeraSemana)
       .lte("semana_inicio", ultimaSemana)
+      // Orden fijo: sin él las páginas podían repetir o saltarse filas
+      .order("persona_id")
+      .order("semana_inicio")
       .range(from, from + PAGE_SIZE - 1);
-    if (error || !data || data.length === 0) break;
+    // Si una página falla se avisa (antes se cortaba en silencio y faltaban semanas)
+    if (error) throw new Error(`Error leyendo capacity: ${error.message}`);
+    if (!data || data.length === 0) break;
     capRows = capRows.concat(data);
     if (data.length < PAGE_SIZE) break;   // última página: terminamos
     from += PAGE_SIZE;
@@ -374,25 +383,28 @@ export async function fetchCapacitySnapshot(
   const inicioMes = `${mesEvaluado}-01`;
   const finMes = ultimoDiaDelMes(mesEvaluado);
 
-  const { data: persData } = await supabase
+  const { data: persData, error: persErr } = await supabase
     .from("persona")
     .select("id, nombre, apellido, cargo_actual, iniciales, fecha_ingreso, is_ex_houser, fecha_salida")
     .eq("is_deleted", false)
-    .lte("fecha_ingreso", finMes)
+    // Quien no tiene fecha de ingreso cargada también cuenta (antes quedaba fuera de la dotación)
+    .or(`fecha_ingreso.lte.${finMes},fecha_ingreso.is.null`)
     .or(`is_ex_houser.eq.false,fecha_salida.gte.${inicioMes},fecha_salida.is.null`);
+  if (persErr) throw new Error(persErr.message);
 
   const personas = (persData ?? []) as any[];
   if (personas.length === 0) return { mesEvaluado, personas: [], porGrupo: {} };
 
   const personaIds = personas.map((p) => p.id);
 
-  const { data: histData } = await supabase
+  const { data: histData, error: histErr } = await supabase
     .from("historial_cargos")
     .select("persona_id, cargo, fecha_inicio")
     .in("persona_id", personaIds)
     .lte("fecha_inicio", finMes)
     .order("persona_id", { ascending: true })
     .order("fecha_inicio", { ascending: false });
+  if (histErr) throw new Error(histErr.message);
 
   // Reduce a 1 cargo por persona: la primera fila de cada persona_id ya es
   // la de fecha_inicio más reciente (orden desc) → evita RPC/lateral join.
@@ -430,11 +442,13 @@ export async function upsertCapacity(
   personaId: string,
   semanaInicio: string,
   capacidad: number
-): Promise<void> {
-  await supabase
+): Promise<string | null> {
+  // Devuelve el error (antes no se revisaba y la celda parecía guardada aunque no lo estuviera)
+  const { error } = await supabase
     .from("capacity_planning")
     .upsert({ persona_id: personaId, semana_inicio: semanaInicio, capacidad },
              { onConflict: "persona_id,semana_inicio" });
+  return error?.message ?? null;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -446,15 +460,16 @@ export async function upsertCapacityByCargo(
   personaIds: string[],
   semanaInicio: string,
   capacidad: number
-): Promise<void> {
+): Promise<string | null> {
   const rows = personaIds.map((id) => ({
     persona_id: id,
     semana_inicio: semanaInicio,
     capacidad,
   }));
-  await supabase
+  const { error } = await supabase
     .from("capacity_planning")
     .upsert(rows, { onConflict: "persona_id,semana_inicio" });
+  return error?.message ?? null;
 }
 
 // ─────────────────────────────────────────────────────────────

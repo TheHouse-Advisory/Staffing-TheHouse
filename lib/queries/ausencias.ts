@@ -1,3 +1,4 @@
+import { format } from "date-fns";
 import type { TypedSupabaseClient } from "@/lib/supabase/types";
 import type { TipoAusencia } from "@/lib/types/database";
 import { expandirRangoHabil } from "@/lib/utils/date-utils";
@@ -371,7 +372,7 @@ export async function getDetailedPersonAbsences(
   supabase: any,
   personaId: string
 ): Promise<DetalleAusenciasPersona> {
-  const hoy = new Date().toISOString().split("T")[0];          // "YYYY-MM-DD"
+  const hoy = format(new Date(), "yyyy-MM-dd");          // "YYYY-MM-DD"
   const inicioAnio = `${new Date().getFullYear()}-01-01`;
   const finAnio    = `${new Date().getFullYear()}-12-31`;
 

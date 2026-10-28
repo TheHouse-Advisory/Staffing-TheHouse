@@ -15,7 +15,7 @@ function diasHabiles(desde: string, hasta: string): number {
   return expandirRango(desde, hasta).length;
 }
 function calcDias(fechaInicio: string, fechaFin: string | null) {
-  const hoy = new Date().toISOString().split("T")[0];
+  const hoy = format(new Date(), "yyyy-MM-dd");
   if (fechaInicio > hoy) {
     return { dias: diasHabiles(hoy, fechaInicio) - 1, esFuturo: true };
   }
@@ -155,7 +155,7 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
     async function load() {
       setLoading(true);
       const sb = createAnyClient();
-      const hoy = new Date().toISOString().split("T")[0];
+      const hoy = format(new Date(), "yyyy-MM-dd");
       // !inner + filtro por estado/is_deleted del engagement: descarta asignaciones "fantasma"
       // de engagements borrados, en papelera o no activos
       const [{ data }, rolUsuario] = await Promise.all([
@@ -542,12 +542,13 @@ export function HistorialProyectosAccordion({ personaId, personaNombreCompleto, 
   const [loading,    setLoading]    = useState(true);
   const [openYear,   setOpenYear]   = useState<string | null>(null);
   const [deletingEng, setDeletingEng] = useState<{ engagementId: string; nombre: string } | null>(null);
+  const [errorEliminar, setErrorEliminar] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
       setLoading(true);
       const sb = createAnyClient();
-      const hoy = new Date().toISOString().slice(0, 10);
+      const hoy = format(new Date(), "yyyy-MM-dd");
       // TODAS las asignaciones (activas y finalizadas) — se clasifican en "Actuales" vs
       // años históricos en el render. !inner + exclusión de "posibles_proyectos": no
       // deben contarse como historial real.
@@ -596,10 +597,14 @@ export function HistorialProyectosAccordion({ personaId, personaNombreCompleto, 
   async function confirmarEliminar() {
     if (!deletingEng) return;
     const { engagementId } = deletingEng;
-    setRows((prev) => prev.filter((r) => r.engagementId !== engagementId)); // optimista
     setDeletingEng(null);
     const sb = createAnyClient();
-    await sb.from("asignacion").delete().eq("persona_id", personaId).eq("engagement_id", engagementId);
+    // Primero se borra en la base; solo si funcionó se quita de la pantalla
+    // (antes desaparecía aunque fallara y volvía a aparecer al recargar)
+    const { error } = await sb.from("asignacion").delete().eq("persona_id", personaId).eq("engagement_id", engagementId);
+    if (error) { setErrorEliminar(`No se pudo quitar el proyecto: ${error.message}`); return; }
+    setErrorEliminar(null);
+    setRows((prev) => prev.filter((r) => r.engagementId !== engagementId));
   }
 
   if (loading) return <p className="text-xs text-gray-300">Cargando historial...</p>;
@@ -607,6 +612,7 @@ export function HistorialProyectosAccordion({ personaId, personaNombreCompleto, 
 
   return (
     <div>
+      {errorEliminar && <p className="text-xs text-red-500 mb-2">{errorEliminar}</p>}
       <div className="divide-y divide-[#f0f0f0]">
         {anios.map((anio) => {
           const items = porAnio.get(anio)!;

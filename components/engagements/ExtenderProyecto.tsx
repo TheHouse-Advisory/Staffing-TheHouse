@@ -8,6 +8,31 @@ import { FieldWrapper, Input } from "@/components/ui/FormField";
 import { expandirRango, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 import type { TipoAusencia } from "@/lib/types/database";
 
+/**
+ * Elimina una extensión junto con su equipo: las asignaciones vinculadas (extension_id) y,
+ * para extensiones antiguas sin vínculo, las asignaciones y cupos creados con exactamente
+ * las fechas de la extensión. Antes solo se borraba la extensión y las personas seguían
+ * ocupadas en un período que ya no existía.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function eliminarExtensionConEquipo(sb: any, extensionId: string): Promise<{ error: string | null }> {
+  const { data: ext, error: extErr } = await sb.from("engagement_extension")
+    .select("id, engagement_id, fecha_inicio, fecha_fin").eq("id", extensionId).single();
+  if (extErr || !ext) return { error: extErr?.message ?? "No se encontró la extensión." };
+
+  const { error: delVincErr } = await sb.from("asignacion").delete().eq("extension_id", extensionId);
+  if (delVincErr) return { error: delVincErr.message };
+  const { error: delFechasErr } = await sb.from("asignacion").delete()
+    .eq("engagement_id", ext.engagement_id).eq("fecha_inicio", ext.fecha_inicio).eq("fecha_fin", ext.fecha_fin);
+  if (delFechasErr) return { error: delFechasErr.message };
+  const { error: delReqErr } = await sb.from("requerimiento_engagement").delete()
+    .eq("engagement_id", ext.engagement_id).eq("fecha_inicio", ext.fecha_inicio).eq("fecha_fin", ext.fecha_fin);
+  if (delReqErr) return { error: delReqErr.message };
+
+  const { error: delExtErr } = await sb.from("engagement_extension").delete().eq("id", extensionId);
+  return { error: delExtErr?.message ?? null };
+}
+
 // ─── Types ────────────────────────────────────────────────────
 
 interface ExtPersona {
@@ -117,14 +142,13 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
   useEffect(() => { cargarExtensiones(); }, [engagementId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function eliminarExtension(id: string) {
-    if (!window.confirm("¿Eliminar esta extensión?")) return;
+    if (!window.confirm("¿Eliminar esta extensión? También se quitará al equipo asignado a ese período.")) return;
     setEliminandoId(id);
     setError(null);
-    const sb = createAnyClient();
-    const { error: delErr } = await (sb as any).from("engagement_extension").delete().eq("id", id);
+    const { error: delErr } = await eliminarExtensionConEquipo(createAnyClient(), id);
     setEliminandoId(null);
     // Solo se quita de pantalla si la base confirmó el borrado
-    if (delErr) { setError(`No se pudo eliminar la extensión: ${delErr.message}`); return; }
+    if (delErr) { setError(`No se pudo eliminar la extensión: ${delErr}`); return; }
     setExtensionesGuardadas((prev) => prev.filter((e) => e.id !== id));
     window.dispatchEvent(new CustomEvent("engagementChanged", { detail: { engagementId } }));
   }
@@ -375,6 +399,7 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
             fecha_fin: fechaFin,
             estado: "activa",
             requerimiento_id,
+            extension_id: ext.id, // vínculo para poder liberar al equipo si se elimina la extensión
           };
         })
       );

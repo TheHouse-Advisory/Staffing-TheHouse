@@ -143,19 +143,33 @@ export function MentoresMenteesSection({ personaId, mentor, mentees, onMentorCha
   async function asignar(nuevo: PersonaMini | null) {
     if (nuevo && nuevo.id === mentor?.id) { setAbierto(false); return; }
     const fecha = fechaInicio || format(new Date(), "yyyy-MM-dd");
+    // La mentoría vigente no puede cerrarse antes de haber empezado
+    const vigente = historial.find((m) => m.fecha_fin == null);
+    if (vigente?.fecha_inicio && fecha < vigente.fecha_inicio) {
+      setError(`La fecha no puede ser anterior al inicio de la mentoría actual (${vigente.fecha_inicio}).`);
+      return;
+    }
     setGuardando(true);
     setError(null);
     const sb = createAnyClient();
+    // Se detiene en el primer error: antes seguía y podía quedar con dos mentorías abiertas
+    const fallo = (msg: string) => { setGuardando(false); setError(`No se pudo guardar: ${msg}`); };
     const cierre = await sb.from("persona_mentoria").update({ fecha_fin: fecha }).eq("persona_id", personaId).is("fecha_fin", null);
+    if (cierre.error) return fallo(cierre.error.message);
     const alta = nuevo
       ? await sb.from("persona_mentoria")
           .insert({ persona_id: personaId, mentor_id: nuevo.id, fecha_inicio: fecha })
           .select("id, fecha_inicio, fecha_fin, mentor:mentor_id(id, nombre, apellido, cargo_actual)")
           .single()
       : { data: null, error: null };
+    if (alta.error) {
+      // Se reabre la mentoría anterior para no dejar a la persona sin mentor
+      if (vigente) await sb.from("persona_mentoria").update({ fecha_fin: null }).eq("id", vigente.id);
+      return fallo(alta.error.message);
+    }
     const { error } = await sb.from("persona").update({ mentor_id: nuevo?.id ?? null }).eq("id", personaId);
     setGuardando(false);
-    if (cierre.error || alta.error || error) { setError("No se pudo guardar. Intenta nuevamente."); return; }
+    if (error) { setError(`Mentoría registrada, pero no se pudo actualizar la ficha: ${error.message}. Intenta nuevamente.`); return; }
     setHistorial((prev) => [
       ...prev.map((m) => (m.fecha_fin == null ? { ...m, fecha_fin: fecha } : m)),
       ...(alta.data ? [alta.data as Mentoria] : []),

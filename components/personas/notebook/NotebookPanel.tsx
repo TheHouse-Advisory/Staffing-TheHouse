@@ -79,6 +79,7 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
   const [draftFolderId,  setDraftFolderId]  = useState<string | null>(null);
   const [saving,         setSaving]         = useState(false);
   const [saved,          setSaved]          = useState(false);
+  const [saveError,      setSaveError]      = useState<string | null>(null);
   // UI state
   const [expanded,       setExpanded]       = useState<Set<string>>(new Set());
   const [showNewFolder,  setShowNewFolder]  = useState(false);
@@ -116,7 +117,10 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
     let fs = todasF.filter(f => !f.deleted_at);
     let ns = todasN.filter(n => !n.deleted_at);
     // Falta alguna carpeta de la plantilla (raíz, mismo nombre) → se agrega, aunque ya existan otras notas/carpetas
-    const faltantes = DEFAULT_NOTEBOOK_FOLDERS.filter(d => !fs.some(f => f.parent_id === null && f.nombre === d.nombre));
+    // Se cuentan también las que están en la papelera: si alguien la eliminó a propósito, no se
+    // vuelve a crear (antes reaparecía vacía y, al restaurarla, quedaban dos carpetas iguales)
+    const noVencidas = todasF.filter(f => !vencida(f));
+    const faltantes = DEFAULT_NOTEBOOK_FOLDERS.filter(d => !noVencidas.some(f => f.parent_id === null && f.nombre === d.nombre));
     if (!fRes.error && !nRes.error && faltantes.length > 0) {
       if (seededFor.current === personaId) return; // carga concurrente con la siembra en curso: no pisar su resultado
       seededFor.current = personaId; // evita doble siembra (StrictMode / recargas)
@@ -132,11 +136,49 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
 
   useEffect(() => { load(); }, [load]);
 
+  // ── Guardado pendiente ─────────────────────────────────────
+  // Lo escrito queda en `pendiente` hasta guardarse. Se guarda a los 1,5 s sin escribir, o de
+  // inmediato al cambiar de nota, crear otra o salir (antes esos casos descartaban el texto).
+  const pendiente = useRef<{ id: string; title: string; content: string; folderId: string | null } | null>(null);
+
+  async function guardarPendiente() {
+    if (saveTimer.current) { clearTimeout(saveTimer.current); saveTimer.current = null; }
+    const p = pendiente.current;
+    if (!p) return;
+    pendiente.current = null;
+    setSaving(true);
+    const now = new Date().toISOString();
+    const titulo = p.title.trim() || "Sin título";
+    const { error } = await createAnyClient().from("notebook_note").update({
+      titulo, contenido: p.content, folder_id: p.folderId, actualizado_en: now,
+    }).eq("id", p.id);
+    setSaving(false);
+    if (error) {
+      // Se conserva para reintentar con la próxima edición o cambio de nota
+      if (!pendiente.current) pendiente.current = p;
+      setSaveError(`No se guardó: ${error.message}`);
+      return;
+    }
+    setSaveError(null);
+    setNotes(prev => prev.map(n =>
+      n.id === p.id ? { ...n, titulo, contenido: p.content, folder_id: p.folderId, actualizado_en: now } : n
+    ));
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  }
+
+  // Al salir de la ficha (o cambiar de persona) se guarda lo pendiente
+  useEffect(() => {
+    const antesDeSalir = () => { void guardarPendiente(); };
+    window.addEventListener("beforeunload", antesDeSalir);
+    return () => { window.removeEventListener("beforeunload", antesDeSalir); void guardarPendiente(); };
+  }, [personaId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // ── Selección de nota ──────────────────────────────────────
   function selectNote(id: string) {
     const n = notes.find(x => x.id === id);
     if (!n) return;
-    if (saveTimer.current) clearTimeout(saveTimer.current); // flush pending save
+    void guardarPendiente(); // guarda lo escrito en la nota anterior
     setSelectedId(id);
     setDraftTitle(n.titulo);
     setDraftContent(n.contenido);
@@ -146,43 +188,27 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
 
   // ── Auto-guardado (debounce 1.5 s) ────────────────────────
   function scheduleSave(title: string, content: string, folderId: string | null) {
+    if (!selectedId) return;
     if (saveTimer.current) clearTimeout(saveTimer.current);
     setSaved(false);
-    saveTimer.current = setTimeout(async () => {
-      if (!selectedId) return;
-      setSaving(true);
-      const now = new Date().toISOString();
-      const sb = createAnyClient();
-      await sb.from("notebook_note").update({
-        titulo: title.trim() || "Sin título",
-        contenido: content,
-        folder_id: folderId,
-        actualizado_en: now,
-      }).eq("id", selectedId);
-      setNotes(prev => prev.map(n =>
-        n.id === selectedId
-          ? { ...n, titulo: title.trim() || "Sin título", contenido: content, folder_id: folderId, actualizado_en: now }
-          : n
-      ));
-      setSaving(false);
-      setSaved(true);
-      setTimeout(() => setSaved(false), 2500);
-    }, 1500);
+    pendiente.current = { id: selectedId, title, content, folderId };
+    saveTimer.current = setTimeout(() => { void guardarPendiente(); }, 1500);
   }
 
   // ── CRUD ───────────────────────────────────────────────────
   async function createNote(folderId: string | null = null) {
+    void guardarPendiente(); // guarda lo escrito en la nota abierta antes de cambiar
     const sb = createAnyClient();
-    const { data } = await sb.from("notebook_note").insert({
+    const { data, error } = await sb.from("notebook_note").insert({
       persona_id: personaId, folder_id: folderId,
       titulo: "Nueva nota", contenido: "",
     }).select().single();
+    if (error) { setSaveError(`No se pudo crear la nota: ${error.message}`); return; }
     if (data) {
       const n = data as NNote;
       setNotes(prev => [n, ...prev]);
       if (folderId) setExpanded(prev => new Set([...prev, folderId])); // muestra la nota recién creada
       // selectNote lee `notes` (aún sin la nota nueva): se selecciona directo
-      if (saveTimer.current) clearTimeout(saveTimer.current);
       setSelectedId(n.id); setDraftTitle(n.titulo); setDraftContent(n.contenido); setDraftFolderId(n.folder_id); setSaved(false);
     }
   }
@@ -190,9 +216,11 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
   async function createFolder() {
     if (!newFolderName.trim()) return;
     const sb = createAnyClient();
-    const { data } = await sb.from("notebook_folder").insert({
+    const { data, error } = await sb.from("notebook_folder").insert({
       persona_id: personaId, nombre: newFolderName.trim(), parent_id: newFolderParentId,
     }).select().single();
+    // Si falla, se mantiene el nombre escrito para reintentar
+    if (error) { setSaveError(`No se pudo crear la carpeta: ${error.message}`); return; }
     if (data) {
       const f = data as NFolder;
       setFolders(prev => [...prev, f]);
@@ -246,7 +274,8 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
 
     if (action === "cascade") {
       // Notas de la carpeta y subcarpetas van a la papelera con ella
-      await sb.from("notebook_note").update({ deleted_at }).in("folder_id", ids).is("deleted_at", null);
+      const { error: eCasc } = await sb.from("notebook_note").update({ deleted_at }).in("folder_id", ids).is("deleted_at", null);
+      if (eCasc) { setDeleteError(`No se pudieron mover las notas: ${eCasc.message}`); load(); return; }
       setTrashNotes(prev => [...afectadas.map(n => ({ ...n, deleted_at })), ...prev]);
       setNotes(prev => prev.filter(n => !afectadas.includes(n)));
       if (selectedId && afectadas.some(n => n.id === selectedId)) {
@@ -254,7 +283,8 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
       }
     } else {
       // Notas quedan activas, sin carpeta
-      await sb.from("notebook_note").update({ folder_id: null }).in("folder_id", ids).is("deleted_at", null);
+      const { error: eMove } = await sb.from("notebook_note").update({ folder_id: null }).in("folder_id", ids).is("deleted_at", null);
+      if (eMove) { setDeleteError(`No se pudieron mover las notas: ${eMove.message}`); load(); return; }
       setNotes(prev => prev.map(n => afectadas.includes(n) ? { ...n, folder_id: null } : n));
       if (draftFolderId && ids.includes(draftFolderId)) setDraftFolderId(null);
     }
@@ -275,7 +305,7 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
     // Si su carpeta ya no está activa, vuelve a "Sin carpeta"
     const folder_id = n.folder_id && folders.some(f => f.id === n.folder_id) ? n.folder_id : null;
     const { error } = await sb.from("notebook_note").update({ deleted_at: null, folder_id }).eq("id", n.id);
-    if (error) return;
+    if (error) { setSaveError(`No se pudo restaurar la nota: ${error.message}`); return; }
     setTrashNotes(prev => prev.filter(x => x.id !== n.id));
     setNotes(prev => [{ ...n, deleted_at: null, folder_id }, ...prev].sort((a, b) => b.actualizado_en.localeCompare(a.actualizado_en)));
   }
@@ -286,9 +316,14 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
     // Restaura el lote eliminado junto con la carpeta (mismo deleted_at)
     const notasLote = trashNotes.filter(n => n.folder_id && ids.includes(n.folder_id) && n.deleted_at === f.deleted_at);
     const parent_id = f.parent_id && folders.some(x => x.id === f.parent_id) ? f.parent_id : null;
-    await sb.from("notebook_folder").update({ deleted_at: null }).in("id", ids);
-    if (parent_id !== f.parent_id) await sb.from("notebook_folder").update({ parent_id }).eq("id", f.id);
-    if (notasLote.length) await sb.from("notebook_note").update({ deleted_at: null }).in("id", notasLote.map(n => n.id));
+    // Solo se actualiza la pantalla si la base confirmó cada paso
+    const { error: e1 } = await sb.from("notebook_folder").update({ deleted_at: null }).in("id", ids);
+    const { error: e2 } = !e1 && parent_id !== f.parent_id
+      ? await sb.from("notebook_folder").update({ parent_id }).eq("id", f.id) : { error: null };
+    const { error: e3 } = !e1 && !e2 && notasLote.length
+      ? await sb.from("notebook_note").update({ deleted_at: null }).in("id", notasLote.map(n => n.id)) : { error: null };
+    const errRest = e1 ?? e2 ?? e3;
+    if (errRest) { setSaveError(`No se pudo restaurar la carpeta: ${errRest.message}`); load(); return; }
     const restauradas = trashFolders.filter(x => ids.includes(x.id)).map(x => ({ ...x, deleted_at: null, parent_id: x.id === f.id ? parent_id : x.parent_id }));
     setTrashFolders(prev => prev.filter(x => !ids.includes(x.id)));
     setFolders(prev => [...prev, ...restauradas]);
@@ -301,13 +336,15 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
     if (!confirm("Se eliminará de forma permanente. ¿Continuar?")) return;
     const sb = createAnyClient();
     if (tipo === "nota") {
-      await sb.from("notebook_note").delete().eq("id", id);
+      const { error } = await sb.from("notebook_note").delete().eq("id", id);
+      if (error) { setSaveError(`No se pudo eliminar: ${error.message}`); return; }
       setTrashNotes(prev => prev.filter(n => n.id !== id));
       return;
     }
     const ids = [id, ...trashDescendants(id)];
-    await sb.from("notebook_note").delete().in("folder_id", ids).not("deleted_at", "is", null);
-    await sb.from("notebook_folder").delete().in("id", ids);
+    const { error: eN } = await sb.from("notebook_note").delete().in("folder_id", ids).not("deleted_at", "is", null);
+    const { error: eF } = eN ? { error: null } : await sb.from("notebook_folder").delete().in("id", ids);
+    if (eN || eF) { setSaveError(`No se pudo eliminar: ${(eN ?? eF)!.message}`); load(); return; }
     setTrashNotes(prev => prev.filter(n => !(n.folder_id && ids.includes(n.folder_id))));
     setTrashFolders(prev => prev.filter(f => !ids.includes(f.id)));
   }
@@ -397,6 +434,8 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
 
   return (
     <>
+      {/* Errores de crear nota/carpeta visibles aunque no haya una nota abierta */}
+      {saveError && !selectedNote && <p className="text-[11px] text-red-500 mb-2">{saveError}</p>}
       <div className="flex rounded-xl overflow-hidden border border-slate-200" style={{ height: 440 }}>
 
         {/* ═══ Columna izquierda: árbol ═══ */}
@@ -439,6 +478,7 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
           {/* Papelera (reemplaza al árbol mientras está abierta) */}
           {verPapelera ? (
           <div className="flex-1 overflow-y-auto py-1">
+            {saveError && <p className="px-3 py-1 text-[10px] text-red-500">{saveError}</p>}
             <button onClick={() => setVerPapelera(false)}
               className="flex items-center gap-1 px-3 py-1.5 text-[10px] font-semibold text-slate-500 hover:text-[#4a90e2]">
               <ArrowLeft className="w-3 h-3" /> Volver a notas
@@ -551,7 +591,8 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
                 <div className="flex items-center gap-1.5 ml-auto flex-shrink-0">
                   {saving && <><Loader2 className="w-3 h-3 animate-spin text-slate-300" /><span className="text-[9px] text-slate-300">Guardando…</span></>}
                   {saved  && <span className="text-[9px] text-green-500 font-semibold">✓ Guardado</span>}
-                  {!saving && !saved && (
+                  {saveError && !saving && <span className="text-[9px] text-red-500 font-semibold">{saveError}</span>}
+                  {!saving && !saved && !saveError && (
                     <span className="text-[9px] text-slate-300">
                       {format(new Date(selectedNote.actualizado_en), "d MMM · HH:mm", { locale: es })}
                     </span>

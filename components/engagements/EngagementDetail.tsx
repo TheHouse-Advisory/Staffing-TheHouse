@@ -120,7 +120,8 @@ export function EngagementDetail({ id }: Props) {
 
   // Control de acceso
   const [rolActual, setRolActual] = useState<string | null>(null);
-  const isReadOnly = rolActual === "planificador" || rolActual === "GyD" || rolActual === "AySr" || rolActual === "Desarrollo";
+  // Rol aún sin cargar (null) = solo lectura, para no mostrar botones de edición por un instante
+  const isReadOnly = rolActual === null || rolActual === "proposer" || rolActual === "planificador" || rolActual === "GyD" || rolActual === "AySr" || rolActual === "Desarrollo";
 
   // ── Carga de datos ─────────────────────────────────────────────
   const load = async () => {
@@ -286,7 +287,10 @@ export function EngagementDetail({ id }: Props) {
     setEliminando(true);
     setEliminandoError(null);
     const sb = createAnyClient();
-    const { error } = await sb.from("engagement").delete().eq("id", engagement.id);
+    // Igual que en la lista: va a la papelera (recuperable 30 días), no se borra para siempre
+    const { error } = await sb.from("engagement")
+      .update({ is_deleted: true, deleted_at: new Date().toISOString() })
+      .eq("id", engagement.id);
     if (error) { setEliminandoError(error.message); setEliminando(false); return; }
     router.push("/engagements");
   };
@@ -618,7 +622,7 @@ export function EngagementDetail({ id }: Props) {
                               <div className="flex items-center gap-2">
                                 <User className="w-3.5 h-3.5 text-[#aaa] flex-shrink-0" />
                                 <span className="text-sm font-medium flex-1 min-w-0 truncate">{p.persona_nombre}</span>
-                                {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
+                                {!isReadOnly && (
                                   <span className="text-xs font-semibold px-2 py-0.5 rounded-full flex-shrink-0"
                                     style={{ background: bg, color: text }}>
                                     {formatPct(p.pct_dedicacion)}
@@ -797,7 +801,7 @@ export function EngagementDetail({ id }: Props) {
         onConfirm={handleEliminar}
         loading={eliminando}
         title="Eliminar engagement"
-        message={`¿Eliminar el engagement "${engagement?.nombre}"? Esta acción no se puede deshacer y eliminará todas las asignaciones asociadas.`}
+        message={`¿Eliminar el engagement "${engagement?.nombre}"? Se moverá a la papelera y podrás recuperarlo durante los próximos 30 días.`}
         confirmLabel="Eliminar"
       />
 

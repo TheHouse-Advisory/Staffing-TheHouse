@@ -63,7 +63,8 @@ async function main() {
     const participantes = (e.asignacion ?? [])
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       .map((a: any) => (a.persona ? `${a.persona.nombre} ${a.persona.apellido}` : null))
-      .filter(Boolean)
+      // Sin repetidos: una persona con varios tramos aparecía varias veces
+      .filter((n: string | null, i: number, arr: (string | null)[]) => n && arr.indexOf(n) === i)
       .join(", ");
 
     lineas.push(
@@ -82,7 +83,8 @@ async function main() {
     );
   }
 
-  writeFileSync(RUTA_SALIDA, lineas.join("\r\n") + "\r\n", "utf-8");
+  // BOM al inicio: sin él, Excel abre el archivo con las tildes y ñ mal escritas
+  writeFileSync(RUTA_SALIDA, "﻿" + lineas.join("\r\n") + "\r\n", "utf-8");
 
   // No se imprimen nombres de proyectos/personas/clientes — solo el conteo.
   console.log(`✅ Export completado: ${(engagements ?? []).length} engagements.`);

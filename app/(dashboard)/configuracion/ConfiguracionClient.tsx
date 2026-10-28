@@ -41,7 +41,8 @@ export function ConfiguracionClient() {
 
         {/* Contenido */}
         <div className="p-6 max-w-2xl">
-          <CatalogoTab tabla={current.tabla} titulo={current.titulo} />
+          {/* key: al cambiar de pestaña se reinicia la lista (antes se veía la anterior y una edición quedaba abierta) */}
+          <CatalogoTab key={current.tabla} tabla={current.tabla} titulo={current.titulo} />
         </div>
       </div>
     </div>

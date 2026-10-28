@@ -1,9 +1,10 @@
 "use client";
 
-import React, { useState, useEffect, useCallback, useMemo } from "react";
+import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import { X, Loader2, Plus, ChevronDown, ChevronRight, RotateCcw, Pencil, Trash2, GripVertical, Plane } from "lucide-react";
 import { ConfirmDialog } from "@/components/ui/Modal";
+import { format } from "date-fns";
 import { createClient } from "@/lib/supabase/client";
 import {
   fetchAusenciasMes,
@@ -23,6 +24,28 @@ import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
 import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import { PopoverPersona } from "./PopoverPersona";
 import { esAdmin } from "@/lib/roles";
+
+/**
+ * Devuelve un mensaje si la persona ya tiene otra ausencia que se cruza con [fechaInicio, fechaFin].
+ * En edición se pasa excluirId (la propia ausencia) y la persona se obtiene de ella.
+ * Exportada para usarla también en la vista Semana.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function buscarCruceAusencia(supabase: any, p: { personaId: string | null; excluirId: string | null; fechaInicio: string; fechaFin: string }): Promise<string | null> {
+  let personaId = p.personaId;
+  if (!personaId && p.excluirId) {
+    const { data } = await supabase.from("ausencia").select("persona_id").eq("id", p.excluirId).single();
+    personaId = data?.persona_id ?? null;
+  }
+  if (!personaId) return null;
+  let q = supabase.from("ausencia").select("fecha_inicio, fecha_fin")
+    .eq("persona_id", personaId).lte("fecha_inicio", p.fechaFin).gte("fecha_fin", p.fechaInicio).limit(1);
+  if (p.excluirId) q = q.neq("id", p.excluirId);
+  const { data, error } = await q;
+  if (error) return `No se pudo validar las fechas: ${error.message}`;
+  const c = (data ?? [])[0] as { fecha_inicio: string; fecha_fin: string } | undefined;
+  return c ? `Ya tiene una ausencia del ${c.fecha_inicio} al ${c.fecha_fin} que se cruza con estas fechas.` : null;
+}
 
 const DIAS_SEMANA_LETRA = ["L", "M", "X", "J", "V"];
 
@@ -293,14 +316,14 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
 
   async function handleCrearTipo() {
     if (!nuevoTipoInput.trim()) return;
-    const nuevo = await crearTipo(nuevoTipoInput, nuevoTipoColor);
+    const { tipo: nuevo, error: errTipo } = await crearTipo(nuevoTipoInput, nuevoTipoColor);
     if (nuevo) {
       setTipo(nuevo.id);
       setNuevoTipoInput("");
       setNuevoTipoColor("#f43f5e");
       setMostrarNuevoTipo(false);
     } else {
-      setTipoMsgError("Ya existe un tipo con ese nombre.");
+      setTipoMsgError(errTipo ?? "No se pudo crear el tipo.");
     }
   }
 
@@ -308,9 +331,11 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
     if (!tipo) return;
     setTipoMsgError(null);
     setTipoMsgConfirm(null);
-    const { ok, count } = await eliminarTipo(tipo);
+    const { ok, count, error: errTipo } = await eliminarTipo(tipo);
     if (!ok) {
-      setTipoMsgError(`No se puede eliminar: hay ${count} ausencia(s) registrada(s) con este tipo.`);
+      setTipoMsgError(errTipo
+        ? `No se pudo eliminar: ${errTipo}`
+        : `No se puede eliminar: hay ${count} ausencia(s) registrada(s) con este tipo.`);
     } else {
       setTipoMsgConfirm("Tipo eliminado correctamente.");
       // Seleccionar el primero disponible
@@ -350,6 +375,14 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
       return;
     }
     setGuardando(true);
+
+    // No se permiten ausencias que se crucen para la misma persona (se contaban dos veces)
+    const cruce = await buscarCruceAusencia(supabase, {
+      personaId: modoEdicion ? null : personaId,
+      excluirId: modoEdicion ? editarAusencia!.id : null,
+      fechaInicio, fechaFin,
+    });
+    if (cruce) { setGuardando(false); setError(cruce); return; }
 
     if (modoEdicion) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -625,6 +658,7 @@ export function HeatmapAusencias({
   type AusenciaSnapshot = { persona_id: string; tipo: TipoAusencia; fecha_inicio: string; fecha_fin: string; descripcion: string | null };
   const [undoStack, setUndoStack] = useState<AusenciaSnapshot[]>([]);
   const [undoing, setUndoing] = useState(false);
+  const [errorAccion, setErrorAccion] = useState<string | null>(null);
 
   // Modal de nueva ausencia
   const [modalOpen, setModalOpen]       = useState(false);
@@ -665,11 +699,15 @@ export function HeatmapAusencias({
     }
   }, [externalModalOpen]);
 
+  // Cada carga lleva un número: si llega una respuesta de una carga anterior (p.ej. al
+  // cambiar de mes rápido), se descarta para que no pise la del mes visible
+  const cargaActual = useRef(0);
   const cargar = useCallback(async () => {
+    const miCarga = ++cargaActual.current;
     setCargando(true);
     setError(null);
 
-    const hoy        = new Date().toISOString().split("T")[0];
+    const hoy        = format(new Date(), "yyyy-MM-dd");
     const inicioAnio = `${new Date().getFullYear()}-01-01`;
 
     // Carga del mes + totales anuales + orden manual de personas (drag & drop) en paralelo
@@ -683,6 +721,7 @@ export function HeatmapAusencias({
       (supabase as any).from("persona").select("id, orden_ausencias"),
     ]);
 
+    if (miCarga !== cargaActual.current) return;
     setCargando(false);
     if (result.error) { setError(result.error); return; }
     setFilas(result.filas);
@@ -714,27 +753,33 @@ export function HeatmapAusencias({
 
   useEffect(() => { cargar(); }, [cargar]);
 
+  // Aviso de error de acciones (eliminar / deshacer / reordenar), sin tapar la grilla
+  function avisarError(msg: string) { setErrorAccion(msg); setTimeout(() => setErrorAccion(null), 6000); }
+
   async function handleEliminar(ausenciaId: string) {
-    // Guardar snapshot antes de borrar
+    // Copia para "Deshacer", leída antes de borrar
     const { data } = await supabase
       .from("ausencia")
       .select("persona_id, tipo, fecha_inicio, fecha_fin, descripcion")
       .eq("id", ausenciaId)
       .single();
-    if (data) setUndoStack((s) => [...s, data as AusenciaSnapshot].slice(-2));
 
     setEliminando(ausenciaId);
-    await eliminarAusencia(supabase, ausenciaId);
+    const { error: delErr } = await eliminarAusencia(supabase, ausenciaId);
     setEliminando(null);
     setTooltip(null);
+    if (delErr) { avisarError(`No se pudo eliminar la ausencia: ${delErr}`); return; }
+    // La copia se guarda solo si el borrado funcionó (antes, deshacer un borrado fallido la duplicaba)
+    if (data) setUndoStack((s) => [...s, data as AusenciaSnapshot].slice(-2));
     cargar();
   }
 
   async function handleEliminarViaje(viajeId: string) {
     setEliminando(viajeId);
-    await eliminarViaje(supabase, viajeId);
+    const { error: delErr } = await eliminarViaje(supabase, viajeId);
     setEliminando(null);
     setTooltip(null);
+    if (delErr) { avisarError(`No se pudo eliminar el viaje: ${delErr}`); return; }
     cargar();
   }
 
@@ -762,15 +807,17 @@ export function HeatmapAusencias({
     if (undoStack.length === 0) return;
     const last = undoStack[undoStack.length - 1];
     setUndoing(true);
-    await crearAusencia(supabase, {
+    const res = await crearAusencia(supabase, {
       persona_id: last.persona_id,
       tipo: last.tipo,
       fecha_inicio: last.fecha_inicio,
       fecha_fin: last.fecha_fin,
       descripcion: last.descripcion ?? undefined,
     });
-    setUndoStack((s) => s.slice(0, -1));
     setUndoing(false);
+    // Si falla, la copia se conserva para reintentar (antes se descartaba y la ausencia se perdía)
+    if (res?.error) { avisarError(`No se pudo deshacer: ${res.error}`); return; }
+    setUndoStack((s) => s.slice(0, -1));
     cargar();
   }
 
@@ -831,11 +878,14 @@ export function HeatmapAusencias({
     reordenado.forEach((f, i) => { updates[f.persona.id] = i + 1; });
     setOrdenAusenciasMap((prev) => ({ ...prev, ...updates }));
 
-    await Promise.all(
+    const resOrden = await Promise.all(
       Object.entries(updates).map(([id, orden]) =>
         (supabase as any).from("persona").update({ orden_ausencias: orden }).eq("id", id)
       )
     );
+    // Si no se guardó, se avisa y se vuelve al orden guardado (antes se perdía en silencio al recargar)
+    const ordenErr = resOrden.find((r: any) => r.error)?.error;
+    if (ordenErr) { avisarError(`No se pudo guardar el nuevo orden: ${ordenErr.message}`); cargar(); }
   }
 
   function colapsarTodo() { setCargoColapsados(new Set(grupos.map(([c]) => c))); }
@@ -889,6 +939,11 @@ export function HeatmapAusencias({
   // ── Render ─────────────────────────────────────────────────
   return (
     <div className="h-full flex flex-col">
+      {errorAccion && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-sm bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 shadow-lg">
+          {errorAccion}
+        </div>
+      )}
       {cargando ? (
         <div className="flex-1 flex items-center justify-center text-[#888] gap-2">
           <Loader2 className="w-4 h-4 animate-spin" />

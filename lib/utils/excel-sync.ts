@@ -435,12 +435,13 @@ function escribirBloque(
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function syncExcelResumenProyectos(sb: any): Promise<SyncResult> {
-  const { data: engData, error: engErr } = await sb
+  // Todas las lecturas van por páginas: Supabase entrega como máximo 1.000 filas por consulta
+  // y antes, pasado ese número, el respaldo salía incompleto sin avisar
+  const engData = await traerTodo("engagements", () => sb
     .from("engagement")
     .select("id, codigo, nombre, cliente, tipo, sort_order, fecha_inicio, fecha_fin_estimada, fecha_fin_real, estado")
     .in("tipo", ["proyecto", "propuesta"])
-    .eq("is_deleted", false);
-  if (engErr) throw new Error(`Error leyendo engagements: ${engErr.message}`);
+    .eq("is_deleted", false));
 
   // Nota: ya no se filtra por estado === "activo". El filtro por año (más abajo,
   // por pestaña) decide qué engagements aparecen: cualquiera activo en algún
@@ -475,19 +476,22 @@ export async function syncExcelResumenProyectos(sb: any): Promise<SyncResult> {
     for (let y = y0; y <= Math.min(y1, anioActual); y++) anios.add(y);
   });
 
-  const [{ data: reqData }, { data: asigData }, { data: personaData }, { data: ausenciaData }] = await Promise.all([
-    sb
+  // Se traen completos y se filtran aquí por engagement (una lista .in() de cientos de ids
+  // puede superar el largo máximo de la consulta)
+  const engIdSet = new Set(engIds);
+  const [reqTodos, asigTodos, personaData, ausenciaData] = await Promise.all([
+    traerTodo("requerimientos", () => sb
       .from("requerimiento_engagement")
-      .select("engagement_id, cargo_requerido, fecha_inicio, fecha_fin")
-      .in("engagement_id", engIds),
-    sb
+      .select("engagement_id, cargo_requerido, fecha_inicio, fecha_fin")),
+    traerTodo("asignaciones", () => sb
       .from("asignacion")
-      .select("engagement_id, cargo_al_momento, fecha_inicio, fecha_fin, estado_staffing, persona:persona_id(nombre, apellido)")
-      .in("engagement_id", engIds)
-      .eq("estado", "activa"),
-    sb.from("persona").select("id, nombre, apellido, cargo_actual").eq("activo", true),
-    sb.from("ausencia").select("persona_id, tipo, fecha_inicio, fecha_fin, descripcion"),
+      .select("engagement_id, cargo_al_momento, fecha_inicio, fecha_fin, estado_staffing, persona:persona_id(nombre, apellido, iniciales)")
+      .eq("estado", "activa")),
+    traerTodo("personas", () => sb.from("persona").select("id, nombre, apellido, cargo_actual").eq("activo", true)),
+    traerTodo("ausencias", () => sb.from("ausencia").select("persona_id, tipo, fecha_inicio, fecha_fin, descripcion")),
   ]);
+  const reqData = reqTodos.filter((r: any) => engIdSet.has(r.engagement_id));
+  const asigData = asigTodos.filter((a: any) => engIdSet.has(a.engagement_id));
 
   const reqs: ReqRow[] = (reqData ?? [])
     .filter((r: any) => r.cargo_requerido)
@@ -501,7 +505,7 @@ export async function syncExcelResumenProyectos(sb: any): Promise<SyncResult> {
   const asigs: AsigRow[] = (asigData ?? []).map((a: any) => ({
     engagement_id: a.engagement_id,
     cargo: a.cargo_al_momento ?? "",
-    iniciales: a.persona ? getIniciales(a.persona.nombre ?? "?", a.persona.apellido ?? "?") : "??",
+    iniciales: a.persona ? getIniciales(a.persona.nombre ?? "?", a.persona.apellido ?? "?", a.persona.iniciales) : "??",
     estado_staffing: a.estado_staffing ?? "CONFIRMADO",
     fecha_inicio: a.fecha_inicio,
     fecha_fin: a.fecha_fin ?? null,
@@ -615,4 +619,24 @@ export async function syncExcelResumenProyectos(sb: any): Promise<SyncResult> {
   if (uploadErr) throw new Error(`Error subiendo Excel a Storage: ${uploadErr.message}`);
 
   return { anios: aniosOrdenados, buffer };
+}
+
+/**
+ * Lee todas las filas de una consulta por páginas de 1.000 (límite de Supabase).
+ * `consulta` debe devolver un query builder nuevo en cada llamada. Si una página falla,
+ * lanza un error en vez de devolver datos incompletos.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function traerTodo(nombre: string, consulta: () => any): Promise<any[]> {
+  const PAGINA = 1000;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const filas: any[] = [];
+  for (let desde = 0; ; desde += PAGINA) {
+    // Orden fijo por id: sin él, las páginas podrían repetir o saltarse filas
+    const { data, error } = await consulta().order("id").range(desde, desde + PAGINA - 1);
+    if (error) throw new Error(`Error leyendo ${nombre}: ${error.message}`);
+    filas.push(...(data ?? []));
+    if (!data || data.length < PAGINA) break;
+  }
+  return filas;
 }

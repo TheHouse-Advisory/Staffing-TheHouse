@@ -31,7 +31,9 @@ import { requireAdmin } from "@/lib/auth";
 import { esAdmin, ROLES_ADMIN } from "@/lib/roles";
 import type { Persona, RolSistema } from "@/lib/types/database";
 
-const ROLES_VALIDOS: RolSistema[] = ["admin", "personas", "GyD", "AySr", "Desarrollo", "proposer"];
+// Debe coincidir con los roles que ofrece Accesos: faltaba "planificador" y dar acceso con
+// ese rol siempre fallaba con "Rol inválido"
+const ROLES_VALIDOS: RolSistema[] = ["admin", "personas", "GyD", "AySr", "Desarrollo", "planificador", "proposer"];
 
 export interface ResultadoAccion {
   ok: boolean;

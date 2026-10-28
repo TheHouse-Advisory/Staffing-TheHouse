@@ -17,7 +17,8 @@ import {
 import { cambiarEstadoEngagement } from "@/lib/queries/engagements";
 import { limpiarEngagementsCaducados, diasRestantesPapelera } from "@/lib/tasks/cleanupEngagements";
 import { Button } from "@/components/ui/Button";
-import { ConfirmDialog } from "@/components/ui/Modal";
+import { ConfirmDialog, Modal } from "@/components/ui/Modal";
+import { FieldWrapper, Input } from "@/components/ui/FormField";
 import { EngagementForm } from "./EngagementForm";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import type { EngagementConCobertura } from "@/lib/queries/engagements";
@@ -386,6 +387,9 @@ export function EngagementsList({ rolActual }: Props) {
   const [confirmPapelera, setConfirmPapelera] = useState<{ id: string; nombre: string } | null>(null);
   const [confirmDefinitivo, setConfirmDefinitivo] = useState<{ id: string; nombre: string } | null>(null);
   const [accionando, setAccionando] = useState(false);
+  const [restaurandoId, setRestaurandoId] = useState<string | null>(null);
+  // Reactivar un proyecto vencido: pide nueva fecha de fin
+  const [reactivarVencido, setReactivarVencido] = useState<{ eng: Engagement; fecha: string } | null>(null);
   const [papeleraCount, setPapeleraCount] = useState(0);
 
   // Acciones directas por fila en el tab Archivo Histórico (sin modal intermedio)
@@ -398,9 +402,11 @@ export function EngagementsList({ rolActual }: Props) {
 
   const load = useCallback(async () => {
     const supabase = createClient();
-    const { data } = await fetchEngagementsConCobertura(supabase);
+    const { data, error } = await fetchEngagementsConCobertura(supabase);
     setEngagements(data);
     setLoading(false);
+    // Antes un error mostraba "0 proyectos" sin aviso
+    if (error) showToast(`No se pudieron cargar los proyectos: ${error}`);
   }, []);
 
   const loadPapelera = useCallback(async () => {
@@ -417,8 +423,9 @@ export function EngagementsList({ rolActual }: Props) {
   const loadArchivados = useCallback(async () => {
     setLoadingArchivados(true);
     const supabase = createClient();
-    const { data } = await fetchEngagementsHistoricos(supabase);
+    const { data, error } = await fetchEngagementsHistoricos(supabase);
     setArchivados(data);
+    if (error) showToast(`No se pudo cargar el Archivo Histórico: ${error}`);
     setLoadingArchivados(false);
   }, []);
 
@@ -507,9 +514,11 @@ export function EngagementsList({ rolActual }: Props) {
 
   async function moverAPapelera(id: string) {
     setAccionando(true);
-    await sb.from("engagement").update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq("id", id);
+    const { error } = await sb.from("engagement").update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq("id", id);
     setAccionando(false);
     setConfirmPapelera(null);
+    // Solo se quita de las listas si la base confirmó el cambio
+    if (error) { showToast(`No se pudo mover a la papelera: ${error.message}`); return; }
     // Filtro optimista en ambas listas + actualizo contador
     setEngagements((prev) => prev.filter((e) => e.id !== id));
     setArchivados((prev) => prev.filter((e) => e.id !== id));
@@ -517,7 +526,11 @@ export function EngagementsList({ rolActual }: Props) {
   }
 
   async function restaurar(id: string) {
-    await sb.from("engagement").update({ is_deleted: false, deleted_at: null }).eq("id", id);
+    if (restaurandoId) return; // evita doble clic
+    setRestaurandoId(id);
+    const { error } = await sb.from("engagement").update({ is_deleted: false, deleted_at: null }).eq("id", id);
+    setRestaurandoId(null);
+    if (error) { showToast(`No se pudo restaurar: ${error.message}`); return; }
     setPapeleraCount((prev) => Math.max(0, prev - 1));
     // Recarga en paralelo: papelera + vista principal.
     // La vista histórica se recarga sola al navegar a ella (useEffect por vista).
@@ -527,30 +540,41 @@ export function EngagementsList({ rolActual }: Props) {
 
   async function eliminarDefinitivo(id: string) {
     setAccionando(true);
-    await sb.from("engagement").delete().eq("id", id);
+    const { error } = await sb.from("engagement").delete().eq("id", id);
     setAccionando(false);
     setConfirmDefinitivo(null);
+    if (error) { showToast(`No se pudo eliminar: ${error.message}`); return; }
     setPapeleraCount((prev) => Math.max(0, prev - 1));
     loadPapelera();
   }
 
   // ── Acciones directas del tab Archivo Histórico (sin modal) ───────────
-  async function reactivarDesdeHistorico(id: string, nombre: string) {
+  function reactivarDesdeHistorico(e: Engagement) {
+    // Si su fecha de fin ya pasó, reactivarlo sin una nueva fecha no cambiaba nada
+    // (seguía en el Archivo): se pide la nueva fecha de fin con un selector.
+    const hoy = format(new Date(), "yyyy-MM-dd");
+    const finActual = e.fecha_fin_real ?? e.fecha_fin_estimada;
+    if (finActual && finActual < hoy) { setReactivarVencido({ eng: e, fecha: hoy }); return; }
+    ejecutarReactivacion(e, null);
+  }
+
+  async function ejecutarReactivacion(e: Engagement, nuevaFin: string | null) {
+    const { id, nombre } = e;
+    setReactivarVencido(null);
     setProcesandoHistoricoId(id);
-    await cambiarEstadoEngagement(sb, id, "activo");
-    setArchivados((prev) => prev.filter((e) => e.id !== id));
+    const { error } = nuevaFin
+      ? await sb.from("engagement").update({ estado: "activo", fecha_fin_estimada: nuevaFin, fecha_fin_real: null }).eq("id", id)
+      : await cambiarEstadoEngagement(sb, id, "activo").then((r) => ({ error: r.error ? { message: r.error } : null }));
+    if (error) { setProcesandoHistoricoId(null); showToast(`No se pudo reactivar: ${error.message}`); return; }
+    setArchivados((prev) => prev.filter((x) => x.id !== id));
     await load(); // refresca activos para que reaparezca de inmediato
     setProcesandoHistoricoId(null);
     showToast(`"${nombre}" reactivado. Ya está en Proyectos Activos.`);
   }
 
-  async function enviarPapeleraDesdeHistorico(id: string, nombre: string) {
-    setProcesandoHistoricoId(id);
-    await sb.from("engagement").update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq("id", id);
-    setArchivados((prev) => prev.filter((e) => e.id !== id));
-    setPapeleraCount((prev) => prev + 1);
-    setProcesandoHistoricoId(null);
-    showToast(`"${nombre}" enviado a la papelera. Podrás recuperarlo durante 30 días.`);
+  // Desde el Archivo también se pide confirmación (mismo diálogo que en Proyectos Activos)
+  function enviarPapeleraDesdeHistorico(id: string, nombre: string) {
+    setConfirmPapelera({ id, nombre });
   }
 
   if (loading) return <ListaSkeleton />;
@@ -590,7 +614,7 @@ export function EngagementsList({ rolActual }: Props) {
                     style={urgente ? { background: "#fef2f2", color: "#dc2626" } : { background: "#fefce8", color: "#ca8a04" }}>
                     {dias}d restantes
                   </span>
-                  <button onClick={() => restaurar(e.id)}
+                  <button onClick={() => restaurar(e.id)} disabled={restaurandoId !== null}
                     className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border border-[#e0e0e0] hover:bg-[#f5f5f5] text-[#555] transition-colors flex-shrink-0">
                     <RotateCcw className="w-3 h-3" /> Restaurar
                   </button>
@@ -810,7 +834,7 @@ export function EngagementsList({ rolActual }: Props) {
                     {isAdmin && (
                       <td className="px-3 py-3">
                         <div className="flex items-center gap-2">
-                          <button onClick={() => reactivarDesdeHistorico(e.id, e.nombre)}
+                          <button onClick={() => reactivarDesdeHistorico(e)}
                             disabled={procesandoHistoricoId === e.id}
                             className="p-1 rounded hover:bg-blue-50 text-[#ccc] hover:text-[#4a90e2] transition-colors disabled:opacity-40"
                             title="Volver a activar proyecto">
@@ -834,6 +858,35 @@ export function EngagementsList({ rolActual }: Props) {
       )}
 
       <EngagementForm open={drawerOpen} onClose={() => setDrawerOpen(false)} onSuccess={load} />
+
+      <Modal
+        open={!!reactivarVencido}
+        onClose={() => setReactivarVencido(null)}
+        title="Reactivar proyecto"
+        footer={
+          <>
+            <Button variant="secondary" onClick={() => setReactivarVencido(null)}>Cancelar</Button>
+            <Button
+              onClick={() => reactivarVencido && ejecutarReactivacion(reactivarVencido.eng, reactivarVencido.fecha)}
+              disabled={!reactivarVencido?.fecha || reactivarVencido.fecha < format(new Date(), "yyyy-MM-dd")}
+            >
+              Reactivar
+            </Button>
+          </>
+        }
+      >
+        <p className="text-sm text-[#555] mb-4">
+          &quot;{reactivarVencido?.eng.nombre}&quot; ya terminó por fecha. Elige la nueva fecha de fin para volver a dejarlo en Proyectos Activos.
+        </p>
+        <FieldWrapper label="Nueva fecha de fin" required>
+          <Input
+            type="date"
+            value={reactivarVencido?.fecha ?? ""}
+            min={format(new Date(), "yyyy-MM-dd")}
+            onChange={(ev) => setReactivarVencido((r) => (r ? { ...r, fecha: ev.target.value } : r))}
+          />
+        </FieldWrapper>
+      </Modal>
 
       <ConfirmDialog open={!!confirmPapelera} onClose={() => setConfirmPapelera(null)}
         onConfirm={() => confirmPapelera && moverAPapelera(confirmPapelera.id)}

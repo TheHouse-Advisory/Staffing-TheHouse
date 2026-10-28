@@ -65,7 +65,8 @@ const navItems: { section: string; items: NavItem[] }[] = [
   {
     section: "Gestión",
     items: [
-      { href: "/planificacion", label: "Planificación", icon: Kanban,      allowedRoles: ["admin", "personas", "planificador"] },
+      // Planificación está desactivada temporalmente (ver app/(dashboard)/planificacion/page.tsx)
+      { href: "/planificacion", label: "Planificación", icon: Kanban,      allowedRoles: ["admin", "planificador"] },
       { href: "/capacity",      label: "Capacity",       icon: BarChart3,   allowedRoles: ["admin", "personas"] },
       { href: "/accesos",       label: "Accesos",        icon: ShieldCheck, allowedRoles: ["admin", "personas"] },
       { href: "/configuracion", label: "Configuración",  icon: Settings,    allowedRoles: ["admin", "personas"] },

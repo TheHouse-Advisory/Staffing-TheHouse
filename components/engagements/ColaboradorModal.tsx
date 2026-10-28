@@ -184,8 +184,11 @@ export function ColaboradorModal({
     return null;
   }
   async function handleGuardar() {
+    if (saving) return; // doble clic: el segundo guardado borraba lo que creó el primero
     const err = validate();
     if (err) { setError(err); return; }
+    // Se bloquea desde el inicio (antes recién después de consultar ausencias)
+    setSaving(true);
 
     // Validación estricta: fetch fresco de ausencias — sin depender de estado
     const sbCheck = createAnyClient();
@@ -202,10 +205,11 @@ export function ColaboradorModal({
     });
     if (cubreTodo) {
       setError("La persona seleccionada tiene ausencias durante toda la duración del engagement. No puede ser staffeada.");
+      setSaving(false);
       return; // bloqueo total — ninguna escritura en Supabase ocurre
     }
 
-    setError(null); setSaving(true);
+    setError(null);
 
     // ── SIMULACIÓN: actualiza solo el estado local del plan, sin tocar Supabase ──
     if (simulationMode) {

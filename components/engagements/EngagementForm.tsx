@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
@@ -8,7 +8,7 @@ import { Plus, Trash2, ChevronDown, ChevronUp, Users, CalendarDays, Pencil } fro
 import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
-import { Modal } from "@/components/ui/Modal";
+import { Modal, ConfirmDialog } from "@/components/ui/Modal";
 import { FieldWrapper, Input, Select, Textarea } from "@/components/ui/FormField";
 import { MultiSelect } from "@/components/ui/MultiSelect";
 import { CARGOS_OPTIONS } from "@/lib/constants";
@@ -50,7 +50,7 @@ function ordenCargoEquipo(cargo: string): number {
   return idx === -1 ? ORDEN_CARGOS_EQUIPO.length : idx;
 }
 import type { Engagement, RequerimientoEngagement } from "@/lib/types/database";
-import { ExtenderProyecto } from "./ExtenderProyecto";
+import { ExtenderProyecto, eliminarExtensionConEquipo } from "./ExtenderProyecto";
 
 interface ReqRow {
   id?: string;
@@ -112,6 +112,9 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   const [reqs, setReqs] = useState<ReqRow[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(false);
+  // id del proyecto ya creado en este formulario, para que un reintento no lo duplique
+  const creadoIdRef = useRef<string | null>(null);
+  useEffect(() => { if (open) creadoIdRef.current = null; }, [open]);
   const [serverError, setServerError] = useState<string | null>(null);
   const [industrias, setIndustrias] = useState<{ value: string; label: string }[]>([]);
   const [capacidadesOpts, setCapacidadesOpts] = useState<{ value: string; label: string }[]>([]);
@@ -156,6 +159,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   const [actividades, setActividades] = useState<ActividadRow[]>([]);
   const [actividadOpen, setActividadOpen] = useState(false);
   const [nuevaActividad, setNuevaActividad] = useState<ActividadRow>({ ...EMPTY_ACTIVIDAD });
+  const [confirmActFuera, setConfirmActFuera] = useState(false);
   const [editingActividadIdx, setEditingActividadIdx] = useState<number | null>(null);
   // Acordeón de requerimientos: set de índices colapsados
   const [reqsColapsados, setReqsColapsados] = useState<Set<number>>(new Set());
@@ -635,10 +639,21 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
         const { error: delReqHuerfErr } = await supabase.from("requerimiento_engagement").delete().in("id", idsHuerfanos);
         if (delReqHuerfErr) { setServerError(`Error al quitar requerimientos: ${delReqHuerfErr.message}`); setLoading(false); return; }
       }
+    } else if (creadoIdRef.current) {
+      // Reintento tras un error posterior a la creación: se actualiza el proyecto ya creado
+      // en vez de insertar otro (antes cada reintento duplicaba el proyecto)
+      engId = creadoIdRef.current;
+      const { error } = await supabase.from("engagement").update(payload).eq("id", engId);
+      if (error) { setServerError(error.message); setLoading(false); return; }
+      // Los cupos del intento anterior se reemplazan por los del formulario
+      const { error: delAsigPrevErr } = await supabase.from("asignacion").delete().eq("engagement_id", engId);
+      const { error: delReqPrevErr } = delAsigPrevErr ? { error: null } : await supabase.from("requerimiento_engagement").delete().eq("engagement_id", engId);
+      if (delAsigPrevErr || delReqPrevErr) { setServerError((delAsigPrevErr ?? delReqPrevErr)!.message); setLoading(false); return; }
     } else {
       const { data, error } = await supabase.from("engagement").insert(payload).select("id").single();
       if (error || !data) { setServerError(error?.message ?? "Error"); setLoading(false); return; }
       engId = data.id;
+      creadoIdRef.current = data.id;
     }
 
     // Capacidades, temáticas y actividades: reemplazo atómico en la base
@@ -662,6 +677,18 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     if (asignacionesAEliminar.length > 0) {
       const { error: delAsigErr } = await supabase.from("asignacion").delete().in("id", asignacionesAEliminar);
       if (delAsigErr) { setServerError(`Error al quitar asignaciones: ${delAsigErr.message}`); setLoading(false); return; }
+    }
+
+    // Valores actuales de los cupos en la base, para saber qué cambió realmente al guardar
+    const reqsPrevios = new Map<string, { pct_dedicacion: number; fecha_inicio: string | null; fecha_fin: string | null }>();
+    const idsReqsGuardados = reqs.filter((r) => r.id).map((r) => r.id!);
+    if (idsReqsGuardados.length > 0) {
+      const { data: prevData, error: prevErr } = await supabase
+        .from("requerimiento_engagement")
+        .select("id, pct_dedicacion, fecha_inicio, fecha_fin")
+        .in("id", idsReqsGuardados);
+      if (prevErr) { setServerError(`Error al leer el equipo del proyecto: ${prevErr.message}`); setLoading(false); return; }
+      for (const p of (prevData ?? []) as any[]) reqsPrevios.set(p.id, p);
     }
 
     for (const [i, r] of reqs.entries()) {
@@ -713,18 +740,29 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           .from("requerimiento_engagement").update(reqPayload).eq("id", r.id);
         if (updErr) { setServerError(`Error en requerimiento ${i + 1}: ${updErr.message}`); setLoading(false); return; }
 
-        // Cascada: sincroniza fechas y pct_dedicacion en asignaciones activas
-        const asigUpdate: Record<string, string | number | null> = {
-          pct_dedicacion: reqPayload.pct_dedicacion,
-        };
-        if (reqPayload.fecha_inicio) asigUpdate.fecha_inicio = reqPayload.fecha_inicio;
-        if (reqPayload.fecha_fin)    asigUpdate.fecha_fin    = reqPayload.fecha_fin;
-        const { error: cascErr } = await supabase
-          .from("asignacion")
-          .update(asigUpdate)
-          .eq("requerimiento_id", r.id)
-          .eq("estado", "activa");
-        if (cascErr) { setServerError(`Error al sincronizar asignaciones del requerimiento ${i + 1}: ${cascErr.message}`); setLoading(false); return; }
+        // Cascada: solo si el cupo cambió de verdad, y solo a las asignaciones que tenían el
+        // valor anterior. Antes, guardar el formulario (aunque fuera solo el nombre) dejaba a todas
+        // las personas del cupo con sus fechas y % → tramos encimados y ocupación duplicada.
+        const previo = reqsPrevios.get(r.id);
+        if (previo) {
+          const cascOps: Promise<any>[] = [];
+          if (Number(previo.pct_dedicacion) !== reqPayload.pct_dedicacion) {
+            cascOps.push(supabase.from("asignacion").update({ pct_dedicacion: reqPayload.pct_dedicacion })
+              .eq("requerimiento_id", r.id).eq("estado", "activa").eq("pct_dedicacion", previo.pct_dedicacion));
+          }
+          if (reqPayload.fecha_inicio && previo.fecha_inicio && reqPayload.fecha_inicio !== previo.fecha_inicio) {
+            cascOps.push(supabase.from("asignacion").update({ fecha_inicio: reqPayload.fecha_inicio })
+              .eq("requerimiento_id", r.id).eq("estado", "activa").eq("fecha_inicio", previo.fecha_inicio));
+          }
+          if (reqPayload.fecha_fin && previo.fecha_fin && reqPayload.fecha_fin !== previo.fecha_fin) {
+            cascOps.push(supabase.from("asignacion").update({ fecha_fin: reqPayload.fecha_fin })
+              .eq("requerimiento_id", r.id).eq("estado", "activa").eq("fecha_fin", previo.fecha_fin));
+          }
+          if (cascOps.length > 0) {
+            const cascErr = (await Promise.all(cascOps)).find((x: any) => x.error)?.error;
+            if (cascErr) { setServerError(`Error al sincronizar asignaciones del requerimiento ${i + 1}: ${cascErr.message}`); setLoading(false); return; }
+          }
+        }
       } else {
         const { error: insErr } = await (supabase as any)
           .from("requerimiento_engagement").insert(reqPayload);
@@ -766,20 +804,33 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
         if (syncErr) { setServerError(`Error al sincronizar fechas de requerimientos: ${syncErr.message}`); setLoading(false); return; }
       }
 
-      // Propaga el mismo cambio de fechas a las asignaciones activas del engagement
-      const asigMassUpdate: Record<string, string> = {};
-      if (form.fecha_inicio && engagement.fecha_inicio && form.fecha_inicio !== engagement.fecha_inicio)
-        asigMassUpdate.fecha_inicio = form.fecha_inicio;
+      // Propaga el cambio de fechas a las asignaciones activas, solo a las que corresponde:
+      // - nuevo inicio → solo quienes empezaban junto con el proyecto (misma fecha anterior)
+      // - fin acortado → solo quienes terminaban después del nuevo fin (se recortan);
+      //   quien ya había salido antes conserva su fecha (antes se le alargaba)
+      const asigOps: Promise<any>[] = [];
+      if (form.fecha_inicio && engagement.fecha_inicio && form.fecha_inicio !== engagement.fecha_inicio) {
+        asigOps.push(
+          supabase.from("asignacion")
+            .update({ fecha_inicio: form.fecha_inicio })
+            .eq("engagement_id", engId)
+            .eq("estado", "activa")
+            .eq("fecha_inicio", engagement.fecha_inicio)
+        );
+      }
       if (form.fecha_fin_estimada && engagement.fecha_fin_estimada &&
-          form.fecha_fin_estimada < engagement.fecha_fin_estimada)
-        asigMassUpdate.fecha_fin = form.fecha_fin_estimada;
-
-      if (Object.keys(asigMassUpdate).length > 0) {
-        const { error: massErr } = await supabase
-          .from("asignacion")
-          .update(asigMassUpdate)
-          .eq("engagement_id", engId)
-          .eq("estado", "activa");
+          form.fecha_fin_estimada < engagement.fecha_fin_estimada) {
+        asigOps.push(
+          supabase.from("asignacion")
+            .update({ fecha_fin: form.fecha_fin_estimada })
+            .eq("engagement_id", engId)
+            .eq("estado", "activa")
+            .gt("fecha_fin", form.fecha_fin_estimada)
+            .lte("fecha_inicio", form.fecha_fin_estimada)
+        );
+      }
+      if (asigOps.length > 0) {
+        const massErr = (await Promise.all(asigOps)).find((r: any) => r.error)?.error;
         if (massErr) { setServerError(`Error al sincronizar fechas de asignaciones: ${massErr.message}`); setLoading(false); return; }
       }
     }
@@ -873,8 +924,9 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
         if (extErr) { setServerError(`Error al crear extensión: ${extErr}`); setLoading(false); return; }
       }
     } else if (!mostrarExtension && extId) {
-      const { error: extErr } = await supabase.from("engagement_extension").delete().eq("id", extId);
-      if (extErr) { setServerError(`Error al eliminar extensión: ${extErr.message}`); setLoading(false); return; }
+      // Elimina la extensión y libera al equipo asignado a ese período
+      const { error: extErr } = await eliminarExtensionConEquipo(supabase, extId);
+      if (extErr) { setServerError(`Error al eliminar extensión: ${extErr}`); setLoading(false); return; }
     }
 
     setLoading(false);
@@ -888,6 +940,28 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   // Límites de fecha para requerimientos (usa fecha_fin_real como fallback)
   const minReqDate = form.fecha_inicio || undefined;
   const maxReqDate = form.fecha_fin_estimada || (engagement as any)?.fecha_fin_real || undefined;
+
+  // Viajes/talleres deben caer dentro del engagement (incluida su extensión): si quedaban
+  // fuera se guardaban igual pero no se veían en ninguna vista
+  const minActDate = form.fecha_inicio || undefined;
+  const maxActDate = (() => {
+    const fin = fechaFinEfectiva || "";
+    const ext = mostrarExtension && extFechaFin ? extFechaFin : "";
+    return (ext > fin ? ext : fin) || undefined;
+  })();
+
+  // Agrega (o reemplaza, si se está editando) el viaje/taller del formulario
+  function guardarActividad() {
+    if (editingActividadIdx !== null) {
+      setActividades((prev) => prev.map((a, j) => j === editingActividadIdx ? { ...nuevaActividad } : a));
+      setEditingActividadIdx(null);
+    } else {
+      setActividades((prev) => [...prev, { ...nuevaActividad }]);
+    }
+    setActividadOpen(false);
+    setNuevaActividad({ ...EMPTY_ACTIVIDAD });
+    setErrors((p) => { const n = { ...p }; delete n.act_tipo; delete n.act_titulo; delete n.act_fechas; return n; });
+  }
 
   // ── Agrupación de "Equipo del proyecto" por persona: nunca se repite un nombre en
   // varias tarjetas — todos sus tramos (con o sin requerimiento) viven en una sola ficha.
@@ -1520,22 +1594,28 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                 </FieldWrapper>
               </div>
               <div className="grid grid-cols-2 gap-3">
-                <FieldWrapper label="Fecha inicio">
+                <FieldWrapper label="Fecha inicio" error={errors.act_fechas}>
                   <Input type="date" value={nuevaActividad.fecha_inicio}
                     onChange={(e) => setNuevaActividad((p) => ({ ...p, fecha_inicio: e.target.value }))} />
                 </FieldWrapper>
                 <FieldWrapper label="Fecha término">
-                  <Input type="date" value={nuevaActividad.fecha_fin} min={nuevaActividad.fecha_inicio || undefined}
+                  <Input type="date" value={nuevaActividad.fecha_fin}
+                    min={nuevaActividad.fecha_inicio || undefined}
                     onChange={(e) => setNuevaActividad((p) => ({ ...p, fecha_fin: e.target.value }))} />
                 </FieldWrapper>
               </div>
+              {(minActDate || maxActDate) && (
+                <p className="text-[11px] text-[#888] -mt-1">
+                  Fechas del engagement: {minActDate ?? "…"} a {maxActDate ?? "…"}
+                </p>
+              )}
               <FieldWrapper label="Descripción (opcional)">
                 <Textarea value={nuevaActividad.descripcion}
                   onChange={(e) => setNuevaActividad((p) => ({ ...p, descripcion: (e as any).target?.value ?? e as any }))}
                   placeholder="Detalles breves..." />
               </FieldWrapper>
               <div className="flex justify-end gap-2">
-                <button type="button" onClick={() => { setActividadOpen(false); setEditingActividadIdx(null); setErrors((p) => { const n = { ...p }; delete n.act_tipo; delete n.act_titulo; return n; }); }}
+                <button type="button" onClick={() => { setActividadOpen(false); setEditingActividadIdx(null); setErrors((p) => { const n = { ...p }; delete n.act_tipo; delete n.act_titulo; delete n.act_fechas; return n; }); }}
                   className="text-xs px-3 py-1.5 rounded-lg border border-[#e8e8e8] text-[#888] hover:bg-[#f5f5f5] transition-colors">
                   Cancelar
                 </button>
@@ -1544,17 +1624,14 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                     const errs: Record<string, string> = {};
                     if (!nuevaActividad.tipo)          errs.act_tipo   = "Requerido";
                     if (!nuevaActividad.titulo.trim())  errs.act_titulo = "Requerido";
+                    const { fecha_inicio: ai, fecha_fin: af } = nuevaActividad;
+                    if (!ai || !af) errs.act_fechas = "Ingresa fecha de inicio y término.";
+                    else if (af < ai) errs.act_fechas = "La fecha de término no puede ser anterior al inicio.";
                     if (Object.keys(errs).length) { setErrors((p) => ({ ...p, ...errs })); return; }
-                    if (editingActividadIdx !== null) {
-                      // Reemplazar actividad existente
-                      setActividades((prev) => prev.map((a, j) => j === editingActividadIdx ? { ...nuevaActividad } : a));
-                      setEditingActividadIdx(null);
-                    } else {
-                      setActividades((prev) => [...prev, { ...nuevaActividad }]);
-                    }
-                    setActividadOpen(false);
-                    setNuevaActividad({ ...EMPTY_ACTIVIDAD });
-                    setErrors((p) => { const n = { ...p }; delete n.act_tipo; delete n.act_titulo; return n; });
+                    // Fuera de las fechas del engagement se permite, pero confirmando primero
+                    // (en el Tablero se mostrará solo el ícono en esa semana, sin la barra)
+                    if ((minActDate && ai < minActDate) || (maxActDate && af > maxActDate)) { setConfirmActFuera(true); return; }
+                    guardarActividad();
                   }}
                   className="text-xs px-3 py-1.5 rounded-lg bg-[#4a90e2] text-white hover:bg-[#2563eb] transition-colors font-medium">
                   {editingActividadIdx !== null ? "Actualizar" : "Agregar"}
@@ -1563,6 +1640,16 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
             </div>
           )}
         </div>
+
+        {/* Aviso: viaje/taller fuera de las fechas del engagement */}
+        <ConfirmDialog
+          open={confirmActFuera}
+          onClose={() => setConfirmActFuera(false)}
+          onConfirm={() => { setConfirmActFuera(false); guardarActividad(); }}
+          title={`${nuevaActividad.tipo === "Taller" ? "Taller" : "Viaje"} fuera de las fechas del engagement`}
+          confirmLabel="Confirmar"
+          message={`Las fechas (${nuevaActividad.fecha_inicio} a ${nuevaActividad.fecha_fin}) quedan fuera del engagement (${minActDate ?? "…"} a ${maxActDate ?? "…"}). Se guardará igual y en el Tablero se mostrará solo el ícono de ${nuevaActividad.tipo === "Taller" ? "taller" : "viaje"} en esas semanas, sin la barra del proyecto. ¿Quieres continuar?`}
+        />
 
         {/* ── Extender Proyecto (solo en modo edición) ── */}
         {engagement && (

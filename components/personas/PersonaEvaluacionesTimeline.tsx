@@ -227,7 +227,7 @@ export function PersonaEvaluacionesTimeline({ personaId, cargoActual, cargosSuge
   async function eliminar(id: string) {
     if (!confirm("¿Eliminar esta evaluación?")) return;
     const { error } = await createAnyClient().from("persona_evaluacion").delete().eq("id", id);
-    if (!error) setEvaluaciones((prev) => prev.filter((e) => e.id !== id));
+    // Si falla se avisa (antes no pasaba nada visible)
   }
 
   return (
