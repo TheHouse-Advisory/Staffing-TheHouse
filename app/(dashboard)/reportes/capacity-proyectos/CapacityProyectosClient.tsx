@@ -79,6 +79,7 @@ export function CapacityProyectosClient() {
   const [year, setYear]     = useState(ANIO_ACTUAL);
   const [data, setData]     = useState<CapacityData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [colapsados, setColapsados]           = useState<Set<string>>(new Set());
   const [collapsedMonths, setCollapsedMonths] = useState<Set<string>>(new Set());
   const { tipos: tiposAusenciaDinamicos } = useTiposAusencia();
@@ -88,8 +89,16 @@ export function CapacityProyectosClient() {
     let cancelled = false;
     async function load() {
       setLoading(true);
+      setErrorCarga(null);
       const sb = createAnyClient();
-      const d = await fetchCapacityData(sb, year);
+      let d: Awaited<ReturnType<typeof fetchCapacityData>>;
+      try {
+        d = await fetchCapacityData(sb, year);
+      } catch (e) {
+        // Antes un error dejaba semanas en "1" sin aviso; ahora se muestra
+        if (!cancelled) { setErrorCarga(`No se pudo cargar: ${e instanceof Error ? e.message : e}`); setLoading(false); }
+        return;
+      }
       if (cancelled) return;
       setData(d);
       // Default: todos los meses colapsados (vista "prom. mes" como en la foto)
@@ -271,7 +280,11 @@ export function CapacityProyectosClient() {
       )}
 
       {/* ── Tabla ── */}
-      {!loading && data && (
+      {!loading && errorCarga && (
+        <div className="flex-1 flex items-center justify-center text-sm text-red-500">{errorCarga}</div>
+      )}
+
+      {!loading && !errorCarga && data && (
         <div className="flex-1 overflow-auto">
           <table
             className="border-collapse text-[12px]"

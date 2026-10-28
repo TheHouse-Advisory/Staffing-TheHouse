@@ -126,6 +126,9 @@ export function AnotacionesList() {
   }
 
   async function handleEliminarCarpeta(id: string) {
+    // Antes se eliminaba sin preguntar
+    const nombre = folders.find((f) => f.id === id)?.nombre ?? "esta carpeta";
+    if (!window.confirm(`¿Enviar "${nombre}" y sus subcarpetas a la papelera? Podrás restaurarlas desde ahí.`)) return;
     const supabase = createAnyClient();
     // Carpeta + subcarpetas activas van a la papelera (sus anotaciones conservan folder_id para restaurar)
     const aEliminar = new Set([id, ...descendientesDe(id, foldersActivas)]);

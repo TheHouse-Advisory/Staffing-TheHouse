@@ -389,13 +389,18 @@ export function PanelFitAsignacion({
     const sb = createAnyClient();
     const añoActual = new Date().getFullYear();
 
+    const hoyPerfil = today();
     const [asigRes, histRes, vacRes, personaRes, indRes, capRes, temRes, mentoreRes] = await Promise.all([
-      sb.from("asignacion").select("pct_dedicacion").eq("persona_id", p.persona_id).eq("estado", "activa"),
+      // Solo asignaciones vigentes hoy: antes sumaba también las terminadas y las futuras,
+      // y el "% libre" salía más bajo de lo real
+      sb.from("asignacion").select("pct_dedicacion").eq("persona_id", p.persona_id).eq("estado", "activa")
+        .lte("fecha_inicio", hoyPerfil).or(`fecha_fin.gte.${hoyPerfil},fecha_fin.is.null`),
       sb.from("asignacion").select("engagement_id").eq("persona_id", p.persona_id),
-      (sb as any).from("ausencia").select("id", { count: "exact", head: true })
+      // Días de ausencia del año (antes contaba registros, no días)
+      (sb as any).from("ausencia").select("fecha_inicio, fecha_fin")
         .eq("persona_id", p.persona_id)
-        .gte("fecha_inicio", `${añoActual}-01-01`)
-        .lte("fecha_fin", `${añoActual}-12-31`),
+        .lte("fecha_inicio", `${añoActual}-12-31`)
+        .gte("fecha_fin", `${añoActual}-01-01`),
       sb.from("persona").select("talento_potencial, talento_desempeno, mentor_id").eq("id", p.persona_id).single(),
       (sb as any).from("persona_industria").select("cat_industria(nombre)").eq("persona_id", p.persona_id),
       (sb as any).from("persona_capacidad").select("cat_capacidad(nombre)").eq("persona_id", p.persona_id),
@@ -419,7 +424,11 @@ export function PanelFitAsignacion({
       industrias: ((indRes.data ?? []) as any[]).map((r: any) => r.cat_industria?.nombre).filter(Boolean) as string[],
       capacidades: ((capRes.data ?? []) as any[]).map((r: any) => r.cat_capacidad?.nombre).filter(Boolean) as string[],
       tematicas:   ((temRes.data ?? []) as any[]).map((r: any) => r.cat_tematica?.nombre).filter(Boolean) as string[],
-      vacacionesDias: (vacRes as any).count ?? 0,
+      vacacionesDias: ((vacRes.data ?? []) as { fecha_inicio: string; fecha_fin: string }[]).reduce((total, a) => {
+        const ini = a.fecha_inicio > `${añoActual}-01-01` ? a.fecha_inicio : `${añoActual}-01-01`;
+        const fin = a.fecha_fin < `${añoActual}-12-31` ? a.fecha_fin : `${añoActual}-12-31`;
+        return total + expandirRango(ini, fin).length;
+      }, 0),
       talento_potencial: personaData?.talento_potencial ?? null,
       talento_desempeno: personaData?.talento_desempeno ?? null,
       mentorNombre,
@@ -429,8 +438,13 @@ export function PanelFitAsignacion({
   }
 
   useEffect(() => {
+    // Si se cambia de requerimiento antes de terminar, la carga anterior se descarta
+    let cancelado = false;
     async function load() {
       setLoading(true);
+      // Limpiar datos del requerimiento anterior (atajos de período, ausencias)
+      setPeriodos([]);
+      setAusenciasMap(new Map());
 
       // ── SIMULACIÓN: req sintético con fechas del engagement, sin Supabase ──
       if (simulationMode) {
@@ -479,7 +493,7 @@ export function PanelFitAsignacion({
         (sb as any).from("engagement_extension").select("id, fecha_inicio, fecha_fin").eq("engagement_id", engagementId).order("fecha_inicio"),
       ]);
 
-      if (!reqData) { setLoading(false); return; }
+      if (cancelado) return;
 
       // Chips de atajo: solo si el engagement tiene extensiones registradas
       if (extData && extData.length > 0) {
@@ -542,6 +556,7 @@ export function PanelFitAsignacion({
           .in("persona_id", ids)
           .gte("fecha_fin", hoyStr)
           .order("fecha_inicio");
+        if (cancelado) return;
         const map = new Map<string, AusRow[]>();
         for (const a of (ausData ?? []) as any[]) {
           const tipo = a.tipo as TipoAusencia;
@@ -561,6 +576,7 @@ export function PanelFitAsignacion({
       setLoading(false);
     }
     load();
+    return () => { cancelado = true; };
   }, [reqId, engagementId, engagementNombre, engagementCliente]);
 
   // Abre el modal de confirmación con las fechas del requerimiento como default
@@ -607,7 +623,7 @@ export function PanelFitAsignacion({
     // ─────────────────────────────────────────────────────────────────
 
     const sb = createAnyClient();
-    const { error } = await (sb as any).from("asignacion").insert({
+    const { data: nueva, error } = await (sb as any).from("asignacion").insert({
       engagement_id: engagementId,
       requerimiento_id: reqId,
       persona_id: persona.persona_id,
@@ -616,12 +632,28 @@ export function PanelFitAsignacion({
       fecha_inicio: fechaInicio,
       fecha_fin: fechaFin,
       estado: "activa",
-    });
+    }).select("id").single();
 
-    if (error) {
-      setErr(error.message);
+    if (error || !nueva) {
+      setErr(error?.message ?? "No se pudo guardar la asignación.");
       setAsignando(null);
       return;
+    }
+
+    // "Reasignar": la nueva asignación reemplaza los tramos previos de la persona en este
+    // requerimiento que se cruzan con las fechas elegidas (antes se sumaba → ocupación duplicada).
+    // Se borra después de insertar, para no dejar a la persona sin asignación si algo falla.
+    const previasCruzadas = req.asignaciones
+      .filter((a) => a.persona_id === persona.persona_id
+        && a.fecha_inicio <= fechaFin && (a.fecha_fin === null || a.fecha_fin >= fechaInicio))
+      .map((a) => a.asignacion_id);
+    if (previasCruzadas.length > 0) {
+      const { error: delErr } = await (sb as any).from("asignacion").delete().in("id", previasCruzadas);
+      if (delErr) {
+        setErr(`Asignación guardada, pero no se pudo quitar la anterior: ${delErr.message}`);
+        setAsignando(null);
+        return;
+      }
     }
 
     setExito(`${persona.nombre} ${persona.apellido} asignado/a correctamente.`);
@@ -629,6 +661,11 @@ export function PanelFitAsignacion({
     setPendingConfirm(null);
     setTimeout(() => { onAsignado(); onClose(); }, 900);
   }
+
+  // Fechas del modal: ambas obligatorias y fin >= inicio
+  const fechasInvalidas = !!pendingConfirm && (
+    !pendingConfirm.fechaInicio || !pendingConfirm.fechaFin || pendingConfirm.fechaFin < pendingConfirm.fechaInicio
+  );
 
   return (
     <div className="h-full bg-white flex flex-col relative overflow-hidden">
@@ -679,16 +716,20 @@ export function PanelFitAsignacion({
               </div>
             </div>
             {err && <p className="text-xs text-red-500">{err}</p>}
+            {fechasInvalidas && (
+              <p className="text-xs text-red-500">Completa ambas fechas; la de fin no puede ser anterior a la de inicio.</p>
+            )}
             <div className="flex gap-2">
               <button
                 onClick={() => setPendingConfirm(null)}
-                className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50 transition-colors"
+                disabled={!!asignando}
+                className="flex-1 px-3 py-1.5 rounded-lg border border-gray-200 text-sm text-gray-500 hover:bg-gray-50 disabled:opacity-50 transition-colors"
               >
                 Cancelar
               </button>
               <button
                 onClick={confirmAsignar}
-                disabled={!!asignando}
+                disabled={!!asignando || fechasInvalidas}
                 className="flex-1 px-3 py-1.5 rounded-lg bg-[#1a1a1a] text-white text-sm font-semibold hover:bg-[#333] disabled:opacity-50 transition-colors flex items-center justify-center gap-1"
               >
                 {asignando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle className="w-3.5 h-3.5" />}

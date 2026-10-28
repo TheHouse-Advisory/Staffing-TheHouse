@@ -2,7 +2,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { ChevronDown, ChevronRight, Loader2, Pencil, X, Check, TrendingUp, Eye } from "lucide-react";
-import { differenceInCalendarDays } from "date-fns";
+import { differenceInCalendarDays, format } from "date-fns";
 import { createClient } from "@/lib/supabase/client";
 import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
 import {
@@ -389,12 +389,21 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
   const supabase  = createClient();
   const { tipos: tiposAusenciaDinamicos } = useTiposAusencia();
 
+  // Aviso de error (carga o guardado), visible sin tapar la grilla
+  const [errorCap, setErrorCap] = useState<string | null>(null);
+  function avisarError(msg: string) { setErrorCap(msg); setTimeout(() => setErrorCap(null), 8000); }
+
   const cargar = useCallback(async () => {
     setLoading(true);
-    const d = await fetchCapacityData(supabase, year);
-    setData(d);
-    setValores(d.valores);
-    setLoading(false);
+    try {
+      const d = await fetchCapacityData(supabase, year);
+      setData(d);
+      setValores(d.valores);
+    } catch (e) {
+      avisarError(`No se pudo cargar Capacity: ${e instanceof Error ? e.message : e}`);
+    } finally {
+      setLoading(false);
+    }
   }, [year]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => { cargar(); }, [cargar]);
@@ -648,7 +657,11 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
     setValores(prev => ({ ...prev, [p.personaId]: { ...(prev[p.personaId] ?? {}), [semana]: v } }));
     const key = `${p.id}:${semana}`;
     clearTimeout(timers.current[key]);
-    timers.current[key] = setTimeout(() => { upsertCapacity(supabase, p.personaId, semana, v); }, 800);
+    timers.current[key] = setTimeout(async () => {
+      const err = await upsertCapacity(supabase, p.personaId, semana, v);
+      // Si no se guardó: se avisa y se vuelve al valor real (antes quedaba el nuevo en pantalla)
+      if (err) { avisarError(`No se guardó el valor de la semana ${semana}: ${err}`); cargar(); }
+    }, 800);
   }
 
   // ── Edición masiva: grupo × todas las semanas ──────────────
@@ -681,14 +694,17 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
       return next;
     });
 
-    // 2. Flash verde en todas las celdas del grupo
-    const keys = new Set(rowIds.flatMap(pid => semanas.map(sem => `${pid}:${sem}`)));
-    setFlashCells(keys);
-    setTimeout(() => setFlashCells(new Set()), 1200);
-
-    // 3. Persistir en Supabase (secuencial, una persona a la vez)
+    // 2. Persistir en Supabase (secuencial, una persona a la vez)
     const err = await upsertCapacityBulkAll(supabase, personaIds, semanas, capacidad);
-    if (err) console.error("[bulk capacity] Errores al persistir:", err);
+
+    // 3. Flash verde solo si se guardó (antes se marcaba en verde aunque fallara)
+    if (err) {
+      avisarError(`No se pudo guardar la edición del grupo: ${err}`);
+    } else {
+      const keys = new Set(rowIds.flatMap(pid => semanas.map(sem => `${pid}:${sem}`)));
+      setFlashCells(keys);
+      setTimeout(() => setFlashCells(new Set()), 1200);
+    }
 
     // 4. Recargar desde DB para confirmar estado real (elimina discrepancias optimistas)
     await cargar();
@@ -718,14 +734,17 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
       return next;
     });
 
-    // 2. Flash en celdas afectadas (por fila)
-    const keys = new Set(semanasFiltradas.map(sem => `${persona.id}:${sem}`));
-    setFlashCells(keys);
-    setTimeout(() => setFlashCells(new Set()), 1200);
-
-    // 3. Persistir — reutiliza upsertCapacityBulkAll con el id real de la persona
+    // 2. Persistir — reutiliza upsertCapacityBulkAll con el id real de la persona
     const err = await upsertCapacityBulkAll(supabase, [persona.personaId], semanasFiltradas, capacidad);
-    if (err) console.error("[persona capacity] Error al persistir:", err);
+
+    // 3. Flash verde solo si se guardó
+    if (err) {
+      avisarError(`No se pudo guardar la edición de ${persona.nombre} ${persona.apellido}: ${err}`);
+    } else {
+      const keys = new Set(semanasFiltradas.map(sem => `${persona.id}:${sem}`));
+      setFlashCells(keys);
+      setTimeout(() => setFlashCells(new Set()), 1200);
+    }
 
     // 4. Recargar desde DB para confirmar estado real (igual que el bulk)
     await cargar();
@@ -741,7 +760,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
       </div>
     );
   }
-  if (!data) return null;
+  if (!data) return errorCap ? <p className="p-6 text-sm text-red-500">{errorCap}</p> : null;
 
   const { semanas } = data;
   const CELL_W = 52;
@@ -749,6 +768,11 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
 
   return (
     <div className="h-full flex flex-col">
+      {errorCap && (
+        <div className="fixed bottom-6 right-6 z-50 max-w-sm bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 shadow-lg">
+          {errorCap}
+        </div>
+      )}
 
       {/* Barra superior */}
       <div className="flex items-center justify-end gap-2 px-4 py-2 border-b border-[#f0f0f0] flex-shrink-0">
@@ -947,7 +971,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                   {/* ── Filas de personas ── */}
                   {!colapsado && equipo.map((p, idx) => {
                     const isLoadingRow = loadingPersona === p.id;
-                    const todayISO = new Date().toISOString().split("T")[0];
+                    const todayISO = format(new Date(), "yyyy-MM-dd");
                     const yaSalio = !!p.fecha_salida && p.fecha_salida <= todayISO;
                     // Periodo visualizado entero anterior a su contratación (aún no ingresó en este rango)
                     const ultimaSemana = data!.semanas[data!.semanas.length - 1];

@@ -59,7 +59,8 @@ function ocupColor(pct: number) {
 
 export function InicioClient() {
   const [rol, setRol] = useState<RolSistema | null>(null);
-  const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD" || rol === "AySr";
+  // Rol aún sin cargar (null) = solo lectura, para no mostrar botones de edición por un instante
+  const isReadOnly = rol === null || rol === "proposer" || rol === "Desarrollo" || rol === "planificador" || rol === "GyD" || rol === "AySr";
   const [personas, setPersonas] = useState<Persona[]>([]);
   const [ocupacionMap, setOcupacionMap] = useState<Record<string, number>>({});
   const [asignacionesDetalle, setAsignacionesDetalle] = useState<AsigDetalle[]>([]);
@@ -132,6 +133,7 @@ export function InicioClient() {
 
   // Popup persona
   const [seleccionada, setSeleccionada] = useState<Persona | null>(null);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -208,9 +210,14 @@ export function InicioClient() {
         return isSameDay(aniv, hoyDate);
       });
       setAlertasHoy(conAniv.length);
-      setLoading(false);
+      // Antes un error dejaba el equipo vacío sin aviso
+      const errCarga = [persRes, asigRes, asigDetalleRes, ausRes].find((r: any) => r.error)?.error;
+      if (errCarga) setErrorCarga(`No se pudieron cargar todos los datos: ${errCarga.message}`);
     }
-    load();
+    // finally: si algo falla, no queda el esqueleto de carga para siempre
+    load()
+      .catch((e) => setErrorCarga(`No se pudo cargar Inicio: ${e?.message ?? e}`))
+      .finally(() => setLoading(false));
   }, []);
 
   /** Re-fetch ocupación tras una asignación nueva o eliminada */
@@ -229,6 +236,18 @@ export function InicioClient() {
       map[a.persona_id] = (map[a.persona_id] ?? 0) + Number(a.pct_dedicacion);
     }
     setOcupacionMap(map);
+
+    // También se refresca "Disponibles próximamente" (antes quedaba desactualizado tras asignar)
+    const { data: detalle } = await (sb as any).from("asignacion")
+      .select("persona_id, fecha_fin, estado_staffing, engagement:engagement_id(tipo)")
+      .eq("estado", "activa")
+      .lte("fecha_inicio", hoy)
+      .gte("fecha_fin", hoy);
+    setAsignacionesDetalle(
+      ((detalle ?? []) as any[])
+        .filter((a) => !(rol === "AySr" && a.estado_staffing === "PLAN"))
+        .map((a) => ({ persona_id: a.persona_id, fecha_fin: a.fecha_fin, tipo: a.engagement?.tipo ?? "proyecto" }))
+    );
   }, [rol]);
 
   // Escucha cambios de asignación/engagement desde cualquier componente (tablero, formularios, etc.)
@@ -275,6 +294,9 @@ export function InicioClient() {
 
   return (
     <div className="flex flex-col h-full pt-3 px-6 pb-6 gap-3">
+      {errorCarga && (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-2">{errorCarga}</p>
+      )}
       {/* Top bar */}
       <div className="flex items-start justify-between flex-shrink-0">
         <div>
@@ -509,7 +531,7 @@ export function InicioClient() {
               onAsignacionChange={isReadOnly ? undefined : refreshOcupacion}
               onOpenPanel={isReadOnly ? undefined : abrirPanel}
               externalReloadKey={tableroReloadKey}
-              ocultarPctEquipo={rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
+              ocultarPctEquipo={rol === null || rol === "GyD" || rol === "AySr" || rol === "planificador" || rol === "Desarrollo"}
               ocultarPorConfirmar={rol === "AySr"}
               isAdmin={esAdmin(rol)}
               vistaResumida={vistaResumida}

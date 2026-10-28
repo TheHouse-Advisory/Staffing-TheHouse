@@ -48,7 +48,7 @@ export function useTiposAusencia() {
   useEffect(() => { cargar(); }, [cargar]);
 
   /** Crea un nuevo tipo. Si no se pasa color, asigna el siguiente disponible de la paleta. */
-  async function crearTipo(label: string, color?: string): Promise<TipoAusenciaRow | null> {
+  async function crearTipo(label: string, color?: string): Promise<{ tipo: TipoAusenciaRow | null; error: string | null }> {
     const id = label.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
     const color_bg = color ?? siguienteColor(tipos);
     const sb = createAnyClient();
@@ -57,20 +57,24 @@ export function useTiposAusencia() {
       .insert({ id, label: label.trim(), color_bg, color_text: "#fff" })
       .select()
       .single();
-    if (error) return null;
+    // Se devuelve el error real: antes cualquier fallo se mostraba como "ya existe"
+    if (error) return { tipo: null, error: error.code === "23505" ? "Ya existe un tipo con ese nombre." : error.message };
     await cargar();
-    return data as TipoAusenciaRow;
+    return { tipo: data as TipoAusenciaRow, error: null };
   }
 
   /**
    * Intenta eliminar un tipo.
    * Devuelve { ok: true } o { ok: false, count: number } si está en uso.
    */
-  async function eliminarTipo(id: string): Promise<{ ok: boolean; count: number }> {
+  async function eliminarTipo(id: string): Promise<{ ok: boolean; count: number; error?: string }> {
     const sb = createAnyClient();
-    const { count } = await sb.from("ausencia").select("id", { count: "exact", head: true }).eq("tipo", id);
+    const { count, error: countErr } = await sb.from("ausencia").select("id", { count: "exact", head: true }).eq("tipo", id);
+    if (countErr) return { ok: false, count: 0, error: countErr.message };
     if ((count ?? 0) > 0) return { ok: false, count: count ?? 0 };
-    await sb.from("tipo_ausencia").delete().eq("id", id);
+    // Antes no se revisaba: siempre decía "eliminado"
+    const { error } = await sb.from("tipo_ausencia").delete().eq("id", id);
+    if (error) return { ok: false, count: 0, error: error.message };
     await cargar();
     return { ok: true, count: 0 };
   }

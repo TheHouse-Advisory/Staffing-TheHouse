@@ -15,7 +15,7 @@ const DIAS_SEMANA = ['L', 'M', 'X', 'J', 'V'];
 function addDayStr(dateStr: string, n: number): string {
   const d = new Date(dateStr + "T00:00:00");
   d.setDate(d.getDate() + n);
-  return d.toISOString().split("T")[0];
+  return format(d, "yyyy-MM-dd");
 }
 
 const JERARQUIA: Record<string, number> = {
@@ -98,7 +98,7 @@ function overlapsColumna(inicio: string, fin: string, col: Columna): boolean {
 }
 
 function calcDiasEngagement(inicio: string, fin: string | null) {
-  const hoy = new Date().toISOString().split("T")[0];
+  const hoy = format(new Date(), "yyyy-MM-dd");
   if (inicio > hoy) {
     const d = expandirRango(hoy, inicio).length - 1;
     return { dias: d, esFuturo: true };

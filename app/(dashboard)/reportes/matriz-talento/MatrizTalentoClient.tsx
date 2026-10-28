@@ -113,6 +113,7 @@ export function MatrizTalentoClient() {
   const [personas,     setPersonas]     = useState<Persona[]>([]);
   const [loading,      setLoading]      = useState(true);
   const [grupoActivo,  setGrupoActivo]  = useState("dg");
+  const [error,        setError]        = useState<string | null>(null);
 
   useEffect(() => {
     createAnyClient()
@@ -120,7 +121,12 @@ export function MatrizTalentoClient() {
       .select("id, nombre, apellido, cargo_actual, talento_potencial, talento_desempeno")
       .eq("activo", true)
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .then(({ data }: { data: any }) => { setPersonas((data ?? []) as Persona[]); setLoading(false); });
+      .then(({ data, error: err }: { data: any; error: any }) => {
+        // Antes un error mostraba la matriz vacía sin ningún mensaje
+        if (err) setError(`No se pudo cargar la matriz: ${err.message}`);
+        setPersonas((data ?? []) as Persona[]);
+        setLoading(false);
+      });
   }, []);
 
   const grupo = GRUPOS.find(g => g.id === grupoActivo)!;
@@ -156,6 +162,7 @@ export function MatrizTalentoClient() {
       </header>
 
       <div className="flex-1 overflow-y-auto p-6 flex flex-col gap-5">
+        {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">{error}</p>}
 
         {/* ── Barra de filtros ─────────────────────────────── */}
         <div className="flex items-stretch gap-1 bg-slate-100 rounded-xl p-1 w-fit self-start">

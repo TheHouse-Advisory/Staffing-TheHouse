@@ -182,15 +182,16 @@ function buildLineas(
 // ─────────────────────────────────────────────────────────────
 
 function TablaCobertura({
-  titulo, engs, semanas, reqs, asigs, personasDisponibles, onActualizar,
+  titulo, engs, semanas, reqs, asigs, personasDisponibles, onActualizar, soloLectura,
 }: {
+  soloLectura: boolean;
   titulo: string;
   engs: EngRow[];
   semanas: Semana[];
   reqs: ReqRow[];
   asigs: AsigRow[];
   personasDisponibles: PersonaOpcion[];
-  onActualizar: (params: ActualizarLineaParams) => Promise<void>;
+  onActualizar: (params: ActualizarLineaParams) => Promise<boolean>;
 }) {
   if (engs.length === 0) return null;
   return (
@@ -242,6 +243,7 @@ function TablaCobertura({
                         lineas={buildLineas(eng, s, reqs, asigs)}
                         personasDisponibles={personasDisponibles}
                         onActualizar={onActualizar}
+                        soloLectura={soloLectura}
                       />
                     ))}
                   </tr>
@@ -268,8 +270,13 @@ export function ResumenProyectosClient() {
   const [error, setError]     = useState<string | null>(null);
   const [sincronizando, setSincronizando] = useState(false);
   const [errorExcel, setErrorExcel]       = useState<string | null>(null);
+  const [errorGuardar, setErrorGuardar]   = useState<string | null>(null);
   const [baseFecha, setBaseFecha] = useState(() => startOfISOWeek(new Date()));
   const [actorNombre, setActorNombre] = useState("Usuario");
+  // Solo los roles que la base deja escribir asignaciones pueden editar celdas (admin, personas,
+  // planificador). Antes "proposer" veía celdas editables y la base rechazaba sus cambios.
+  // Mientras carga el rol, las celdas quedan en solo lectura.
+  const [puedeEditar, setPuedeEditar] = useState(false);
   const [ultimoCambio, setUltimoCambio] = useState<{ actor: string; fecha: string } | null>(null);
 
   const semanas = generarSemanas(12, baseFecha);
@@ -299,8 +306,11 @@ export function ResumenProyectosClient() {
     cargarUltimoCambio();
   }, [cargarUltimoCambio]);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  // silencioso = recarga sin el aviso "Cargando…" (tras guardar o por cambios de otro usuario):
+  // así no se desarma la tabla ni se pierde una celda que se está escribiendo
+  const load = useCallback(async (silencioso = false) => {
+    if (!silencioso) setLoading(true);
+    setError(null);
     const sb = createAnyClient();
 
     // 0. Personas activas (para el autocompletado de asignación)
@@ -344,12 +354,14 @@ export function ResumenProyectosClient() {
     const engIds = rows.map((e) => e.id);
 
     // 2. Requerimientos que solapan el rango
-    const { data: reqData } = await sb
+    const { data: reqData, error: reqErr } = await sb
       .from("requerimiento_engagement")
       .select("id, engagement_id, cargo_requerido, fecha_inicio, fecha_fin, pct_dedicacion")
       .in("engagement_id", engIds)
       .lte("fecha_inicio", rangoFin)
       .gte("fecha_fin", rangoInicio);
+    // Antes un error dejaba las celdas vacías, como si nadie estuviera asignado
+    if (reqErr) { setError(reqErr.message); setLoading(false); return; }
 
     setReqs(
       (reqData ?? [])
@@ -365,13 +377,14 @@ export function ResumenProyectosClient() {
     );
 
     // 3. Asignaciones activas en el rango con datos de persona
-    const { data: asigData } = await sb
+    const { data: asigData, error: asigErr } = await sb
       .from("asignacion")
       .select("id, engagement_id, persona_id, requerimiento_id, cargo_al_momento, pct_dedicacion, fecha_inicio, fecha_fin, estado_staffing, persona:persona_id(nombre, apellido, iniciales)")
       .in("engagement_id", engIds)
       .eq("estado", "activa")
       .lte("fecha_inicio", rangoFin)
       .or(`fecha_fin.gte.${rangoInicio},fecha_fin.is.null`);
+    if (asigErr) { setError(asigErr.message); setLoading(false); return; }
 
     setAsigs(
       (asigData ?? []).map((a: any) => ({
@@ -402,19 +415,22 @@ export function ResumenProyectosClient() {
     const channel = sb
       .channel("resumen-proyectos-asignacion")
       .on("postgres_changes", { event: "*", schema: "public", table: "asignacion" }, () => {
-        load();
+        load(true);
         cargarUltimoCambio();
       })
       .subscribe();
     return () => { sb.removeChannel(channel); };
   }, [load, cargarUltimoCambio]);
 
-  async function handleActualizar(params: ActualizarLineaParams) {
+  async function handleActualizar(params: ActualizarLineaParams): Promise<boolean> {
     const sb = createAnyClient();
     const { error } = await actualizarAsignacionSemana(sb, { ...params, actorNombre });
-    if (error) { setError(error); return; }
-    await load();
+    // El error se muestra en un aviso aparte: antes reemplazaba toda la tabla hasta recargar
+    if (error) { setErrorGuardar(`No se pudo guardar la celda: ${error}`); await load(true); return false; }
+    setErrorGuardar(null);
+    await load(true);
     await cargarUltimoCambio();
+    return true;
   }
 
   async function descargarExcel() {
@@ -485,6 +501,13 @@ export function ResumenProyectosClient() {
         </div>
       )}
 
+      {errorGuardar && (
+        <div className="px-6 py-2 text-[12px] text-red-600 bg-red-50 border-b border-red-100 flex-shrink-0 flex items-center justify-between gap-4">
+          <span>{errorGuardar}</span>
+          <button onClick={() => setErrorGuardar(null)} className="text-red-400 hover:text-red-600">Cerrar</button>
+        </div>
+      )}
+
       {/* ── Contenido ── */}
       <div className="flex-1 overflow-auto p-6">
         {loading && (
@@ -514,11 +537,11 @@ export function ResumenProyectosClient() {
 
               <TablaCobertura
                 titulo="Proyectos Activos" engs={proyectos} semanas={semanas} reqs={reqs} asigs={asigs}
-                personasDisponibles={personas} onActualizar={handleActualizar}
+                personasDisponibles={personas} onActualizar={handleActualizar} soloLectura={!puedeEditar}
               />
               <TablaCobertura
                 titulo="Propuestas Comerciales" engs={propuestas} semanas={semanas} reqs={reqs} asigs={asigs}
-                personasDisponibles={personas} onActualizar={handleActualizar}
+                personasDisponibles={personas} onActualizar={handleActualizar} soloLectura={!puedeEditar}
               />
 
               {proyectos.length === 0 && propuestas.length === 0 && (

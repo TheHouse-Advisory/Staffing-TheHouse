@@ -25,15 +25,21 @@ export function CapacitySnapshotReport() {
   const [mesEvaluado, setMesEvaluado] = useState(mesActualISO());
   const [data, setData] = useState<CapacitySnapshotData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     let vivo = true;
     setLoading(true);
-    fetchCapacitySnapshot(createAnyClient(), mesEvaluado).then((res) => {
-      if (vivo) { setData(res); setLoading(false); }
-    });
+    setError(null);
+    fetchCapacitySnapshot(createAnyClient(), mesEvaluado)
+      .then((res) => { if (vivo) { setData(res); setLoading(false); } })
+      .catch((e) => { if (vivo) { setError(`No se pudo calcular la dotación: ${e?.message ?? e}`); setData(null); setLoading(false); } });
     return () => { vivo = false; };
   }, [mesEvaluado]);
+
+  // Personas cuyo cargo no pertenece a ningún grupo: antes sumaban al total pero no
+  // aparecían en ninguna fila, así que las filas no cuadraban con el total
+  const otros = data ? data.personas.filter((p) => !CAPACITY_GRUPO_ORDER.includes(p.grupo as never)) : [];
 
   return (
     <div className="flex flex-col gap-4">
@@ -42,7 +48,7 @@ export function CapacitySnapshotReport() {
         <input
           type="month"
           value={mesEvaluado}
-          onChange={(e) => setMesEvaluado(e.target.value)}
+          onChange={(e) => { if (e.target.value) setMesEvaluado(e.target.value); }} // borrar el mes mostraba "Invalid Date"
           className="text-sm border border-[#e0e0e0] rounded-md px-2 py-1"
         />
         <span className="text-[13px] font-bold text-[#1a1a2e]">{mesLabel(mesEvaluado)}</span>
@@ -57,6 +63,8 @@ export function CapacitySnapshotReport() {
           <span className="text-sm">Calculando snapshot...</span>
         </div>
       )}
+
+      {!loading && error && <p className="text-sm text-red-500">{error}</p>}
 
       {!loading && data && (
         <div className="bg-white rounded-xl border border-[#e8e8e8] overflow-hidden">
@@ -82,6 +90,15 @@ export function CapacitySnapshotReport() {
                   </tr>
                 );
               })}
+              {otros.length > 0 && (
+                <tr className="border-b border-[#f5f5f5]">
+                  <td className="border border-[#e8e8e8] px-3 py-2 font-semibold text-[12px] text-[#1a1a1a] align-top">Otros</td>
+                  <td className="border border-[#e8e8e8] px-3 py-2 text-[11px] text-[#666]">
+                    {otros.map((p) => `${p.nombre} ${p.apellido}${p.cargo ? ` (${p.cargo})` : " (sin cargo)"}`).join(", ")}
+                  </td>
+                  <td className="border border-[#e8e8e8] px-3 py-2 text-center font-bold text-[#1a1a1a]">{otros.length}</td>
+                </tr>
+              )}
             </tbody>
             <tfoot>
               <tr className="bg-[#f9f9f9] border-t-2 border-[#e0e0e0]">

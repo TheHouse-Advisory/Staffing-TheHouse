@@ -118,6 +118,7 @@ function BotonColapsarSeccion({ colapsada, onClick }: { colapsada: boolean; onCl
 export function PersonaProfile({ id }: Props) {
   const [persona, setPersona] = useState<Persona | null>(null);
   const [rolActual, setRolActual] = useState<string | null>(null);
+  const [rolCargado, setRolCargado] = useState(false);
   const [experiencia, setExperiencia] = useState<ExperienciaDinamica>({ industrias: [], capacidades: [], tematicas: [] });
   const [modalTag, setModalTag] = useState<{ tipo: string; nombre: string; engagements: EngagementExperienciaRow[] } | null>(null);
   const [asignaciones, setAsignaciones] = useState<AsignacionActiva[]>([]);
@@ -247,13 +248,16 @@ export function PersonaProfile({ id }: Props) {
     (async () => {
       const sb = createAnyClient();
       const { data: { user } } = await sb.auth.getUser();
-      if (!user) return;
-      const { data } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
-      setRolActual((data as any)?.rol_sistema ?? null);
+      if (user) {
+        const { data } = await sb.from("persona").select("rol_sistema").eq("auth_user_id", user.id).single();
+        setRolActual((data as any)?.rol_sistema ?? null);
+      }
+      setRolCargado(true);
     })();
   }, [id]);
 
-  if (loading) return (
+  // Se espera también al rol: así no se ven por un instante secciones que el rol no debe ver
+  if (loading || !rolCargado) return (
     <div className="p-6 animate-pulse">
       <div className="flex items-center gap-4 mb-6">
         <div className="w-16 h-16 rounded-full bg-[#eee] flex-shrink-0" />
@@ -713,7 +717,7 @@ export function PersonaProfile({ id }: Props) {
                             <p className="text-[9px] text-[#60a5fa] font-medium leading-tight">{fmtMesAnio(entrada.fechaInicio)}</p>
                             <p className="text-[9px] text-[#9ca3af] leading-tight">→ {fmtMesAnio(entrada.fechaFin)}</p>
                             <p className="text-[8px] text-[#c0c0c0] leading-tight mt-0.5 italic">
-                              {fmtDuracion(entrada.fechaInicio, entrada.actual ? new Date().toISOString().split("T")[0] : entrada.fechaFin)}
+                              {fmtDuracion(entrada.fechaInicio, entrada.actual ? format(new Date(), "yyyy-MM-dd") : entrada.fechaFin)}
                             </p>
                           </div>
                           {(entrada.esApalancador || entrada.esReferente) && (
@@ -786,7 +790,7 @@ export function PersonaProfile({ id }: Props) {
                             <p className="text-[9px] text-[#60a5fa] font-medium leading-tight">{fmtMesAnio(entrada.fechaInicio)}</p>
                             <p className="text-[9px] text-[#9ca3af] leading-tight">→ {fmtMesAnio(entrada.fechaFin)}</p>
                             <p className="text-[8px] text-[#c0c0c0] leading-tight mt-0.5 italic">
-                              {fmtDuracion(entrada.fechaInicio, entrada.actual ? new Date().toISOString().split("T")[0] : entrada.fechaFin)}
+                              {fmtDuracion(entrada.fechaInicio, entrada.actual ? format(new Date(), "yyyy-MM-dd") : entrada.fechaFin)}
                             </p>
                           </div>
                         )}

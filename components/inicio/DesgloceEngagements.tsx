@@ -290,7 +290,7 @@ export interface SimAsigPayload {
 // ── Tipo para el undo stack (fuera del componente para evitar re-declaraciones) ──
 type UndoEntry =
   | { type: "staffear";    engId: string; label: string; ids: string[] }
-  | { type: "desasignar";  engId: string; label: string; asig: { engagement_id: string; requerimiento_id: string; persona_id: string; cargo_al_momento: string | null; pct_dedicacion: number | null; estado: string; estado_staffing: string; fecha_inicio: string; fecha_fin: string } }
+  | { type: "desasignar";  engId: string; label: string; asignacionId?: string; asig: { engagement_id: string; requerimiento_id: string; persona_id: string; cargo_al_momento: string | null; pct_dedicacion: number | null; estado: string; estado_staffing: string; fecha_inicio: string; fecha_fin: string } }
   | { type: "resize";      engId: string; label: string; asignacionId: string; edge: "start" | "end"; prevDate: string }
   | { type: "resize_eng";  engId: string; label: string; field: string; prevDate: string }
   | { type: "move_eng";    engId: string; label: string; prevInicio: string; prevFin: string; finField: string; deltaDays: number }
@@ -434,6 +434,10 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     setTimeout(() => setToast(null), 15000); // 15 s según spec de negocio
   };
   // Error al guardar desde drag & drop: antes se perdía en silencio
+  // Número de la carga más reciente del tablero: al navegar rápido entre semanas, las
+  // respuestas de cargas anteriores se descartan para que no pisen la semana visible
+  const cargaTableroRef = useRef(0);
+
   const avisarErrorDrop = (accion: string, err: { message?: string } | null) => {
     console.error(`[D&D] No se pudo ${accion}:`, err);
     showToast(`No se pudo ${accion}. ${err?.message ?? ""}`.trim());
@@ -445,8 +449,23 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     nombre: string;
     ausencias: AusenciaItem[];
     onConfirm: () => Promise<void>;
+    /** Limpieza al cancelar (p.ej. borrar un cupo creado solo para esta asignación) */
+    onCancel?: () => Promise<void>;
     totalBloqueo?: boolean;
   } | null>(null);
+  // Bloquea "Asignar (N segmentos)" mientras guarda: un doble clic creaba los tramos dos veces
+  const [confirmandoAus, setConfirmandoAus] = useState(false);
+  async function confirmarAusModal() {
+    if (!ausenciaConfirmModal || confirmandoAus) return;
+    setConfirmandoAus(true);
+    try { await ausenciaConfirmModal.onConfirm(); } finally { setConfirmandoAus(false); }
+  }
+  function cancelarAusModal() {
+    if (confirmandoAus) return;
+    const onCancel = ausenciaConfirmModal?.onCancel;
+    setAusenciaConfirmModal(null);
+    if (onCancel) void onCancel();
+  }
 
   // ── Undo stack — registra hasta 3 acciones reversibles ──────────────────
   const [undoStack, setUndoStack] = useState<UndoEntry[]>([]);
@@ -549,8 +568,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       // Eliminar las asignaciones creadas
       if (last.ids.length) await (sb as any).from("asignacion").delete().in("id", last.ids);
     } else if (last.type === "desasignar") {
-      // Re-insertar la asignación eliminada
-      await (sb as any).from("asignacion").insert(last.asig);
+      // Desasignar solo acorta fecha_fin: deshacer restaura la fecha original
+      // (re-insertar dejaba la asignación acortada + una copia → ocupación duplicada)
+      const { error: undoErr } = last.asignacionId
+        ? await (sb as any).from("asignacion").update({ fecha_fin: last.asig.fecha_fin }).eq("id", last.asignacionId)
+        : await (sb as any).from("asignacion").insert(last.asig);
+      if (undoErr) { setUndoing(false); avisarErrorDrop("deshacer la desasignación", undoErr); return; }
     } else if (last.type === "resize") {
       // Restaurar fecha de barra de persona
       await (sb as any).from("asignacion")
@@ -630,9 +653,17 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     }
     // ────────────────────────────────────────────────────────────────────
     const sb = createAnyClient();
-    await sb.from("asignacion")
+    // .select() detecta también el rechazo silencioso por permisos (0 filas actualizadas)
+    const { data: confirmadas, error: confErr } = await sb.from("asignacion")
       .update({ estado_staffing: "CONFIRMADO" })
-      .eq("id", p.asignacionId);
+      .eq("id", p.asignacionId)
+      .select("id");
+    if (confErr || !confirmadas?.length) {
+      setConfirmando(null);
+      // Sin confirmación real no se tocan los planes alternativos
+      avisarErrorDrop("confirmar la asignación", confErr ?? { message: "La base no aplicó el cambio (permisos)." });
+      return;
+    }
     if (p.requerimiento_id) {
       const { data: competidores } = await sb.from("asignacion")
         .select("id")
@@ -642,9 +673,10 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         .lte("fecha_inicio", p.fecha_fin)
         .gte("fecha_fin", p.fecha_inicio);
       if (competidores && competidores.length > 0) {
-        await sb.from("asignacion")
+        const { error: compErr } = await sb.from("asignacion")
           .delete()
           .in("id", (competidores as { id: string }[]).map((c) => c.id));
+        if (compErr) avisarErrorDrop("quitar los planes alternativos", compErr);
       }
     }
     setConfirmando(null);
@@ -711,9 +743,11 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     // ────────────────────────────────────────────────────────────────────
     // Persistir en Supabase (batch silencioso en segundo plano)
     const sb = createAnyClient();
-    await Promise.all(
+    const resOrden = await Promise.all(
       withOrder.map(e => sb.from("engagement").update({ sort_order: e.sort_order }).eq("id", e.id))
     );
+    const ordenErr = resOrden.find((r) => r.error)?.error;
+    if (ordenErr) { avisarErrorDrop("guardar el nuevo orden", ordenErr); refresh(); }
   }
 
   // Abre modal edición de fechas del requerimiento (primer req del cargo)
@@ -741,10 +775,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       return;
     }
     const sb = createAnyClient();
-    await sb.from("requerimiento_engagement")
+    const { error: reqErr } = await sb.from("requerimiento_engagement")
       .update({ fecha_inicio: editFechas.inicio, fecha_fin: editFechas.fin })
       .eq("id", editReqModal.req.id);
     setReqLoading(false);
+    // Si falla, el modal queda abierto con las fechas para reintentar
+    if (reqErr) { avisarErrorDrop("guardar las fechas del requerimiento", reqErr); return; }
     setEditReqModal(null);
     refresh(editReqModal.engId);
   }
@@ -773,9 +809,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     }
     const sb = createAnyClient();
     const idsArr = [...ids];
-    await sb.from("asignacion").delete().in("requerimiento_id", idsArr);
-    await sb.from("requerimiento_engagement").delete().in("id", idsArr);
+    const { error: delAsigErr } = await sb.from("asignacion").delete().in("requerimiento_id", idsArr);
+    const { error: delReqErr } = delAsigErr
+      ? { error: null }
+      : await sb.from("requerimiento_engagement").delete().in("id", idsArr);
     setReqLoading(false);
+    if (delAsigErr || delReqErr) { avisarErrorDrop("eliminar el requerimiento", delAsigErr ?? delReqErr); refresh(deleteReqModal.engId); return; }
     setDeleteReqModal(null);
     refresh(deleteReqModal.engId);
   }
@@ -863,9 +902,10 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     async function load() {
       // En modo simulación el snapshot es inmutable hasta "Actualizar con data real" → no re-fetchar
       if (simulationMode) return;
+      const miCarga = ++cargaTableroRef.current;
       setLoading(true);
       const sb = createAnyClient();
-      const cutoff = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return d.toISOString().split("T")[0]; })();
+      const cutoff = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return format(d, "yyyy-MM-dd"); })();
       const filtroCutoff = [`fecha_fin_real.gte.${cutoff}`, `and(fecha_fin_real.is.null,fecha_fin_estimada.gte.${cutoff})`, `and(fecha_fin_real.is.null,fecha_fin_estimada.is.null)`].join(",");
 
       // IDs de engagements con extensiones que solapan la vista actual
@@ -874,7 +914,17 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         .select("engagement_id")
         .lte("fecha_inicio", finStr)
         .gte("fecha_fin", inicioStr);
-      const extEngIds = [...new Set((extVisibles ?? []).map((r: any) => r.engagement_id as string))];
+      // Engagements con viajes/talleres en la vista actual: se cargan aunque sus fechas no
+      // caigan en ella, para mostrar el ícono de una actividad fuera de las fechas del proyecto
+      const { data: actVisibles } = await (sb as any)
+        .from("engagement_actividades")
+        .select("engagement_id")
+        .lte("fecha_inicio", finStr)
+        .gte("fecha_fin", inicioStr);
+      const extEngIds = [...new Set([
+        ...(extVisibles ?? []).map((r: any) => r.engagement_id as string),
+        ...(actVisibles ?? []).map((r: any) => r.engagement_id as string),
+      ])];
 
       const [engRes, asigRes, ausRes] = await Promise.all([
         sb.from("engagement")
@@ -902,6 +952,10 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           .lte("fecha_inicio", finStr)
           .gte("fecha_fin", inicioStr),
       ]);
+      if (miCarga !== cargaTableroRef.current) return; // llegó una carga más nueva
+      // Antes, si fallaba, se veía el tablero vacío sin ningún mensaje
+      const errTablero = engRes.error ?? asigRes.error ?? ausRes.error;
+      if (errTablero) showToast(`No se pudo cargar el tablero: ${errTablero.message}`);
 
       const engMap = new Map<string, EngRow>();
       for (const e of (engRes.data ?? []) as any[]) {
@@ -962,6 +1016,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
             .in("engagement_id", engIds)
             .order("fecha_inicio"),
         ]);
+        if (miCarga !== cargaTableroRef.current) return;
         for (const ex of (extData ?? []) as any[]) {
           const eng = engMap.get(ex.engagement_id);
           if (eng) eng.extensiones.push({ id: ex.id, fecha_inicio: ex.fecha_inicio, fecha_fin: ex.fecha_fin });
@@ -1229,15 +1284,19 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       setAusenciaConfirmModal({
         nombre: nombreCompleto, ausencias: ausItems,
         onConfirm: async () => {
-          for (const seg of segments) {
-            const { data: ins, error: insErr } = await (sb as any).from("asignacion").insert({ ...baseInsert, ...seg }).select("id");
-            if (insErr) avisarErrorDrop("crear la asignación", insErr);
-            if (ins) createdIds.push(...(ins as any[]).map((r: any) => r.id));
-          }
+          // Todos los tramos en un solo insert: o se crean todos o ninguno
+          const { data: ins, error: insErr } = await (sb as any).from("asignacion").insert(segments.map((seg) => ({ ...baseInsert, ...seg }))).select("id");
+          if (insErr) { setAusenciaConfirmModal(null); return avisarErrorDrop("crear la asignación", insErr); }
+          if (ins) createdIds.push(...(ins as any[]).map((r: any) => r.id));
           if (createdIds.length) pushUndo({ type: "staffear", engId: eng.id, label: `Staffear ${nombreCompleto}`, ids: createdIds });
           refresh(eng.id);
           setAusenciaConfirmModal(null);
         },
+        // Si se cancela, el cupo creado recién para esta asignación se elimina
+        // (antes quedaba un cupo vacío que nadie pidió)
+        onCancel: !reqMatch
+          ? async () => { await (sb as any).from("requerimiento_engagement").delete().eq("id", reqId); refresh(eng.id); }
+          : undefined,
       });
       return;
     }
@@ -1296,11 +1355,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
     if (!ausPersona || ausPersona.length === 0) {
       // Sin ausencias: inserción normal
-      const { data: ins } = await sb.from("asignacion").insert({
+      const { data: ins, error: insErr } = await sb.from("asignacion").insert({
         ...baseInsert,
         fecha_inicio: req.fecha_inicio,
         fecha_fin: req.fecha_fin,
       }).select("id");
+      if (insErr) return avisarErrorDrop("crear la asignación", insErr);
       if (ins) createdIdsReq.push(...(ins as any[]).map((r: any) => r.id));
     } else {
       // Auto-split: insertar segmentos libres entre ausencias
@@ -1340,10 +1400,10 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         nombre,
         ausencias: ausItems,
         onConfirm: async () => {
-          for (const seg of segments) {
-            const { data: ins } = await sb.from("asignacion").insert({ ...baseInsert, ...seg }).select("id");
-            if (ins) createdIdsReq.push(...(ins as any[]).map((r: any) => r.id));
-          }
+          // Todos los segmentos en un solo insert: o se crean todos o ninguno
+          const { data: ins, error: segErr } = await sb.from("asignacion").insert(segments.map((seg) => ({ ...baseInsert, ...seg }))).select("id");
+          if (segErr) { setAusenciaConfirmModal(null); return avisarErrorDrop("crear la asignación", segErr); }
+          if (ins) createdIdsReq.push(...(ins as any[]).map((r: any) => r.id));
           if (createdIdsReq.length) pushUndo({ type: "staffear", engId: eng.id, label: `Staffear ${nombre}`, ids: createdIdsReq });
           refresh(eng.id);
           onOpenPanel?.(null);
@@ -1388,9 +1448,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       .select("id")
       .single();
 
-    if (reqErr || !newReq) return;
+    if (reqErr || !newReq) return avisarErrorDrop("crear el cupo de la extensión", reqErr);
 
-    await (sb as any).from("asignacion").insert({
+    const { error: extAsigErr } = await (sb as any).from("asignacion").insert({
       engagement_id: eng.id,
       requerimiento_id: (newReq as any).id,
       persona_id: personaId,
@@ -1400,6 +1460,11 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       fecha_fin: extensionEnd,
       estado: "activa",
     });
+    if (extAsigErr) {
+      // Sin asignación, el cupo recién creado quedaría vacío: se elimina
+      await (sb as any).from("requerimiento_engagement").delete().eq("id", (newReq as any).id);
+      return avisarErrorDrop("asignar en la extensión", extAsigErr);
+    }
 
     refresh(eng.id);
   }
@@ -1465,8 +1530,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       .from("asignacion")
       .select("engagement_id, requerimiento_id, persona_id, cargo_al_momento, pct_dedicacion, estado, estado_staffing, fecha_inicio, fecha_fin")
       .eq("id", asignacionId).single();
-    await sb.from("asignacion").update({ fecha_fin: fechaFin }).eq("id", asignacionId);
-    if (asigData) pushUndo({ type: "desasignar", engId: engId || asigData.engagement_id, label: "Desasignación", asig: asigData as any });
+    const { error: updErr } = await sb.from("asignacion").update({ fecha_fin: fechaFin }).eq("id", asignacionId);
+    if (updErr) { avisarErrorDrop("desasignar", updErr); return; }
+    if (asigData) pushUndo({ type: "desasignar", engId: engId || asigData.engagement_id, label: "Desasignación", asignacionId, asig: asigData as any });
     refresh(engId);
   }
 
@@ -1476,7 +1542,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     const { asignacionId, engId } = pendingDesasignar;
     setPendingDesasignar(null);
     const sb = createAnyClient();
-    await sb.from("asignacion").delete().eq("id", asignacionId);
+    const { error: delErr } = await sb.from("asignacion").delete().eq("id", asignacionId);
+    if (delErr) { avisarErrorDrop("eliminar la asignación", delErr); return; }
     refresh(engId);
   }
 
@@ -1488,7 +1555,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       return;
     }
     const sb2 = createAnyClient();
-    await cambiarTipoEngagement(sb2, eng.id, "proyecto");
+    const { error: tipoErr } = await cambiarTipoEngagement(sb2, eng.id, "proyecto");
+    if (tipoErr) { avisarErrorDrop("confirmar el proyecto", { message: tipoErr }); return; }
     showToast("¡Proyecto confirmado de forma exitosa!");
     refresh();
   }
@@ -1501,7 +1569,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       return;
     }
     const sb2 = createAnyClient();
-    await cambiarTipoEngagement(sb2, eng.id, "posibles_proyectos");
+    const { error: tipoErr } = await cambiarTipoEngagement(sb2, eng.id, "posibles_proyectos");
+    if (tipoErr) { avisarErrorDrop("mover el proyecto a Posible", { message: tipoErr }); return; }
     showToast("Proyecto movido a Posible de forma exitosa");
     refresh();
   }
@@ -1519,9 +1588,10 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       return;
     }
     const sb2 = createAnyClient();
-    await cambiarEstadoEngagement(sb2, id, "terminado");
+    const { error: archErr } = await cambiarEstadoEngagement(sb2, id, "terminado");
     setAccionandoEng(false);
     setConfirmAccionEng(null);
+    if (archErr) { avisarErrorDrop("archivar el proyecto", { message: archErr }); return; }
     showToast(`"${nombre}" movido al Archivo Histórico.`);
     refresh();
   }
@@ -1539,9 +1609,10 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       return;
     }
     const sb2 = createAnyClient();
-    await sb2.from("engagement").update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq("id", id);
+    const { error: papErr } = await sb2.from("engagement").update({ is_deleted: true, deleted_at: new Date().toISOString() }).eq("id", id);
     setAccionandoEng(false);
     setConfirmAccionEng(null);
+    if (papErr) { avisarErrorDrop("mover el proyecto a la papelera", papErr); return; }
     showToast(`"${nombre}" movido a la papelera. Podrás recuperarlo durante 30 días.`);
     refresh();
   }
@@ -1651,12 +1722,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
               ));
             } else {
               // Persiste el engagement + desplaza en cascada al equipo/requerimientos por el mismo delta
-              await moverEngagementConEquipo(sb, eng.id, {
+              const { error: movErr } = await moverEngagementConEquipo(sb, eng.id, {
                 nuevaFechaInicio: newInicio,
                 finField,
                 nuevaFechaFin: newFin,
                 deltaDays,
               });
+              if (movErr) avisarErrorDrop("mover el proyecto", { message: movErr });
               refresh(eng.id);
             }
             // ─────────────────────────────────────────────────────────────
@@ -1711,8 +1783,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           if (prevDate) pushUndo({ type: "resize_eng", engId: resizingEng.eng.id, label: `Cambio fechas "${resizingEng.eng.nombre}"`, field, prevDate });
         } else {
           // Persiste el engagement + cascada al equipo/requerimientos en una sola mutación
-          await redimensionarEngagementConEquipo(sb, resizingEng.eng.id, field, newDate);
-          if (prevDate) {
+          const { error: resErr } = await redimensionarEngagementConEquipo(sb, resizingEng.eng.id, field, newDate);
+          if (resErr) avisarErrorDrop("cambiar las fechas del proyecto", { message: resErr });
+          if (prevDate && !resErr) {
             setUndoStack(s => [...s.slice(-2), {
               type: "resize_eng" as const,
               engId: resizingEng.eng.id,
@@ -1768,8 +1841,10 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           ? (resizing.edge === "start" ? (oldAsig as any).fecha_inicio : (oldAsig as any).fecha_fin)
           : null;
         const { error: updateErr } = await sb.from("asignacion")
-          .update({ [resizing.edge === "start" ? "fecha_inicio" : "fecha_fin"]: format(newDate, "yyyy-MM-dd") })
+          // newDate ya es "yyyy-MM-dd": volver a formatearlo lo leía como UTC y restaba un día en Chile
+          .update({ [resizing.edge === "start" ? "fecha_inicio" : "fecha_fin"]: newDate })
           .eq("id", resizing.p.asignacionId);
+        if (updateErr) avisarErrorDrop("cambiar la fecha", updateErr);
         if (updateErr) console.error("[resize] Error al actualizar asignacion:", updateErr, "| asignacionId:", resizing.p.asignacionId, "| campo:", resizing.edge === "start" ? "fecha_inicio" : "fecha_fin", "| valor:", newDate);
         if (prevDate) {
           setUndoStack(s => [...s.slice(-2), {
@@ -1830,9 +1905,9 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
     // Persiste en DB: reemplaza cualquier registro previo para ese engagement+fecha
     const sb2 = createAnyClient();
     const { error: delErr } = await sb2.from("dia_critico").delete().eq("engagement_id", engId).eq("fecha", fecha);
-    if (delErr) console.error("[dia_critico] delete error:", delErr);
+    if (delErr) { avisarErrorDrop("cambiar el color de la semana", delErr); return; }
     const { error: insErr } = await sb2.from("dia_critico").insert({ engagement_id: engId, fecha, fecha_fin, intensidad });
-    if (insErr) console.error("[dia_critico] insert error:", insErr);
+    if (insErr) { avisarErrorDrop("cambiar el color de la semana", insErr); return; }
     // Notifica a otras instancias (no a esta — el optimistic update ya se aplicó arriba)
     window.dispatchEvent(new CustomEvent("diaCriticoChanged", { detail: { engId, fecha, fecha_fin, intensidad, sourceId: instanceId.current } }));
   }
@@ -2258,13 +2333,34 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                         const enBrecha = !activo && engEnBrechaEnCol(eng, col.inicio, col.fin);
                         const isDragTarget = dragOverEngId === eng.id;
 
-                        if (!activo && !enBrecha) return (
-                          <td key={i} className="py-1 px-1"
-                            onMouseEnter={() => { if (resizingEng) resizeEngHoverRef.current = i; if (movingEng?.eng.id === eng.id) { moveEngHoverRef.current = i; setMoveEngHoverIdx(i); } }}
-                            onDragOver={(ev) => { ev.preventDefault(); setDragOverEngId(eng.id); }}
-                            onDragLeave={() => setDragOverEngId(null)}
-                            onDrop={(ev) => handleDropOnEngagement(ev, eng)} />
-                        );
+                        if (!activo && !enBrecha) {
+                          // Viaje/taller fuera de las fechas del proyecto: no hay barra, pero se muestra
+                          // el ícono en esa semana para que no quede oculto (antes no se veía en ninguna vista)
+                          const ci = format(col.inicio, "yyyy-MM-dd");
+                          const cf = format(col.fin, "yyyy-MM-dd");
+                          const fuera = eng.actividades.filter((a) => a.fecha_inicio <= cf && a.fecha_fin >= ci);
+                          const tipFuera = (tipo: string) => fuera.filter((a) => a.tipo === tipo).map((a) =>
+                            `${tipo === "Viajes" ? "Viaje" : "Taller"}${a.titulo ? `: ${a.titulo}` : ""} del ${format(parseLocal(a.fecha_inicio), "d MMM yyyy", { locale: es })} al ${format(parseLocal(a.fecha_fin), "d MMM yyyy", { locale: es })}${a.descripcion ? ` - ${a.descripcion}` : ""} (fuera de las fechas del proyecto)`
+                          ).join("\n");
+                          return (
+                            <td key={i} className="py-1 px-1"
+                              onMouseEnter={() => { if (resizingEng) resizeEngHoverRef.current = i; if (movingEng?.eng.id === eng.id) { moveEngHoverRef.current = i; setMoveEngHoverIdx(i); } }}
+                              onDragOver={(ev) => { ev.preventDefault(); setDragOverEngId(eng.id); }}
+                              onDragLeave={() => setDragOverEngId(null)}
+                              onDrop={(ev) => handleDropOnEngagement(ev, eng)}>
+                              {fuera.length > 0 && (
+                                <div className="flex items-center justify-center gap-1">
+                                  {fuera.some((a) => a.tipo === "Viajes") && (
+                                    <TipActividad texto={tipFuera("Viajes")} icon={<Plane className="w-3.5 h-3.5 cursor-default" style={{ color: "#92400e" }} />} />
+                                  )}
+                                  {fuera.some((a) => a.tipo === "Taller") && (
+                                    <TipActividad texto={tipFuera("Taller")} icon={<Diamond className="w-4 h-4 text-blue-600 fill-sky-200 cursor-default" />} />
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                          );
+                        }
 
                         // Celda de brecha: proyecto "dormido" entre fin original e inicio de extensión
                         if (enBrecha) return (
@@ -3216,15 +3312,15 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       {/* ── Modal: Ausencias parciales detectadas al staffear ── */}
       <Modal
         open={!!ausenciaConfirmModal}
-        onClose={() => setAusenciaConfirmModal(null)}
+        onClose={cancelarAusModal}
         title={ausenciaConfirmModal?.totalBloqueo ? "⛔ No se puede staffear" : "⚠ Ausencias detectadas en este período"}
         footer={
           ausenciaConfirmModal?.totalBloqueo ? (
             <Button variant="secondary" onClick={() => setAusenciaConfirmModal(null)}>Entendido</Button>
           ) : (
             <>
-              <Button variant="secondary" onClick={() => setAusenciaConfirmModal(null)}>Cancelar</Button>
-              <Button variant="danger" onClick={() => ausenciaConfirmModal?.onConfirm()}>
+              <Button variant="secondary" onClick={cancelarAusModal} disabled={confirmandoAus}>Cancelar</Button>
+              <Button variant="danger" onClick={confirmarAusModal} loading={confirmandoAus}>
                 Asignar ({ausenciaConfirmModal?.ausencias.length === 1 ? "1 segmento" : `${ausenciaConfirmModal?.ausencias.length ?? 0} segmentos`})
               </Button>
             </>
@@ -3315,7 +3411,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           <div className="bg-white rounded-xl shadow-2xl border border-gray-100 p-6 w-full max-w-sm mx-4">
             <div className="flex items-center justify-between mb-1">
               <p className="text-[14px] font-semibold text-[#1a1a2e]">Confirmar asignación</p>
-              <button onClick={() => confirmDrop("PLAN")} title="Staffing rápido con fechas por defecto" className="text-slate-400 hover:text-slate-600 transition-colors">✕</button>
+              {/* La ✕ solo cierra: antes creaba una asignación "Por confirmar" y el usuario creía haber cancelado */}
+              <button onClick={() => setPendingDrop(null)} title="Cerrar sin asignar" className="text-slate-400 hover:text-slate-600 transition-colors">✕</button>
             </div>
             <p className="text-[12px] text-slate-500 mb-4">
               Staffear <span className="font-semibold text-slate-700">{pendingDrop.nombre} {pendingDrop.apellido}</span> en <span className="font-semibold text-slate-700">{pendingDrop.eng.nombre}</span>

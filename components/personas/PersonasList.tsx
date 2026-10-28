@@ -149,6 +149,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   // Modal desactivar (dos opciones)
   const [desactivando, setDesactivando] = useState<Persona | null>(null);
   const [accionando, setAccionando] = useState(false);
+  const [errorAccion, setErrorAccion] = useState<string | null>(null);
 
   // Confirm eliminación definitiva
   const [confirmDefinitivo, setConfirmDefinitivo] = useState<{ id: string; nombre: string } | null>(null);
@@ -241,11 +242,24 @@ export function PersonasList({ rolActual }: PersonasListProps) {
     if (vista === "papelera") loadPapelera();
   }, [vista, loadPapelera]);
 
+  // Aviso de error de las acciones de la lista (antes fallaban sin avisar)
+  function avisarError(msg: string) { setErrorAccion(msg); setTimeout(() => setErrorAccion(null), 6000); }
+
   async function reactivarExHouser(id: string) {
     setAccionando(true);
-    await sb.from("persona").update({ activo: true, is_ex_houser: false }).eq("id", id);
+    // Reactivar deshace la baja completa: sin fecha de salida, sin hito "Ex-Houser"
+    // y con su último cargo nuevamente abierto (antes seguía figurando como Ex-Houser)
+    const { data: per } = await sb.from("persona").select("fecha_salida").eq("id", id).maybeSingle();
+    const { error } = await sb.from("persona").update({ activo: true, is_ex_houser: false, fecha_salida: null }).eq("id", id);
+    if (error) { setAccionando(false); avisarError(`No se pudo reactivar: ${error.message}`); return; }
+    const { error: eHito } = await sb.from("historial_cargos").delete().eq("persona_id", id).eq("cargo", "Ex-Houser");
+    const salida = (per as { fecha_salida: string | null } | null)?.fecha_salida;
+    const { error: eCargo } = !eHito && salida
+      ? await sb.from("historial_cargos").update({ fecha_fin: null }).eq("persona_id", id).eq("fecha_fin", salida)
+      : { error: null };
     setAccionando(false);
     setDesactivando(null);
+    if (eHito || eCargo) avisarError(`Reactivado, pero no se pudo ajustar su historial de cargos: ${(eHito ?? eCargo)!.message}`);
     setExHousers((prev) => prev.filter((p) => p.id !== id));
     setExHousersAll((prev) => prev.filter((p) => p.id !== id));
     setTotalEx((prev) => Math.max(0, prev - 1));
@@ -255,18 +269,24 @@ export function PersonasList({ rolActual }: PersonasListProps) {
 
   async function marcarExHouser(id: string, fechaSalida: string) {
     setAccionando(true);
-    await sb.from("persona").update({ activo: false, is_ex_houser: true, fecha_salida: fechaSalida }).eq("id", id);
+    // Cada paso se revisa. Si falla uno se avisa y se detiene; volver a marcar completa lo
+    // que faltó (todos los pasos se pueden repetir sin duplicar nada).
+    const fallo = (msg: string) => { setAccionando(false); avisarError(msg); };
+    const { error: ePer } = await sb.from("persona").update({ activo: false, is_ex_houser: true, fecha_salida: fechaSalida }).eq("id", id);
+    if (ePer) return fallo(`No se pudo dar de baja: ${ePer.message}`);
 
     // PASO 1: cierra el último período de carrera previo (si existe y no es ya el hito Ex-Houser)
-    const { data: ultimoCargo } = await sb
+    const { data: ultimoCargo, error: eLeer } = await sb
       .from("historial_cargos")
       .select("id, cargo")
       .eq("persona_id", id)
       .order("fecha_inicio", { ascending: false })
       .limit(1)
       .maybeSingle();
+    if (eLeer) return fallo(`Baja registrada, pero no se pudo leer su historial de cargos: ${eLeer.message}. Vuelve a marcarla como Ex-Houser.`);
     if (ultimoCargo && ultimoCargo.cargo !== "Ex-Houser") {
-      await sb.from("historial_cargos").update({ fecha_fin: fechaSalida }).eq("id", ultimoCargo.id);
+      const { error: eCierre } = await sb.from("historial_cargos").update({ fecha_fin: fechaSalida }).eq("id", ultimoCargo.id);
+      if (eCierre) return fallo(`Baja registrada, pero no se pudo cerrar su último cargo: ${eCierre.message}. Vuelve a marcarla como Ex-Houser.`);
     }
 
     // PASO 2: hito Ex-Houser único para todos (idempotente: actualiza si ya existe)
@@ -278,18 +298,17 @@ export function PersonasList({ rolActual }: PersonasListProps) {
       .order("fecha_inicio", { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (hitoExistente) {
-      await sb.from("historial_cargos")
-        .update({ fecha_inicio: fechaSalida, fecha_fin: fechaSalida })
-        .eq("id", hitoExistente.id);
-    } else {
-      await sb.from("historial_cargos").insert({
-        persona_id: id,
-        cargo: "Ex-Houser",
-        fecha_inicio: fechaSalida,
-        fecha_fin: fechaSalida,
-      });
-    }
+    const { error: eHito } = hitoExistente
+      ? await sb.from("historial_cargos")
+          .update({ fecha_inicio: fechaSalida, fecha_fin: fechaSalida })
+          .eq("id", hitoExistente.id)
+      : await sb.from("historial_cargos").insert({
+          persona_id: id,
+          cargo: "Ex-Houser",
+          fecha_inicio: fechaSalida,
+          fecha_fin: fechaSalida,
+        });
+    if (eHito) return fallo(`Baja registrada, pero no se pudo crear el hito Ex-Houser: ${eHito.message}. Vuelve a marcarla como Ex-Houser.`);
 
     setAccionando(false);
     setDesactivando(null);
@@ -299,13 +318,14 @@ export function PersonasList({ rolActual }: PersonasListProps) {
 
   async function moverAPapelera(id: string) {
     setAccionando(true);
-    await sb.from("persona").update({
+    const { error } = await sb.from("persona").update({
       activo: false,
       is_deleted: true,
       deleted_at: new Date().toISOString(),
     }).eq("id", id);
     setAccionando(false);
     setDesactivando(null);
+    if (error) { avisarError(`No se pudo mover a la papelera: ${error.message}`); return; }
     setPersonas((prev) => prev.filter((p) => p.id !== id));
     setExHousers((prev) => prev.filter((p) => p.id !== id));
     setExHousersAll((prev) => prev.filter((p) => p.id !== id));
@@ -314,39 +334,49 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   }
 
   async function restaurarComoActivo(id: string) {
-    await sb.from("persona").update({
+    const { error } = await sb.from("persona").update({
       activo: true, is_deleted: false, deleted_at: null, is_ex_houser: false,
     }).eq("id", id);
-    setPapeleraCount((prev) => Math.max(0, prev - 1));
     setRestaurando(null);
+    if (error) { avisarError(`No se pudo restaurar: ${error.message}`); return; }
+    setPapeleraCount((prev) => Math.max(0, prev - 1));
     load();       // recarga lista de activos
     loadPapelera();
   }
 
   async function restaurarComoExHouser(id: string) {
-    await sb.from("persona").update({
+    const { error } = await sb.from("persona").update({
       activo: false, is_deleted: false, deleted_at: null, is_ex_houser: true,
     }).eq("id", id);
+    setRestaurando(null);
+    if (error) { avisarError(`No se pudo restaurar: ${error.message}`); return; }
     setPapeleraCount((prev) => Math.max(0, prev - 1));
     setExCount((prev) => prev + 1);
-    setRestaurando(null);
     loadPapelera();
   }
 
   async function eliminarDefinitivo(id: string) {
     setAccionando(true);
-    await sb.from("persona").delete().eq("id", id);
+    const { error } = await sb.from("persona").delete().eq("id", id);
     setAccionando(false);
     setConfirmDefinitivo(null);
+    if (error) { avisarError(`No se pudo eliminar: ${error.message}`); return; }
     setPapeleraCount((prev) => Math.max(0, prev - 1));
     loadPapelera();
   }
 
+  // Aviso flotante, visible en las tres vistas (activos, Ex-Housers, papelera)
+  const avisoError = errorAccion && (
+    <div className="fixed bottom-6 right-6 z-50 max-w-sm bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 shadow-lg">
+      {errorAccion}
+    </div>
+  );
   if (loading) return <PersonasSkeleton />;
 
   // ── VISTA PAPELERA ──────────────────────────────────────────────────
   if (vista === "papelera") return (
     <>
+      {avisoError}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-2">
           <button onClick={() => setVista("principal")} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400">
@@ -460,6 +490,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   // ── VISTA EX-HOUSERS ────────────────────────────────────────────────
   if (vista === "ex_housers") return (
     <>
+      {avisoError}
       <div className="flex items-center gap-2 mb-6">
         <button onClick={() => setVista("principal")} className="p-1.5 rounded-lg hover:bg-gray-100 text-gray-400">
           <X className="w-4 h-4" />
@@ -598,6 +629,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   // ── VISTA PRINCIPAL ─────────────────────────────────────────────────
   return (
     <>
+      {avisoError}
       <div className="flex items-center justify-between mb-5">
         <div className="flex items-center gap-3 flex-wrap">
           <p className="text-sm text-[#888]">
@@ -705,7 +737,7 @@ function DesactivarModal({
   onPapelera: (id: string) => void;
   modoExHouser: boolean;
 }) {
-  const [fechaSalida, setFechaSalida] = useState(() => new Date().toISOString().split("T")[0]);
+  const [fechaSalida, setFechaSalida] = useState(() => format(new Date(), "yyyy-MM-dd"));
 
   if (!persona) return null;
   const nombre = `${persona.nombre} ${persona.apellido}`;

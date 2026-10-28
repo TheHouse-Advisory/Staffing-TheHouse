@@ -121,20 +121,6 @@ export function GanttAusencias({ onVerPersona, vistaExterna, baseExterna, diasFi
   const vista: Vista = vistaExterna ?? "semana";
   const base: Date = baseExterna ?? new Date();
 
-  useEffect(() => {
-    async function load() {
-      const sb = createAnyClient();
-      const [pRes, aRes] = await Promise.all([
-        sb.from("persona").select("*").eq("activo", true),
-        sb.from("ausencia").select("persona_id, fecha_inicio, fecha_fin"),
-      ]);
-      setPersonas(pRes.data ?? []);
-      setAusencias(aRes.data ?? []);
-      setLoading(false);
-    }
-    load();
-  }, []);
-
   const columnas: Columna[] = diasFijos
     ? diasFijos.map((d) => ({
         label: format(d, "EEE", { locale: es }),
@@ -145,6 +131,32 @@ export function GanttAusencias({ onVerPersona, vistaExterna, baseExterna, diasFi
     : vista === "dia" ? columnasDia(base) :
       vista === "semana" ? columnasSemana(base) :
       columnasMes(base);
+
+  // Solo se traen las ausencias del rango visible y se recargan al navegar. Antes se traían
+  // todas de una vez: con más de 1.000 registros (límite de Supabase) se omitían algunas,
+  // y no se actualizaban sin recargar la página.
+  const desdeStr = columnas.length ? format(columnas[0].inicio, "yyyy-MM-dd") : "";
+  const hastaStr = columnas.length ? format(columnas[columnas.length - 1].fin, "yyyy-MM-dd") : "";
+
+  useEffect(() => {
+    if (!desdeStr || !hastaStr) return;
+    let cancelado = false;
+    async function load() {
+      const sb = createAnyClient();
+      const [pRes, aRes] = await Promise.all([
+        sb.from("persona").select("*").eq("activo", true),
+        sb.from("ausencia").select("persona_id, fecha_inicio, fecha_fin")
+          .lte("fecha_inicio", hastaStr)
+          .gte("fecha_fin", desdeStr),
+      ]);
+      if (cancelado) return; // se navegó a otro rango antes de que llegara la respuesta
+      setPersonas(pRes.data ?? []);
+      setAusencias(aRes.data ?? []);
+      setLoading(false);
+    }
+    load();
+    return () => { cancelado = true; };
+  }, [desdeStr, hastaStr]);
 
   function ausentesEnColumna(col: Columna): Persona[] {
     const ids = new Set(

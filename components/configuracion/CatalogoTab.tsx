@@ -22,12 +22,19 @@ export function CatalogoTab({ tabla, titulo }: Props) {
   const [newValue, setNewValue] = useState("");
   const [saving, setSaving] = useState(false);
 
+  const [error, setError] = useState<string | null>(null);
+
+  // Mensaje legible: un nombre repetido es el caso más común
+  const mensaje = (err: { code?: string; message: string }) =>
+    err.code === "23505" ? "Ya existe un elemento con ese nombre." : err.message;
+
   const load = useCallback(async () => {
     const supabase = createAnyClient();
-    const { data } = await supabase
+    const { data, error: err } = await supabase
       .from(tabla)
       .select("id, nombre, activo")
       .order("nombre");
+    if (err) setError(`No se pudo cargar la lista: ${err.message}`);
     setItems((data ?? []) as CatalogoItem[]);
     setLoading(false);
   }, [tabla]);
@@ -38,37 +45,49 @@ export function CatalogoTab({ tabla, titulo }: Props) {
     setEditingId(item.id);
     setEditValue(item.nombre);
     setAdding(false);
+    setError(null);
   };
 
   const cancelEdit = () => { setEditingId(null); setEditValue(""); };
 
+  // Antes no se revisaban errores: si fallaba (nombre repetido, permisos) se borraba lo
+  // escrito sin avisar. Ahora se muestra el error y se mantiene el texto para corregirlo.
+  // `saving` también bloquea la tecla Enter, que antes podía crear duplicados.
   const saveEdit = async (id: string) => {
-    if (!editValue.trim()) return;
+    if (!editValue.trim() || saving) return;
     setSaving(true);
     const supabase = createAnyClient();
-    await supabase.from(tabla).update({ nombre: editValue.trim() }).eq("id", id);
-    setEditingId(null);
+    const { error: err } = await supabase.from(tabla).update({ nombre: editValue.trim() }).eq("id", id);
     setSaving(false);
+    if (err) { setError(mensaje(err)); return; }
+    setError(null);
+    setEditingId(null);
     load();
   };
 
   const toggleActivo = async (item: CatalogoItem) => {
+    if (saving) return;
+    setSaving(true);
     const supabase = createAnyClient();
-    await supabase.from(tabla).update({ activo: !item.activo }).eq("id", item.id);
+    const { error: err } = await supabase.from(tabla).update({ activo: !item.activo }).eq("id", item.id);
+    setSaving(false);
+    if (err) { setError(mensaje(err)); return; }
+    setError(null);
     load();
   };
 
   const addItem = async () => {
-    if (!newValue.trim()) return;
+    if (!newValue.trim() || saving) return;
     setSaving(true);
     const supabase = createAnyClient();
-    await supabase.from(tabla).insert({ nombre: newValue.trim() });
+    const { error: err } = await supabase.from(tabla).insert({ nombre: newValue.trim() });
+    setSaving(false);
+    if (err) { setError(mensaje(err)); return; }
+    setError(null);
     setNewValue("");
     setAdding(false);
-    setSaving(false);
     load();
   };
-
   const activos = items.filter((i) => i.activo);
   const inactivos = items.filter((i) => !i.activo);
 
@@ -82,6 +101,8 @@ export function CatalogoTab({ tabla, titulo }: Props) {
           <Plus className="w-3.5 h-3.5" /> Agregar
         </Button>
       </div>
+
+      {error && <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mb-3">{error}</p>}
 
       {/* Formulario para agregar */}
       {adding && (

@@ -28,6 +28,13 @@ const ROL_OPTIONS = [
   { value: "planificador",   label: "Planificador" },
 ];
 
+// Planificación está desactivada temporalmente: se advierte antes de asignar este rol
+const AVISO_PLANIFICADOR_TITULO = "Planificación está desactivada temporalmente";
+const AVISO_PLANIFICADOR_TEXTO =
+  "La sección Planificación está congelada por problemas técnicos que aún no se resuelven. " +
+  "Si le das el rol Planificador a esta persona, no podrá usar las funciones principales de " +
+  "Planificación hasta que se reactive. Sí podrá ver el resto de la app según su rol. ¿Quieres continuar?";
+
 const ESTADO_BADGE: Record<EstadoAcceso, { label: string; bg: string; text: string }> = {
   invitada: { label: "Invitación pendiente", bg: "#fdf6e3", text: "#a16207" },
   activa: { label: "Activo", bg: "#dcf5e7", text: "#1e7e45" },
@@ -45,6 +52,7 @@ export function AccesosManager() {
   const [feedback, setFeedback] = useState<{ ok: boolean; text: string } | null>(null);
   const [confirmAccion, setConfirmAccion] =
     useState<{ tipo: "revocar" | "suspender"; persona: Persona } | null>(null);
+  const [avisoPlanificador, setAvisoPlanificador] = useState<{ persona: Persona } | null>(null);
 
   const sb = createAnyClient();
 
@@ -85,21 +93,22 @@ export function AccesosManager() {
     })();
   }, [load]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function handleCambiarRol(persona: Persona, nuevoRol: RolSistema) {
+  function handleCambiarRol(persona: Persona, nuevoRol: RolSistema) {
     if (nuevoRol === persona.rol_sistema) return;
+    // Antes de pasar a Planificador se avisa que Planificación está desactivada
+    if (nuevoRol === "planificador") { setAvisoPlanificador({ persona }); return; }
+    void ejecutarCambioRol(persona, nuevoRol);
+  }
+
+  async function ejecutarCambioRol(persona: Persona, nuevoRol: RolSistema) {
     setBusyId(persona.id);
     setFeedback(null);
     try {
-      const { error } = await sb
-        .from("persona")
-        .update({ rol_sistema: nuevoRol })
-        .eq("id", persona.id);
-      if (error) {
-        setFeedback({ ok: false, text: error.message });
-      } else {
-        setFeedback({ ok: true, text: "Rol actualizado." });
-        load();
-      }
+      // Pasa por la acción del servidor, que valida el rol y protege al último administrador
+      // (antes se escribía directo en la base y esas validaciones no se aplicaban)
+      const r = await cambiarRol({ personaId: persona.id, rol: nuevoRol });
+      setFeedback({ ok: r.ok, text: r.ok ? "Rol actualizado." : r.message });
+      if (r.ok) load();
     } catch (e: any) {
       setFeedback({ ok: false, text: e?.message ?? "Error inesperado." });
     } finally {
@@ -319,6 +328,20 @@ export function AccesosManager() {
             : `${confirmAccion?.persona.nombre} ${confirmAccion?.persona.apellido} no podrá iniciar sesión hasta que reactives su acceso. Conserva su rol asignado.`
         }
       />
+
+      {/* Aviso al cambiar el rol a Planificador (Planificación desactivada) */}
+      <ConfirmDialog
+        open={!!avisoPlanificador}
+        onClose={() => setAvisoPlanificador(null)}
+        onConfirm={() => {
+          const p = avisoPlanificador?.persona;
+          setAvisoPlanificador(null);
+          if (p) void ejecutarCambioRol(p, "planificador");
+        }}
+        title={AVISO_PLANIFICADOR_TITULO}
+        confirmLabel="Asignar de todas formas"
+        message={AVISO_PLANIFICADOR_TEXTO}
+      />
     </div>
   );
 }
@@ -339,6 +362,7 @@ function OtorgarAccesoModal({
   const [rol, setRol] = useState<RolSistema>("GyD");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [mostrarAviso, setMostrarAviso] = useState(false);
 
   useEffect(() => {
     if (open) {
@@ -354,11 +378,13 @@ function OtorgarAccesoModal({
     label: `${p.nombre} ${p.apellido} — ${p.email}`,
   }));
 
-  async function handleSubmit() {
+  async function handleSubmit(avisoAceptado = false) {
     if (!personaId) {
       setError("Selecciona una persona.");
       return;
     }
+    // Antes de dar acceso como Planificador se avisa que Planificación está desactivada
+    if (rol === "planificador" && !avisoAceptado) { setMostrarAviso(true); return; }
     setLoading(true);
     setError(null);
     const r = await otorgarAcceso({
@@ -385,7 +411,7 @@ function OtorgarAccesoModal({
             Cancelar
           </Button>
           <Button
-            onClick={handleSubmit}
+            onClick={() => handleSubmit()}
             loading={loading}
             disabled={personas.length === 0}
           >
@@ -394,6 +420,14 @@ function OtorgarAccesoModal({
         </>
       }
     >
+      <ConfirmDialog
+        open={mostrarAviso}
+        onClose={() => setMostrarAviso(false)}
+        onConfirm={() => { setMostrarAviso(false); void handleSubmit(true); }}
+        title={AVISO_PLANIFICADOR_TITULO}
+        confirmLabel="Dar acceso de todas formas"
+        message={AVISO_PLANIFICADOR_TEXTO}
+      />
       {personas.length === 0 ? (
         <p className="text-sm text-[#666]">
           Todas las personas activas ya tienen acceso. Crea una persona nueva

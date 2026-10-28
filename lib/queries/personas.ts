@@ -1,3 +1,4 @@
+import { format } from "date-fns";
 import type { TypedSupabaseClient } from "@/lib/supabase/types";
 import { calcularDiasHabilesEnCargo, calculateBusinessDays } from "@/lib/utils/date-utils";
 import { getDetailedPersonAbsences, type DetalleAusenciasPersona } from "@/lib/queries/ausencias";
@@ -28,7 +29,7 @@ export async function getHistorialCargos(
 
   if (error || !data) return [];
 
-  const hoy = new Date().toISOString().split("T")[0];
+  const hoy = format(new Date(), "yyyy-MM-dd");
 
   return (data as HistorialCargoRow[]).map((row) => ({
     ...row,
@@ -248,7 +249,7 @@ export async function getExperienciaDinamica(
   if (asigRows.length === 0) return { industrias: [], capacidades: [], tematicas: [] };
 
   const engagementIds = [...new Set(asigRows.map((a) => a.engagement_id))];
-  const hoy = new Date().toISOString().split("T")[0];
+  const hoy = format(new Date(), "yyyy-MM-dd");
 
   const [engRes, capRes, temRes, ausRes] = await Promise.all([
     supabase.from("engagement").select("id, nombre, cliente, industria_id, cat_industria(id, nombre)").in("id", engagementIds),

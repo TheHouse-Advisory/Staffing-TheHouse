@@ -49,6 +49,9 @@ function LoginForm() {
     auth_callback: "Error al completar el inicio de sesión. Intenta de nuevo.",
     enlace_expirado:
       "El enlace expiró o ya fue usado. Solicita uno nuevo con la opción de recuperar contraseña.",
+    // Antes no tenía texto: la persona volvía al login sin saber por qué
+    sesion_expirada:
+      "Tu sesión expiró por seguridad. Vuelve a iniciar sesión para continuar.",
   };
 
   // Cuenta regresiva del cooldown del botón de recuperación.

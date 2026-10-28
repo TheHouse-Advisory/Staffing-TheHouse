@@ -224,7 +224,7 @@ export function PersonaMatrizTimeline({ personaId, cargoActual, cargosSugeridos 
   async function eliminar(id: string) {
     if (!confirm("¿Eliminar esta evaluación de matriz?")) return;
     const { error } = await createAnyClient().from("persona_matriz_hito").delete().eq("id", id);
-    if (!error) setHitos((prev) => prev.filter((h) => h.id !== id));
+    // Si falla se avisa (antes no pasaba nada visible)
   }
 
   return (

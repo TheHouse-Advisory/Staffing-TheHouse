@@ -232,12 +232,15 @@ export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasDat
 
   const ausenciasPorPersona = useMemo(() => {
     const map = new Map<string, AusenciaTrimestral[]>();
+    // Mismo criterio que las vistas Mes y Semana: estos roles no ven "vacaciones por confirmar"
+    const ocultarPorConfirmar = rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador";
     for (const a of ausenciasData) {
+      if (ocultarPorConfirmar && a.tipo === "vacaciones_por_confirmar") continue;
       if (!map.has(a.persona_id)) map.set(a.persona_id, []);
       map.get(a.persona_id)!.push(a);
     }
     return map;
-  }, [ausenciasData]);
+  }, [ausenciasData, rolActual]);
 
   function tipoEnDia(personaId: string, iso: string): TipoAusencia | null {
     const lista = ausenciasPorPersona.get(personaId);

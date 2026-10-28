@@ -20,6 +20,7 @@ import {
 import type { TipoAusencia } from "@/lib/types/database";
 import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
 import { PopoverPersona } from "./PopoverPersona";
+import { buscarCruceAusencia } from "./HeatmapAusencias";
 import { esAdmin } from "@/lib/roles";
 
 const MESES_CORTO = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
@@ -145,14 +146,14 @@ function ModalAusencia({ personas, fechaInicial, personaInicial, editarId, onClo
 
   async function handleCrearTipo() {
     if (!nuevoTipoInput.trim()) return;
-    const nuevo = await crearTipo(nuevoTipoInput, nuevoTipoColor);
+    const { tipo: nuevo, error: errTipo } = await crearTipo(nuevoTipoInput, nuevoTipoColor);
     if (nuevo) { setTipo(nuevo.id); setNuevoTipoInput(""); setNuevoTipoColor("#f43f5e"); setMostrarNuevoTipo(false); }
-    else setTipoMsgError("Ya existe un tipo con ese nombre.");
+    else setTipoMsgError(errTipo ?? "No se pudo crear el tipo.");
   }
   async function handleEliminarTipo() {
     setTipoMsgError(null); setTipoMsgConfirm(null);
-    const { ok, count } = await eliminarTipo(tipo);
-    if (!ok) setTipoMsgError(`No se puede eliminar: hay ${count} ausencia(s) con este tipo.`);
+    const { ok, count, error: errTipo } = await eliminarTipo(tipo);
+    if (!ok) setTipoMsgError(errTipo ? `No se pudo eliminar: ${errTipo}` : `No se puede eliminar: hay ${count} ausencia(s) con este tipo.`);
     else { setTipoMsgConfirm("Tipo eliminado."); setTipo(tiposDinamicos[0]?.id ?? "otro"); }
   }
   const [error,       setError]       = useState<string | null>(null);
@@ -180,6 +181,11 @@ function ModalAusencia({ personas, fechaInicial, personaInicial, editarId, onClo
     if (!fechaInicio || !fechaFin)  { setError("Las fechas son obligatorias."); return; }
     if (fechaFin < fechaInicio)     { setError("Fecha fin no puede ser anterior al inicio."); return; }
     setGuardando(true);
+    // No se permiten ausencias que se crucen para la misma persona (se contaban dos veces)
+    const cruce = await buscarCruceAusencia(supabase, {
+      personaId: personaId || null, excluirId: modoEdicion ? (editarId ?? null) : null, fechaInicio, fechaFin,
+    });
+    if (cruce) { setGuardando(false); setError(cruce); return; }
     if (modoEdicion) {
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const { error: err } = await (supabase as any).from("ausencia")
@@ -346,6 +352,7 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
   const [eliminando,setEliminando]= useState<string | null>(null);
   const [undoStack, setUndoStack] = useState<{ persona_id: string; tipo: TipoAusencia; fecha_inicio: string; fecha_fin: string; descripcion: string | null }[]>([]);
   const [undoing,   setUndoing]   = useState(false);
+  const [errorAccion, setErrorAccion] = useState<string | null>(null);
 
   const [modalOpen,    setModalOpen]    = useState(false);
   const [modalFecha,   setModalFecha]   = useState<string | undefined>();
@@ -432,14 +439,19 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
   function colapsarTodo() { setCargoColapsados(new Set(grupos.map(([c]) => c))); }
   function expandirTodo()  { setCargoColapsados(new Set()); }
 
+  // Aviso de error de eliminar / deshacer, sin tapar la grilla
+  function avisarError(msg: string) { setErrorAccion(msg); setTimeout(() => setErrorAccion(null), 6000); }
+
   async function handleEliminar(ausenciaId: string) {
     const { data } = await supabase.from("ausencia")
       .select("persona_id, tipo, fecha_inicio, fecha_fin, descripcion")
       .eq("id", ausenciaId).single();
-    if (data) setUndoStack(s => [...s, data as { persona_id: string; tipo: TipoAusencia; fecha_inicio: string; fecha_fin: string; descripcion: string | null }]);
     setEliminando(ausenciaId); setTooltip(null);
-    await eliminarAusencia(supabase, ausenciaId);
+    const { error: delErr } = await eliminarAusencia(supabase, ausenciaId);
     setEliminando(null);
+    if (delErr) { avisarError(`No se pudo eliminar la ausencia: ${delErr}`); return; }
+    // La copia para deshacer se guarda solo si el borrado funcionó
+    if (data) setUndoStack(s => [...s, data as { persona_id: string; tipo: TipoAusencia; fecha_inicio: string; fecha_fin: string; descripcion: string | null }]);
     cargar();
   }
 
@@ -447,9 +459,10 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
     if (!undoStack.length) return;
     const last = undoStack[undoStack.length - 1];
     setUndoing(true);
-    await crearAusencia(supabase, { persona_id: last.persona_id, tipo: last.tipo, fecha_inicio: last.fecha_inicio, fecha_fin: last.fecha_fin, descripcion: last.descripcion ?? undefined });
-    setUndoStack(s => s.slice(0, -1));
+    const { error: undoErr } = await crearAusencia(supabase, { persona_id: last.persona_id, tipo: last.tipo, fecha_inicio: last.fecha_inicio, fecha_fin: last.fecha_fin, descripcion: last.descripcion ?? undefined });
     setUndoing(false);
+    if (undoErr) { avisarError(`No se pudo deshacer: ${undoErr}`); return; } // la copia se conserva
+    setUndoStack(s => s.slice(0, -1));
     cargar();
   }
 
@@ -468,6 +481,11 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
   // ── Render ────────────────────────────────────────────────────
   return (
     <>
+    {errorAccion && (
+      <div className="fixed bottom-6 right-6 z-50 max-w-sm bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 shadow-lg">
+        {errorAccion}
+      </div>
+    )}
     <div className="flex-1 overflow-auto">
       {/* table-fixed + colgroup → 5 columnas iguales en el espacio disponible */}
       <table className="border-collapse w-full table-fixed text-[12px]">

@@ -1,3 +1,4 @@
+import { format } from "date-fns";
 import type { TypedSupabaseClient } from "@/lib/supabase/types";
 
 // ─────────────────────────────────────────────────────────────
@@ -5,7 +6,7 @@ import type { TypedSupabaseClient } from "@/lib/supabase/types";
 // ─────────────────────────────────────────────────────────────
 
 export function today(): string {
-  return new Date().toISOString().split("T")[0];
+  return format(new Date(), "yyyy-MM-dd");
 }
 
 /** Orden de seniority de más a menos senior */

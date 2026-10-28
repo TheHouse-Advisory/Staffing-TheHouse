@@ -59,7 +59,8 @@ interface AusenciasClientProps {
 export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
   const now = new Date();
   const [rol, setRol] = useState<RolSistema | null>(null);
-  const isReadOnly = rol === "Desarrollo" || rol === "planificador" || rol === "GyD" || rol === "AySr";
+  // Rol aún sin cargar (null) = solo lectura, para no mostrar botones de edición por un instante
+  const isReadOnly = rol === null || rol === "proposer" || rol === "Desarrollo" || rol === "planificador" || rol === "GyD" || rol === "AySr";
   // Vista limpia (solo admin): oculta insignias R/A y píldoras de días tomados en el Heatmap
   const [showMetrics, setShowMetrics] = useState(false); // oculto por defecto
   const { tipos: tiposDB } = useTiposAusencia();
@@ -87,13 +88,17 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
   const [personasQ, setPersonasQ]     = useState<PersonaTrimestral[]>([]);
   const [ausenciasQ, setAusenciasQ]   = useState<AusenciaTrimestral[]>([]);
   const [loadingQ, setLoadingQ]       = useState(false);
+  const [errorQ, setErrorQ]           = useState<string | null>(null);
   const [viajesQ, setViajesQ]         = useState<Record<string, Record<string, ViajeDia>>>({});
   const [recargarKey, setRecargarKey] = useState(0); // recarga heatmaps tras guardar viaje
 
   useEffect(() => {
     if (vistaActiva !== "quarter") return;
+    // Si se cambia de trimestre antes de terminar, la respuesta anterior se descarta
+    let cancelado = false;
     (async () => {
       setLoadingQ(true);
+      setErrorQ(null);
       const sb = createAnyClient();
       // Rango ampliado (+/-6 días) para cubrir las semanas de borde que HeatmapTrimestral asoma del mes anterior/siguiente
       const desde = new Date(yearAnio, startMonthQ - 1, 1 - 6).toISOString().split("T")[0];
@@ -103,11 +108,16 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
         sb.from("ausencia").select("persona_id, tipo, fecha_inicio, fecha_fin").lte("fecha_inicio", hasta).gte("fecha_fin", desde),
         fetchViajesRango(sb, desde, hasta),
       ]);
+      if (cancelado) return;
+      // Antes un error mostraba la grilla vacía sin aviso
+      const errQ = persRes.error ?? ausRes.error;
+      if (errQ) setErrorQ(`No se pudieron cargar las ausencias del trimestre: ${errQ.message}`);
       setViajesQ(viajesRes);
       setPersonasQ((persRes.data ?? []) as PersonaTrimestral[]);
       setAusenciasQ((ausRes.data ?? []) as AusenciaTrimestral[]);
       setLoadingQ(false);
     })();
+    return () => { cancelado = true; };
   }, [vistaActiva, yearAnio, quarterQ, recargarKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // Una sola fecha pivot — cada vista deriva su rango desde aquí
   const [selectedDate, setSelectedDate] = useState<Date>(
@@ -340,6 +350,8 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
                 <Loader2 className="w-4 h-4 animate-spin" />
                 <span className="text-sm">Cargando trimestre...</span>
               </div>
+            ) : errorQ ? (
+              <div className="flex-1 flex items-center justify-center text-red-500 text-sm">{errorQ}</div>
             ) : (
               <HeatmapTrimestral
                 year={yearAnio}

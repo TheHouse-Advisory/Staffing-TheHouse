@@ -57,7 +57,10 @@ interface Props {
   semana: Semana;
   lineas: LineaEditable[];
   personasDisponibles: PersonaOpcion[];
-  onActualizar: (params: ActualizarLineaParams) => Promise<void>;
+  /** Devuelve false si no se pudo guardar (la celda queda abierta para reintentar) */
+  onActualizar: (params: ActualizarLineaParams) => Promise<boolean>;
+  /** true para roles que no pueden editar asignaciones: la celda solo muestra */
+  soloLectura?: boolean;
 }
 
 // ── Texto <-> estructura (misma simbología: "PLAN/PLAN · CONF + CONF") ──
@@ -90,12 +93,14 @@ function parseTexto(texto: string): { plan: string[]; confirmados: string[] } {
 // ── Una línea (cargo) dentro de la celda ────────────────────────────
 
 function LineaCelda({
-  linea, semana, personasDisponibles, onActualizar,
+  linea, semana, personasDisponibles, onActualizar, soloLectura = false,
 }: {
+  soloLectura?: boolean;
   linea: LineaEditable;
   semana: Semana;
   personasDisponibles: PersonaOpcion[];
-  onActualizar: (params: ActualizarLineaParams) => Promise<void>;
+  /** Devuelve false si no se pudo guardar (la celda queda abierta para reintentar) */
+  onActualizar: (params: ActualizarLineaParams) => Promise<boolean>;
 }) {
   const [editando, setEditando] = useState(false);
   const [texto, setTexto] = useState("");
@@ -121,22 +126,36 @@ function LineaCelda({
   async function guardar() {
     const { plan: planTokens, confirmados: confTokens } = parseTexto(texto);
     const noResueltos: string[] = [];
+    const ambiguas: string[] = [];
+    // Quienes ya están en la celda se reconocen aunque hoy estén inactivos
+    // (antes la celda no se podía guardar: "No reconocido")
+    const enCelda = [...linea.confirmados, ...linea.plan].map((s) => ({ id: s.personaId, iniciales: s.iniciales }));
     const resolver = (token: string) => {
-      const p = personasDisponibles.find((p) => p.iniciales.toUpperCase() === token);
-      if (!p) noResueltos.push(token);
-      return p;
+      const yaEstaba = enCelda.find((s) => s.iniciales.toUpperCase() === token);
+      if (yaEstaba) return personasDisponibles.find((p) => p.id === yaEstaba.id) ?? ({ id: yaEstaba.id, nombre: "", apellido: "", iniciales: yaEstaba.iniciales } as PersonaOpcion);
+      const coincidencias = personasDisponibles.filter((p) => p.iniciales.toUpperCase() === token);
+      // Iniciales repetidas: antes se asignaba a la primera sin preguntar
+      if (coincidencias.length > 1) { ambiguas.push(`${token} (${coincidencias.map((p) => `${p.nombre} ${p.apellido}`).join(" / ")})`); return undefined; }
+      if (coincidencias.length === 0) noResueltos.push(token);
+      return coincidencias[0];
     };
 
     const confirmados = confTokens.map(resolver).filter((p): p is PersonaOpcion => !!p);
     const plan = planTokens.map(resolver).filter((p): p is PersonaOpcion => !!p);
 
-    if (noResueltos.length > 0) {
-      setNoReconocidos(noResueltos);
-      return; // no guarda hasta corregir iniciales desconocidas
+    if (noResueltos.length > 0 || ambiguas.length > 0) {
+      setNoReconocidos([
+        ...noResueltos.map((x) => `No reconocido: ${x}`),
+        ...ambiguas.map((x) => `Iniciales repetidas: ${x}. Cámbialas en la ficha de la persona.`),
+      ]);
+      return; // no guarda hasta corregir iniciales desconocidas o repetidas
     }
 
     setGuardando(true);
-    await onActualizar({
+    // try/finally: si algo falla inesperadamente, la celda no queda bloqueada en "guardando"
+    let ok = false;
+    try {
+    ok = await onActualizar({
       engagementId: linea.engagementId,
       cargo: linea.cargo,
       requerimientoId: linea.requerimientoId,
@@ -154,16 +173,18 @@ function LineaCelda({
         ...plan.map((p) => ({ personaId: p.id, estado: "PLAN" as const })),
       ],
     });
-    setGuardando(false);
-    setEditando(false);
+    } finally {
+      setGuardando(false);
+    }
+    if (ok) setEditando(false); // si falló, queda abierta con el texto para reintentar
   }
 
   if (!editando) {
     return (
       <div
-        onClick={iniciarEdicion}
-        title="Clic para editar"
-        className="text-[11px] leading-4 whitespace-pre-wrap cursor-pointer rounded px-0.5 -mx-0.5 hover:bg-[#fff3d6]"
+        onClick={soloLectura ? undefined : iniciarEdicion}
+        title={soloLectura ? undefined : "Clic para editar"}
+        className={`text-[11px] leading-4 whitespace-pre-wrap rounded px-0.5 -mx-0.5 ${soloLectura ? "" : "cursor-pointer hover:bg-[#fff3d6]"}`}
       >
         {linea.plan.length > 0 && (
           <span className="text-[#888]">{linea.plan.map((s) => s.iniciales).join("/")}</span>
@@ -201,7 +222,7 @@ function LineaCelda({
       />
       {noReconocidos && (
         <p className="text-[9px] text-red-500 mt-0.5 leading-tight">
-          No reconocido: {noReconocidos.join(", ")}
+          {noReconocidos.join(" · ")}
         </p>
       )}
     </div>
@@ -210,12 +231,12 @@ function LineaCelda({
 
 // ── Celda (puede contener más de un cargo requerido esa semana) ──────
 
-export function CeldaAsignacionEditable({ semana, lineas, personasDisponibles, onActualizar }: Props) {
+export function CeldaAsignacionEditable({ semana, lineas, personasDisponibles, onActualizar, soloLectura = false }: Props) {
   if (lineas.length === 0) return <td className="border border-[#e8e8e8] px-2 py-1 bg-white" />;
   return (
     <td className="border border-[#e8e8e8] px-2 py-1 bg-[#fef9f0] align-top min-w-[90px]">
       {lineas.map((l, i) => (
-        <LineaCelda key={i} linea={l} semana={semana} personasDisponibles={personasDisponibles} onActualizar={onActualizar} />
+        <LineaCelda key={i} linea={l} semana={semana} personasDisponibles={personasDisponibles} onActualizar={onActualizar} soloLectura={soloLectura} />
       ))}
     </td>
   );

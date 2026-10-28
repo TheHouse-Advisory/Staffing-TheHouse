@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { Loader2, X, Calendar, Clock } from "lucide-react";
+import { format } from "date-fns";
 import { createClient } from "@/lib/supabase/client";
 import {
   getDetailedPersonAbsences,
@@ -223,7 +224,7 @@ export function SidebarAusencias() {
   const [popoverPersona, setPopoverPersona] = useState<PersonaItem | null>(null);
 
   const supabase   = createClient();
-  const hoy        = new Date().toISOString().split("T")[0];
+  const hoy        = format(new Date(), "yyyy-MM-dd");
   const inicioAnio = `${new Date().getFullYear()}-01-01`;
 
   const cargar = useCallback(async () => {

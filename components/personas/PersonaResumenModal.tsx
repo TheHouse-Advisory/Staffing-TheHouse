@@ -5,7 +5,7 @@ import { format, intervalToDuration } from "date-fns";
 import { es } from "date-fns/locale";
 
 function calcDiasCard(fechaInicio: string, fechaFin: string) {
-  const hoy = new Date().toISOString().split("T")[0];
+  const hoy = format(new Date(), "yyyy-MM-dd");
   const esFuturo = fechaInicio > hoy;
   if (esFuturo) {
     const d = Math.max(0, Math.floor((new Date(fechaInicio + "T00:00:00").getTime() - new Date(hoy + "T00:00:00").getTime()) / 86_400_000));
@@ -124,10 +124,10 @@ export function PersonaResumenModal({ personaId, onClose, simulationSnapshot, oc
           .eq("estado", "activa")
           .eq("engagement.estado", "activo")
           .eq("engagement.is_deleted", false)
-          .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().slice(0, 10)}`),
+          .or(`fecha_fin.is.null,fecha_fin.gte.${format(new Date(), "yyyy-MM-dd")}`),
         // Historial: solo asignaciones YA FINALIZADAS (fecha_fin < hoy), con engagement existente y no borrado
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        sb.from("asignacion").select("fecha_inicio, fecha_fin, engagement:engagement_id!inner(id, codigo, nombre, cliente, industria:industria_id(nombre), is_deleted, tipo)" as any).eq("persona_id", personaId).not("fecha_fin", "is", null).lt("fecha_fin", new Date().toISOString().slice(0, 10)).eq("engagement.is_deleted", false).neq("engagement.tipo", "posibles_proyectos").order("fecha_inicio", { ascending: false }),
+        sb.from("asignacion").select("fecha_inicio, fecha_fin, engagement:engagement_id!inner(id, codigo, nombre, cliente, industria:industria_id(nombre), is_deleted, tipo)" as any).eq("persona_id", personaId).not("fecha_fin", "is", null).lt("fecha_fin", format(new Date(), "yyyy-MM-dd")).eq("engagement.is_deleted", false).neq("engagement.tipo", "posibles_proyectos").order("fecha_inicio", { ascending: false }),
         sb.from("persona_industria").select("cat_industria(nombre)").eq("persona_id", personaId),
         sb.from("persona_capacidad").select("cat_capacidad(nombre)").eq("persona_id", personaId),
         sb.from("persona_tematica").select("cat_tematica(nombre)").eq("persona_id", personaId),

@@ -8,6 +8,31 @@ import { FieldWrapper, Input } from "@/components/ui/FormField";
 import { expandirRango, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 import type { TipoAusencia } from "@/lib/types/database";
 
+/**
+ * Elimina una extensión junto con su equipo: las asignaciones vinculadas (extension_id) y,
+ * para extensiones antiguas sin vínculo, las asignaciones y cupos creados con exactamente
+ * las fechas de la extensión. Antes solo se borraba la extensión y las personas seguían
+ * ocupadas en un período que ya no existía.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export async function eliminarExtensionConEquipo(sb: any, extensionId: string): Promise<{ error: string | null }> {
+  const { data: ext, error: extErr } = await sb.from("engagement_extension")
+    .select("id, engagement_id, fecha_inicio, fecha_fin").eq("id", extensionId).single();
+  if (extErr || !ext) return { error: extErr?.message ?? "No se encontró la extensión." };
+
+  const { error: delVincErr } = await sb.from("asignacion").delete().eq("extension_id", extensionId);
+  if (delVincErr) return { error: delVincErr.message };
+  const { error: delFechasErr } = await sb.from("asignacion").delete()
+    .eq("engagement_id", ext.engagement_id).eq("fecha_inicio", ext.fecha_inicio).eq("fecha_fin", ext.fecha_fin);
+  if (delFechasErr) return { error: delFechasErr.message };
+  const { error: delReqErr } = await sb.from("requerimiento_engagement").delete()
+    .eq("engagement_id", ext.engagement_id).eq("fecha_inicio", ext.fecha_inicio).eq("fecha_fin", ext.fecha_fin);
+  if (delReqErr) return { error: delReqErr.message };
+
+  const { error: delExtErr } = await sb.from("engagement_extension").delete().eq("id", extensionId);
+  return { error: delExtErr?.message ?? null };
+}
+
 // ─── Types ────────────────────────────────────────────────────
 
 interface ExtPersona {
@@ -97,6 +122,7 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
   const [reqs, setReqs] = useState<ReqBase[]>([]);
   const [loading, setLoading] = useState(false);
   const [guardando, setGuardando] = useState(false);
+  const [eliminandoId, setEliminandoId] = useState<string | null>(null);
   const [exito, setExito] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -116,8 +142,13 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
   useEffect(() => { cargarExtensiones(); }, [engagementId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function eliminarExtension(id: string) {
-    const sb = createAnyClient();
-    await (sb as any).from("engagement_extension").delete().eq("id", id);
+    if (!window.confirm("¿Eliminar esta extensión? También se quitará al equipo asignado a ese período.")) return;
+    setEliminandoId(id);
+    setError(null);
+    const { error: delErr } = await eliminarExtensionConEquipo(createAnyClient(), id);
+    setEliminandoId(null);
+    // Solo se quita de pantalla si la base confirmó el borrado
+    if (delErr) { setError(`No se pudo eliminar la extensión: ${delErr}`); return; }
     setExtensionesGuardadas((prev) => prev.filter((e) => e.id !== id));
     window.dispatchEvent(new CustomEvent("engagementChanged", { detail: { engagementId } }));
   }
@@ -311,10 +342,21 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
 
     // 0. Registrar el período de extensión (período independiente, sin tocar fecha_fin_estimada)
     //    No actualizamos fecha_fin_estimada para preservar el fin original y permitir gaps visuales
-    const { error: extErr } = await (sb as any)
+    const { data: ext, error: extErr } = await (sb as any)
       .from("engagement_extension")
-      .insert({ engagement_id: engagementId, fecha_inicio: fechaInicio, fecha_fin: fechaFin });
-    if (extErr) { setError(extErr.message); setGuardando(false); return; }
+      .insert({ engagement_id: engagementId, fecha_inicio: fechaInicio, fecha_fin: fechaFin })
+      .select("id")
+      .single();
+    if (extErr || !ext) { setError(extErr?.message ?? "No se pudo crear la extensión."); setGuardando(false); return; }
+
+    // Si un paso posterior falla, deshace lo creado para no dejar una extensión a medias
+    const creadosReqIds: string[] = [];
+    async function deshacer(msg: string) {
+      if (creadosReqIds.length > 0) await (sb as any).from("requerimiento_engagement").delete().in("id", creadosReqIds);
+      await (sb as any).from("engagement_extension").delete().eq("id", ext.id);
+      setError(`${msg} No se guardó la extensión; vuelve a intentarlo.`);
+      setGuardando(false);
+    }
 
     // 1. Crear requerimientos para el período extendido (solo si hay reqs que copiar)
     const reqPool = new Map<string, string[]>();
@@ -333,8 +375,9 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
           }))
         )
         .select("id, cargo_requerido");
-      if (reqErr) { setError(reqErr.message); setGuardando(false); return; }
+      if (reqErr) { await deshacer(reqErr.message); return; }
       for (const r of (newReqs ?? []) as any[]) {
+        creadosReqIds.push(r.id);
         const key = r.cargo_requerido ?? "__any__";
         if (!reqPool.has(key)) reqPool.set(key, []);
         reqPool.get(key)!.push(r.id);
@@ -356,10 +399,11 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
             fecha_fin: fechaFin,
             estado: "activa",
             requerimiento_id,
+            extension_id: ext.id, // vínculo para poder liberar al equipo si se elimina la extensión
           };
         })
       );
-      if (err) { setError(err.message); setGuardando(false); return; }
+      if (err) { await deshacer(err.message); return; }
     }
 
     setGuardando(false);
@@ -545,8 +589,9 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
               </span>
               <button
                 onClick={() => eliminarExtension(ex.id)}
+                disabled={eliminandoId !== null}
                 title="Eliminar extensión"
-                className="text-[#ccc] hover:text-red-400 transition-colors"
+                className="text-[#ccc] hover:text-red-400 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
