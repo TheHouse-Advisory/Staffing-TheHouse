@@ -338,7 +338,7 @@ export function PlanReviewPanel({ planId, miPersonaId, onSuccess, onClose }: Pro
         .from("asignacion").insert(nuevas).select("id, propuesta_origen_id");
       if (insErr || !creadas) { setActionError(insErr?.message ?? "Error al crear asignaciones"); setActionLoading(false); return; }
 
-      await Promise.all(
+      const enlaces = await Promise.all(
         (creadas as { id: string; propuesta_origen_id: string | null }[])
           .filter((a) => a.propuesta_origen_id)
           .map((a) =>
@@ -347,6 +347,9 @@ export function PlanReviewPanel({ planId, miPersonaId, onSuccess, onClose }: Pro
               .eq("id", a.propuesta_origen_id!)
           )
       );
+      // Las asignaciones ya existen: solo falla la trazabilidad propuesta → asignación
+      const enlaceErr = enlaces.find((r) => r.error)?.error;
+      if (enlaceErr) { setActionError(`Asignaciones creadas, pero no se pudo vincularlas con la propuesta: ${enlaceErr.message}`); setActionLoading(false); return; }
     }
 
     setActionLoading(false);

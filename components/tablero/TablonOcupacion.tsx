@@ -564,9 +564,14 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(null), 4000); };
 
   // Degrada un "Proyecto" a "Posible proyecto" (tipo → 'posibles_proyectos')
+  const [moviendoId, setMoviendoId] = useState<string | null>(null);
   async function moverAPosibleProyecto(fila: FilaProyecto) {
+    setMoviendoId(fila.engagement_id);
     const supabase = createClient();
-    await cambiarTipoEngagement(supabase, fila.engagement_id, "posibles_proyectos");
+    const { error: movErr } = await cambiarTipoEngagement(supabase, fila.engagement_id, "posibles_proyectos");
+    setMoviendoId(null);
+    // Sin confirmación de la base no se cambia la vista ni se muestra éxito
+    if (movErr) { showToast(`No se pudo mover el proyecto: ${movErr}`); return; }
     setFilasProyecto((prev) => prev.map((f) => (f.engagement_id !== fila.engagement_id ? f : { ...f, tipo: "posibles_proyectos" })));
     showToast("Proyecto movido a Posible de forma exitosa");
   }
@@ -973,8 +978,9 @@ export function TablonOcupacion({ semanaInicio, planId, vista, periodoVista }: P
                         {fila.tipo === "proyecto" && (
                           <button
                             onClick={() => moverAPosibleProyecto(fila)}
+                            disabled={moviendoId !== null}
                             title="Mover a Posible Proyecto"
-                            className="p-0.5 rounded hover:bg-amber-50 text-gray-300 hover:text-amber-500 flex-shrink-0">
+                            className="p-0.5 rounded hover:bg-amber-50 text-gray-300 hover:text-amber-500 flex-shrink-0 disabled:opacity-40 disabled:cursor-not-allowed">
                             <Undo2 className="w-3 h-3" />
                           </button>
                         )}

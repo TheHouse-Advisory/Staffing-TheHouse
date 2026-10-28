@@ -416,7 +416,9 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     if (!eliminarCandidata) return;
     setEliminarLoading(true);
     const supabase = createAnyClient();
-    await (supabase as any).from("cat_industria").update({ activo: false }).eq("id", eliminarCandidata.value);
+    const { error: delErr } = await (supabase as any).from("cat_industria").update({ activo: false }).eq("id", eliminarCandidata.value);
+    // Si la base rechaza, se cierra el diálogo y se muestra el error en el formulario sin tocar la lista
+    if (delErr) { setServerError(`No se pudo eliminar la industria: ${delErr.message}`); setEliminarLoading(false); setEliminarCandidata(null); return; }
     setIndustrias((prev) => prev.filter((i) => i.value !== eliminarCandidata.value));
     if (form.industria_id === eliminarCandidata.value) setForm((f) => ({ ...f, industria_id: "" }));
     setEliminarLoading(false);
@@ -447,7 +449,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     if (!eliminarCapCandidata) return;
     setEliminarCapLoading(true);
     const supabase = createAnyClient();
-    await (supabase as any).from("cat_capacidad").update({ activo: false }).eq("id", eliminarCapCandidata.value);
+    const { error: delErr } = await (supabase as any).from("cat_capacidad").update({ activo: false }).eq("id", eliminarCapCandidata.value);
+    if (delErr) { setServerError(`No se pudo eliminar la capacidad: ${delErr.message}`); setEliminarCapLoading(false); setEliminarCapCandidata(null); return; }
     setCapacidadesOpts((prev) => prev.filter((i) => i.value !== eliminarCapCandidata.value));
     setForm((f) => ({ ...f, capacidades: f.capacidades.filter((id) => id !== eliminarCapCandidata.value) }));
     setEliminarCapLoading(false); setEliminarCapCandidata(null);
@@ -477,7 +480,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     if (!eliminarTemCandidata) return;
     setEliminarTemLoading(true);
     const supabase = createAnyClient();
-    await (supabase as any).from("cat_tematica").update({ activo: false }).eq("id", eliminarTemCandidata.value);
+    const { error: delErr } = await (supabase as any).from("cat_tematica").update({ activo: false }).eq("id", eliminarTemCandidata.value);
+    if (delErr) { setServerError(`No se pudo eliminar la temática: ${delErr.message}`); setEliminarTemLoading(false); setEliminarTemCandidata(null); return; }
     setTematicasOpts((prev) => prev.filter((i) => i.value !== eliminarTemCandidata.value));
     setForm((f) => ({ ...f, tematicas: f.tematicas.filter((id) => id !== eliminarTemCandidata.value) }));
     setEliminarTemLoading(false); setEliminarTemCandidata(null);
@@ -626,8 +630,10 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
         // asignacion.requerimiento_id no tiene ON DELETE CASCADE: hay que borrar la(s)
         // asignación(es) vinculada(s) primero o el delete del req falla en silencio por FK
         // y la barra "fantasma" queda viva en el tablero.
-        await supabase.from("asignacion").delete().in("requerimiento_id", idsHuerfanos);
-        await supabase.from("requerimiento_engagement").delete().in("id", idsHuerfanos);
+        const { error: delAsigHuerfErr } = await supabase.from("asignacion").delete().in("requerimiento_id", idsHuerfanos);
+        if (delAsigHuerfErr) { setServerError(`Error al quitar asignaciones del equipo: ${delAsigHuerfErr.message}`); setLoading(false); return; }
+        const { error: delReqHuerfErr } = await supabase.from("requerimiento_engagement").delete().in("id", idsHuerfanos);
+        if (delReqHuerfErr) { setServerError(`Error al quitar requerimientos: ${delReqHuerfErr.message}`); setLoading(false); return; }
       }
     } else {
       const { data, error } = await supabase.from("engagement").insert(payload).select("id").single();
@@ -635,37 +641,27 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       engId = data.id;
     }
 
-    // Capacidades y temáticas: borrar y reinsertar
-    await Promise.all([
-      (supabase as any).from("engagement_capacidad").delete().eq("engagement_id", engId),
-      (supabase as any).from("engagement_tematica").delete().eq("engagement_id", engId),
-    ]);
-    const caps = form.capacidades.map((id) => ({ engagement_id: engId, capacidad_id: id }));
-    const tems = form.tematicas.map((id) => ({ engagement_id: engId, tematica_id: id }));
-    await Promise.all([
-      caps.length > 0 ? (supabase as any).from("engagement_capacidad").insert(caps) : Promise.resolve(),
-      tems.length > 0 ? (supabase as any).from("engagement_tematica").insert(tems) : Promise.resolve(),
-    ]);
-
-    // Actividades: borrar todas y reinsertar (mismo patrón que capacidades)
-    await (supabase as any).from("engagement_actividades").delete().eq("engagement_id", engId);
-    if (actividades.length > 0) {
-      await (supabase as any).from("engagement_actividades").insert(
-        actividades.map((a) => ({
-          engagement_id: engId,
-          tipo: a.tipo,
-          titulo: a.titulo.trim(),
-          descripcion: a.descripcion.trim() || null,
-          fecha_inicio: a.fecha_inicio,
-          fecha_fin: a.fecha_fin,
-        }))
-      );
-    }
+    // Capacidades, temáticas y actividades: reemplazo atómico en la base
+    // (si algo falla, Postgres revierte también el borrado; ver migración 20261028_reemplazo_atomico_relaciones)
+    const { error: relErr } = await (supabase as any).rpc("reemplazar_relaciones_engagement", {
+      p_engagement_id: engId,
+      p_capacidades: form.capacidades,
+      p_tematicas: form.tematicas,
+      p_actividades: actividades.map((a) => ({
+        tipo: a.tipo,
+        titulo: a.titulo.trim(),
+        descripcion: a.descripcion.trim() || null,
+        fecha_inicio: a.fecha_inicio,
+        fecha_fin: a.fecha_fin,
+      })),
+    });
+    if (relErr) { setServerError(`Error al guardar capacidades, temáticas o viajes/talleres: ${relErr.message}`); setLoading(false); return; }
 
     // Asignaciones directas que el usuario quitó de "Equipo del proyecto": se eliminan tal cual
     // (no tenían requerimiento_engagement vinculado, así que no hay nada más que limpiar).
     if (asignacionesAEliminar.length > 0) {
-      await supabase.from("asignacion").delete().in("id", asignacionesAEliminar);
+      const { error: delAsigErr } = await supabase.from("asignacion").delete().in("id", asignacionesAEliminar);
+      if (delAsigErr) { setServerError(`Error al quitar asignaciones: ${delAsigErr.message}`); setLoading(false); return; }
     }
 
     for (const [i, r] of reqs.entries()) {
@@ -723,11 +719,12 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
         };
         if (reqPayload.fecha_inicio) asigUpdate.fecha_inicio = reqPayload.fecha_inicio;
         if (reqPayload.fecha_fin)    asigUpdate.fecha_fin    = reqPayload.fecha_fin;
-        await supabase
+        const { error: cascErr } = await supabase
           .from("asignacion")
           .update(asigUpdate)
           .eq("requerimiento_id", r.id)
           .eq("estado", "activa");
+        if (cascErr) { setServerError(`Error al sincronizar asignaciones del requerimiento ${i + 1}: ${cascErr.message}`); setLoading(false); return; }
       } else {
         const { error: insErr } = await (supabase as any)
           .from("requerimiento_engagement").insert(reqPayload);
@@ -764,7 +761,10 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
         );
       }
 
-      if (syncOps.length > 0) await Promise.all(syncOps);
+      if (syncOps.length > 0) {
+        const syncErr = (await Promise.all(syncOps)).find((r: any) => r.error)?.error;
+        if (syncErr) { setServerError(`Error al sincronizar fechas de requerimientos: ${syncErr.message}`); setLoading(false); return; }
+      }
 
       // Propaga el mismo cambio de fechas a las asignaciones activas del engagement
       const asigMassUpdate: Record<string, string> = {};
@@ -775,11 +775,12 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
         asigMassUpdate.fecha_fin = form.fecha_fin_estimada;
 
       if (Object.keys(asigMassUpdate).length > 0) {
-        await supabase
+        const { error: massErr } = await supabase
           .from("asignacion")
           .update(asigMassUpdate)
           .eq("engagement_id", engId)
           .eq("estado", "activa");
+        if (massErr) { setServerError(`Error al sincronizar fechas de asignaciones: ${massErr.message}`); setLoading(false); return; }
       }
     }
 
@@ -801,19 +802,21 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           const reqIds = reqsAExtender.map((r) => r.id);
 
           // 1. Extender fecha_fin de los reqs
-          await supabase
+          const { error: extReqErr } = await supabase
             .from("requerimiento_engagement")
             .update({ fecha_fin: newFin })
             .in("id", reqIds);
+          if (extReqErr) { setServerError(`Error al extender requerimientos: ${extReqErr.message}`); setLoading(false); return; }
 
           // 1b. Extender todas las asignaciones activas que llegaban hasta oldFin
           //     (cubre PLAN y cualquier otro estado_staffing sin excepción)
-          await supabase
+          const { error: extAsigErr } = await supabase
             .from("asignacion")
             .update({ fecha_fin: newFin })
             .in("requerimiento_id", reqIds)
             .eq("estado", "activa")
             .eq("fecha_fin", oldFin);
+          if (extAsigErr) { setServerError(`Error al extender asignaciones: ${extAsigErr.message}`); setLoading(false); return; }
 
           // Inicio del tramo de extensión = día siguiente del fin anterior
           const dExt = new Date(oldFin + "T00:00:00");
@@ -834,7 +837,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
               .maybeSingle();
 
             if (ultimaAsig) {
-              await supabase.from("asignacion").insert({
+              const { error: tramoErr } = await supabase.from("asignacion").insert({
                 engagement_id: engId,
                 requerimiento_id: req.id,
                 persona_id: (ultimaAsig as any).persona_id,
@@ -845,6 +848,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                 estado: "activa",
                 estado_staffing: "PLAN",
               });
+              if (tramoErr) { setServerError(`Error al crear tramo de extensión: ${tramoErr.message}`); setLoading(false); return; }
             }
           }
         }

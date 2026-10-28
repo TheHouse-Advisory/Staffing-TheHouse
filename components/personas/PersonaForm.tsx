@@ -227,26 +227,24 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
       // (se sincroniza justo abajo junto al resto de periodos)
     }
 
-    // Sincronizar historial_cargos: borrar y re-insertar
-    const { error: histDelError } = await supabase.from("historial_cargos").delete().eq("persona_id", personaId);
-    if (histDelError) { setServerError(`Error al sincronizar historial de cargos: ${histDelError.message}`); setLoading(false); return; }
+    // Historial de cargos + relaciones N:N: reemplazo atómico en la base
+    // (si algo falla, Postgres revierte también el borrado; ver migración 20261028_reemplazo_atomico_relaciones)
     const periodosFiltrados = periodosCargo.filter((p) => p.cargo && p.fecha_inicio);
-    if (periodosFiltrados.length > 0) {
-      const { error: histInsError } = await supabase.from("historial_cargos").insert(
-        periodosFiltrados.map((p) => ({
-          persona_id:  personaId,
-          cargo:       p.cargo,
-          fecha_inicio: p.fecha_inicio,
-          fecha_fin:   p.fecha_fin || null,
-          es_apalancador: CARGOS_LEVERAGER.includes(p.cargo) ? p.es_apalancador : false,
-          es_referente:   CARGOS_REFERENTE.includes(p.cargo) ? p.es_referente : false,
-        }))
-      );
-      if (histInsError) { setServerError(`Error al guardar historial de cargos: ${histInsError.message}`); setLoading(false); return; }
-    }
-
-    // Sincronizar relaciones N:N
-    await syncRelaciones(supabase, personaId, form);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const { error: relErr } = await (supabase as any).rpc("reemplazar_relaciones_persona", {
+      p_persona_id: personaId,
+      p_cargos: periodosFiltrados.map((p) => ({
+        cargo:       p.cargo,
+        fecha_inicio: p.fecha_inicio,
+        fecha_fin:   p.fecha_fin || null,
+        es_apalancador: CARGOS_LEVERAGER.includes(p.cargo) ? p.es_apalancador : false,
+        es_referente:   CARGOS_REFERENTE.includes(p.cargo) ? p.es_referente : false,
+      })),
+      p_industrias: form.industrias,
+      p_capacidades: form.capacidades,
+      p_tematicas: form.tematicas,
+    });
+    if (relErr) { setServerError(`Error al guardar historial de cargos o industrias/capacidades/temáticas: ${relErr.message}`); setLoading(false); return; }
 
     setLoading(false);
     onSuccess();
@@ -574,44 +572,4 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
       </div>
     </Drawer>
   );
-}
-
-// Sincroniza las relaciones N:N borrando y re-insertando
-async function syncRelaciones(
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  supabase: any,
-  personaId: string,
-  form: FormState
-) {
-  await Promise.all([
-    supabase.from("persona_industria").delete().eq("persona_id", personaId),
-    supabase.from("persona_capacidad").delete().eq("persona_id", personaId),
-    supabase.from("persona_tematica").delete().eq("persona_id", personaId),
-  ]);
-
-  const inserts: Promise<unknown>[] = [];
-
-  if (form.industrias.length > 0) {
-    inserts.push(
-      supabase.from("persona_industria").insert(
-        form.industrias.map((id) => ({ persona_id: personaId, industria_id: id }))
-      )
-    );
-  }
-  if (form.capacidades.length > 0) {
-    inserts.push(
-      supabase.from("persona_capacidad").insert(
-        form.capacidades.map((id) => ({ persona_id: personaId, capacidad_id: id }))
-      )
-    );
-  }
-  if (form.tematicas.length > 0) {
-    inserts.push(
-      supabase.from("persona_tematica").insert(
-        form.tematicas.map((id) => ({ persona_id: personaId, tematica_id: id }))
-      )
-    );
-  }
-
-  await Promise.all(inserts);
 }
