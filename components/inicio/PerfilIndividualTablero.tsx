@@ -31,7 +31,8 @@ interface PersonaFila {
   nombre: string;
   apellido: string;
   cargo: string;
-  proyectos: { id: string; nombre: string; cliente: string; inicio: string; fin: string; pct: number }[];
+  /** tramos: todos los tramos del proyecto (partido por ausencias); si falta, se usa inicio/fin */
+  proyectos: { id: string; nombre: string; cliente: string; inicio: string; fin: string; pct: number; tramos?: { inicio: string; fin: string; pct: number }[] }[];
   ausencias: { inicio: string; fin: string; tipo: string }[];
 }
 
@@ -208,8 +209,11 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
       const [persRes, asigRes, ausenRes] = await Promise.all([
         sb.from("persona").select("id, nombre, apellido, cargo_actual").eq("activo", true),
         sb.from("asignacion")
-          .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin, estado_staffing, engagement:engagement_id(id, codigo, nombre, cliente, tipo)" as any)
+          .select("persona_id, pct_dedicacion, fecha_inicio, fecha_fin, estado_staffing, engagement:engagement_id!inner(id, codigo, nombre, cliente, tipo, estado, is_deleted)" as any)
           .eq("estado", "activa")
+          // Solo proyectos activos y fuera de la papelera
+          .eq("engagement.estado" as any, "activo")
+          .not("engagement.is_deleted" as any, "is", true)
           .lte("fecha_inicio", fechaFin)
           .gte("fecha_fin", fechaInicio),
         sb.from("ausencia")
@@ -244,10 +248,16 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
                 pct: a.pct_dedicacion,
               };
             });
-          // Deduplicar por engagement id — múltiples tramos del mismo engagement se unifican
-          const engMap = new Map<string, typeof asigsSinDedup[0]>();
+          // Una fila por engagement, guardando todos sus tramos (antes solo el primero y el
+          // proyecto desaparecía después de una ausencia)
+          const engMap = new Map<string, PersonaFila["proyectos"][number]>();
           for (const a of asigsSinDedup) {
-            if (!engMap.has(a.id)) engMap.set(a.id, a);
+            const tramo = { inicio: a.inicio, fin: a.fin, pct: a.pct };
+            const prev = engMap.get(a.id);
+            if (!prev) { engMap.set(a.id, { ...a, tramos: [tramo] }); continue; }
+            prev.tramos!.push(tramo);
+            if (a.inicio < prev.inicio) prev.inicio = a.inicio;
+            if (a.fin > prev.fin) prev.fin = a.fin;
           }
           const asigs = Array.from(engMap.values());
           const ausencias = ((ausenRes.data ?? []) as any[])
@@ -390,6 +400,7 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
 
                 const filasProyectos = persona.proyectos.map((proy, pi) => {
                   const { dias, esFuturo } = calcDiasEngagement(proy.inicio, proy.fin);
+                  const proyBase = proy;
                   return (
                   <tr key={`proy-${persona.id}-${proy.id}-${pi}`}>
                     <td className="pr-3 py-0.5 sticky left-0 bg-white z-10">
@@ -412,7 +423,10 @@ export function PerfilIndividualTablero({ semanaInicio, periodoVista, simulation
                       </div>
                     </td>
                     {columnasMostradas.map((col, i) => {
-                      const activo = overlapsColumna(proy.inicio, proy.fin, col);
+                      // La barra se pinta si cualquier tramo cae en la columna, con el % de ese tramo
+                      const tramoCol = (proyBase.tramos ?? [proyBase]).find((t) => overlapsColumna(t.inicio, t.fin, col));
+                      const activo = !!tramoCol;
+                      const proy = tramoCol ? { ...proyBase, pct: tramoCol.pct } : proyBase;
                       const semColor = esGYD
                         ? "#fef3c7"
                         : proy.pct < 50  ? "#16a34a"

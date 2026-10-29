@@ -8,6 +8,13 @@ import { Input } from "@/components/ui/FormField";
 
 interface CatalogoItem { id: string; nombre: string; activo: boolean; }
 
+// Dónde se usa cada catálogo en los proyectos (para contar antes de desactivar)
+const USO_CATALOGO = {
+  cat_industria: { tablaUso: "engagement", columna: "industria_id" },
+  cat_capacidad: { tablaUso: "engagement_capacidad", columna: "capacidad_id" },
+  cat_tematica:  { tablaUso: "engagement_tematica", columna: "tematica_id" },
+} as const;
+
 interface Props {
   tabla: "cat_industria" | "cat_capacidad" | "cat_tematica";
   titulo: string;
@@ -67,8 +74,18 @@ export function CatalogoTab({ tabla, titulo }: Props) {
 
   const toggleActivo = async (item: CatalogoItem) => {
     if (saving) return;
-    setSaving(true);
     const supabase = createAnyClient();
+    // Al desactivar se confirma, indicando cuántos proyectos la usan (antes se hacía con un clic)
+    if (item.activo) {
+      const { tablaUso, columna } = USO_CATALOGO[tabla];
+      const { count } = await supabase.from(tablaUso).select(columna, { count: "exact", head: true }).eq(columna, item.id);
+      const n = count ?? 0;
+      const uso = n > 0
+        ? `La usan ${n} proyecto${n !== 1 ? "s" : ""}: la conservarán, pero ya no se podrá elegir en proyectos nuevos.`
+        : "Ningún proyecto la usa.";
+      if (!window.confirm(`¿Desactivar "${item.nombre}"? ${uso} Podrás reactivarla desde "Inactivas".`)) return;
+    }
+    setSaving(true);
     const { error: err } = await supabase.from(tabla).update({ activo: !item.activo }).eq("id", item.id);
     setSaving(false);
     if (err) { setError(mensaje(err)); return; }
@@ -155,7 +172,8 @@ export function CatalogoTab({ tabla, titulo }: Props) {
             ) : (
               <>
                 <span className="flex-1 text-sm">{item.nombre}</span>
-                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                {/* Siempre visibles (antes solo al pasar el mouse: no se veían en pantallas táctiles) */}
+                <div className="flex items-center gap-1">
                   <button onClick={() => startEdit(item)}
                     className="p-1.5 rounded-md hover:bg-[#f0f0f0] text-[#888] hover:text-[#1a1a1a] transition-colors">
                     <Pencil className="w-3.5 h-3.5" />
@@ -184,7 +202,7 @@ export function CatalogoTab({ tabla, titulo }: Props) {
                 className={`flex items-center gap-3 px-4 py-3 group ${idx < inactivos.length - 1 ? "border-b border-[#f5f5f5]" : ""}`}>
                 <span className="flex-1 text-sm line-through text-[#aaa]">{item.nombre}</span>
                 <button onClick={() => toggleActivo(item)}
-                  className="opacity-0 group-hover:opacity-100 text-xs text-[#4a90e2] hover:underline transition-opacity">
+                  className="text-xs text-[#4a90e2] hover:underline">
                   Reactivar
                 </button>
               </div>

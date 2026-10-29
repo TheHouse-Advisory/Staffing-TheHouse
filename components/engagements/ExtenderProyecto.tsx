@@ -20,17 +20,38 @@ export async function eliminarExtensionConEquipo(sb: any, extensionId: string): 
     .select("id, engagement_id, fecha_inicio, fecha_fin").eq("id", extensionId).single();
   if (extErr || !ext) return { error: extErr?.message ?? "No se encontró la extensión." };
 
+  // Cada paso se puede repetir sin efectos extra: si uno falla, volver a eliminar completa lo que faltó
+  const reintentar = (msg: string) => ({ error: `${msg} Vuelve a eliminar la extensión para terminar.` });
+
+  // Requerimientos creados para el período de la extensión (mismas fechas exactas)
+  const { data: reqsExt, error: leerReqErr } = await sb.from("requerimiento_engagement").select("id")
+    .eq("engagement_id", ext.engagement_id).eq("fecha_inicio", ext.fecha_inicio).eq("fecha_fin", ext.fecha_fin);
+  if (leerReqErr) return { error: leerReqErr.message };
+  const reqIds = ((reqsExt ?? []) as { id: string }[]).map((r) => r.id);
+
+  // 1. Equipo vinculado a la extensión
   const { error: delVincErr } = await sb.from("asignacion").delete().eq("extension_id", extensionId);
   if (delVincErr) return { error: delVincErr.message };
+  // 2. Toda asignación que apunte a esos requerimientos, aunque tenga otras fechas: sin esto el
+  //    borrado del requerimiento fallaba por la clave foránea y la extensión quedaba vacía a medias
+  if (reqIds.length > 0) {
+    const { error: delReqAsigErr } = await sb.from("asignacion").delete().in("requerimiento_id", reqIds);
+    if (delReqAsigErr) return reintentar(delReqAsigErr.message);
+  }
+  // 3. Asignaciones antiguas sin vínculo (anteriores a extension_id): solo las sin requerimiento
+  //    y con las fechas exactas; ya no se borran asignaciones de otros requerimientos que coincidan en fechas
   const { error: delFechasErr } = await sb.from("asignacion").delete()
-    .eq("engagement_id", ext.engagement_id).eq("fecha_inicio", ext.fecha_inicio).eq("fecha_fin", ext.fecha_fin);
-  if (delFechasErr) return { error: delFechasErr.message };
-  const { error: delReqErr } = await sb.from("requerimiento_engagement").delete()
-    .eq("engagement_id", ext.engagement_id).eq("fecha_inicio", ext.fecha_inicio).eq("fecha_fin", ext.fecha_fin);
-  if (delReqErr) return { error: delReqErr.message };
+    .eq("engagement_id", ext.engagement_id).is("extension_id", null).is("requerimiento_id", null)
+    .eq("fecha_inicio", ext.fecha_inicio).eq("fecha_fin", ext.fecha_fin);
+  if (delFechasErr) return reintentar(delFechasErr.message);
+  // 4. Requerimientos de la extensión
+  if (reqIds.length > 0) {
+    const { error: delReqErr } = await sb.from("requerimiento_engagement").delete().in("id", reqIds);
+    if (delReqErr) return reintentar(delReqErr.message);
+  }
 
   const { error: delExtErr } = await sb.from("engagement_extension").delete().eq("id", extensionId);
-  return { error: delExtErr?.message ?? null };
+  return delExtErr ? reintentar(delExtErr.message) : { error: null };
 }
 
 // ─── Types ────────────────────────────────────────────────────
@@ -87,7 +108,7 @@ async function fetchConflictos(
   fechaInicio: string,
   fechaFin: string
 ) {
-  const [{ data: ausData }, { data: solapData }] = await Promise.all([
+  const [{ data: ausData, error: ausErr }, { data: solapData, error: solapErr }] = await Promise.all([
     sb.from("ausencia")
       .select("persona_id, tipo, fecha_inicio, fecha_fin")
       .eq("persona_id", personaId)
@@ -101,7 +122,7 @@ async function fetchConflictos(
       .lte("fecha_inicio", fechaFin)
       .or(`fecha_fin.gte.${fechaInicio},fecha_fin.is.null`),
   ]);
-  return { ausData: ausData ?? [], solapData: solapData ?? [] };
+  return { ausData: ausData ?? [], solapData: solapData ?? [], error: (ausErr ?? solapErr)?.message ?? null };
 }
 
 // ─── Props ────────────────────────────────────────────────────
@@ -131,11 +152,12 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
 
   async function cargarExtensiones() {
     const sb = createAnyClient();
-    const { data } = await (sb as any)
+    const { data, error: extErr } = await (sb as any)
       .from("engagement_extension")
       .select("id, fecha_inicio, fecha_fin")
       .eq("engagement_id", engagementId)
       .order("fecha_inicio");
+    if (extErr) { setError(`No se pudieron cargar las extensiones registradas: ${extErr.message}`); return; }
     setExtensionesGuardadas(data ?? []);
   }
 
@@ -190,13 +212,16 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
       const sb = createAnyClient();
 
       // Equipo actual (asignaciones activas)
-      const { data: asigData } = await (sb as any)
+      const { data: asigData, error: asigErr } = await (sb as any)
         .from("asignacion")
         .select("persona_id, pct_dedicacion, cargo_al_momento, persona:persona_id(nombre, apellido)")
         .eq("engagement_id", engagementId)
-        .eq("estado", "activa");
+        .eq("estado", "activa")
+        // Más reciente primero: el dedup se queda con el cargo y % actuales (antes era una fila cualquiera)
+        .order("fecha_inicio", { ascending: false });
 
       if (cancelled) return;
+      if (asigErr) { setError(`No se pudo cargar el equipo actual: ${asigErr.message}`); setLoading(false); return; }
 
       // Dedup por personaId (la persona más reciente)
       const seen = new Set<string>();
@@ -224,7 +249,7 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
 
       const ids = unique.map((a: any) => a.persona_id as string);
 
-      const [{ data: ausData }, { data: solapData }] = await Promise.all([
+      const [{ data: ausData, error: ausErr }, { data: solapData, error: solapErr }] = await Promise.all([
         (sb as any)
           .from("ausencia")
           .select("persona_id, tipo, fecha_inicio, fecha_fin")
@@ -242,6 +267,8 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
       ]);
 
       if (cancelled) return;
+      // Sin esto, los avisos de ausencias y cruces desaparecían en silencio
+      if (ausErr || solapErr) setError(`No se pudieron revisar ausencias o cruces del equipo: ${(ausErr ?? solapErr).message}`);
 
       const ausMap = new Map<string, any[]>();
       for (const a of (ausData ?? []) as any[]) {
@@ -302,7 +329,8 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
 
     setAddingPersona(true);
     const sb = createAnyClient();
-    const { ausData, solapData } = await fetchConflictos(sb, personaId, engagementId, fechaInicio, fechaFin);
+    const { ausData, solapData, error: conflictoErr } = await fetchConflictos(sb, personaId, engagementId, fechaInicio, fechaFin);
+    if (conflictoErr) setError(`No se pudieron revisar ausencias o cruces de ${opt.nombre}: ${conflictoErr}`);
 
     const newP: ExtPersona = {
       personaId: opt.id,
@@ -340,6 +368,34 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
     setError(null);
     const sb = createAnyClient();
 
+    // El período no puede cruzarse con otra extensión del mismo proyecto
+    const extCruzada = extensionesGuardadas.find((e) => e.fecha_inicio <= fechaFin && e.fecha_fin >= fechaInicio);
+    if (extCruzada) {
+      setError(`Estas fechas se cruzan con la extensión ${fmtDate(extCruzada.fecha_inicio)} → ${fmtDate(extCruzada.fecha_fin)}.`);
+      setGuardando(false);
+      return;
+    }
+    // Nadie del equipo puede quedar asignado dos veces en este proyecto para los mismos días
+    // (antes solo se revisaban otros proyectos y la persona podía quedar al 200%)
+    if (personas.length > 0) {
+      const { data: yaAsignadas, error: cruceErr } = await (sb as any)
+        .from("asignacion")
+        .select("persona_id")
+        .eq("engagement_id", engagementId)
+        .eq("estado", "activa")
+        .in("persona_id", personas.map((p) => p.personaId))
+        .lte("fecha_inicio", fechaFin)
+        .or(`fecha_fin.gte.${fechaInicio},fecha_fin.is.null`);
+      if (cruceErr) { setError(`No se pudo revisar el equipo: ${cruceErr.message}`); setGuardando(false); return; }
+      const idsCruce = new Set(((yaAsignadas ?? []) as { persona_id: string }[]).map((a) => a.persona_id));
+      if (idsCruce.size > 0) {
+        const nombres = personas.filter((p) => idsCruce.has(p.personaId)).map((p) => `${p.nombre} ${p.apellido}`).join(", ");
+        setError(`Ya están asignados a este proyecto en esas fechas: ${nombres}. Quítalos de la lista o cambia las fechas.`);
+        setGuardando(false);
+        return;
+      }
+    }
+
     // 0. Registrar el período de extensión (período independiente, sin tocar fecha_fin_estimada)
     //    No actualizamos fecha_fin_estimada para preservar el fin original y permitir gaps visuales
     const { data: ext, error: extErr } = await (sb as any)
@@ -352,10 +408,16 @@ export function ExtenderProyecto({ engagementId, engagementTipo, onExtended, onF
     // Si un paso posterior falla, deshace lo creado para no dejar una extensión a medias
     const creadosReqIds: string[] = [];
     async function deshacer(msg: string) {
-      if (creadosReqIds.length > 0) await (sb as any).from("requerimiento_engagement").delete().in("id", creadosReqIds);
-      await (sb as any).from("engagement_extension").delete().eq("id", ext.id);
-      setError(`${msg} No se guardó la extensión; vuelve a intentarlo.`);
+      const { error: e1 } = creadosReqIds.length > 0
+        ? await (sb as any).from("requerimiento_engagement").delete().in("id", creadosReqIds)
+        : { error: null };
+      const { error: e2 } = await (sb as any).from("engagement_extension").delete().eq("id", ext.id);
+      // Si la limpieza también falla, se avisa (antes decía "no se guardó" aunque quedaran restos)
+      setError(e1 || e2
+        ? `${msg} No se guardó la extensión y no se pudo limpiar lo creado a medias: revisa "Extensiones registradas" o avisa a soporte.`
+        : `${msg} No se guardó la extensión; vuelve a intentarlo.`);
       setGuardando(false);
+      if (e1 || e2) await cargarExtensiones();
     }
 
     // 1. Crear requerimientos para el período extendido (solo si hay reqs que copiar)

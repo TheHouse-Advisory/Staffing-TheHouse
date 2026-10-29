@@ -50,6 +50,19 @@ function ordenarCargos(cargos: string[]) {
 }
 
 /** Color del indicador de ocupación: rojo ≥90%, amarillo ≥60%, verde <60% */
+// Asignaciones vigentes hoy, solo de proyectos activos, fuera de la papelera y que no sean
+// "Posibles proyectos" (antes contaban archivados/eliminados y la persona seguía ocupada)
+function asignacionesVigentes(sb: any, hoy: string, campos: string) {
+  return sb.from("asignacion")
+    .select(`${campos}, engagement:engagement_id!inner(tipo, estado, is_deleted)`)
+    .eq("estado", "activa")
+    .lte("fecha_inicio", hoy)
+    .gte("fecha_fin", hoy)
+    .neq("engagement.tipo", "posibles_proyectos")
+    .eq("engagement.estado", "activo")
+    .not("engagement.is_deleted", "is", true);
+}
+
 function ocupColor(pct: number) {
   if (pct >= 90) return { bg: "#fef2f2", text: "#dc2626" };
   if (pct >= 60) return { bg: "#fefce8", text: "#ca8a04" };
@@ -124,12 +137,13 @@ export function InicioClient() {
     else if (periodoResumen === "mes") setSemanaResumen((s) => addMonths(s, 4));
     else setSemanaResumen((s) => addWeeks(s, 1));
   }
+  // Termina en la última columna visible: 5 semanas, 4 meses o 7 días
   const periodoLabel =
     periodoResumen === "semana"
-      ? `${format(semanaResumen, "d MMM", { locale: es })} – ${format(addWeeks(semanaResumen, 5), "d MMM yyyy", { locale: es })}`
+      ? `${format(semanaResumen, "d MMM", { locale: es })} – ${format(addDays(addWeeks(semanaResumen, 5), -1), "d MMM yyyy", { locale: es })}`
       : periodoResumen === "mes"
-      ? `${format(semanaResumen, "MMM", { locale: es })} – ${format(addMonths(semanaResumen, 4), "MMM yyyy", { locale: es })}`
-      : `${format(semanaResumen, "d MMM", { locale: es })} – ${format(addWeeks(semanaResumen, 1), "d MMM yyyy", { locale: es })}`;
+      ? `${format(semanaResumen, "MMM", { locale: es })} – ${format(addMonths(semanaResumen, 3), "MMM yyyy", { locale: es })}`
+      : `${format(semanaResumen, "d MMM", { locale: es })} – ${format(addDays(semanaResumen, 6), "d MMM yyyy", { locale: es })}`;
 
   // Popup persona
   const [seleccionada, setSeleccionada] = useState<Persona | null>(null);
@@ -160,17 +174,8 @@ export function InicioClient() {
         sb.from("persona")
           .select("id, nombre, apellido, iniciales, cargo_actual, is_leverager, referente, fecha_ingreso")
           .eq("activo", true).order("cargo_actual").order("apellido"),
-        (sb as any).from("asignacion")
-          .select("persona_id, pct_dedicacion, estado_staffing, engagement:engagement_id!inner(tipo)")
-          .eq("estado", "activa")
-          .lte("fecha_inicio", hoy)
-          .gte("fecha_fin", hoy)
-          .neq("engagement.tipo", "posibles_proyectos"),
-        (sb as any).from("asignacion")
-          .select("persona_id, fecha_fin, estado_staffing, engagement:engagement_id(tipo)")
-          .eq("estado", "activa")
-          .lte("fecha_inicio", hoy)
-          .gte("fecha_fin", hoy),
+        asignacionesVigentes(sb, hoy, "persona_id, pct_dedicacion, estado_staffing"),
+        asignacionesVigentes(sb, hoy, "persona_id, fecha_fin, estado_staffing"),
         sb.from("ausencia")
           .select("persona_id, fecha_inicio, fecha_fin")
           .lte("fecha_inicio", en7dias)
@@ -224,12 +229,7 @@ export function InicioClient() {
   const refreshOcupacion = useCallback(async () => {
     const sb = createAnyClient();
     const hoy = format(new Date(), "yyyy-MM-dd");
-    const { data } = await (sb as any).from("asignacion")
-      .select("persona_id, pct_dedicacion, estado_staffing, engagement:engagement_id!inner(tipo)")
-      .eq("estado", "activa")
-      .lte("fecha_inicio", hoy)
-      .gte("fecha_fin", hoy)
-      .neq("engagement.tipo", "posibles_proyectos");
+    const { data } = await asignacionesVigentes(sb, hoy, "persona_id, pct_dedicacion, estado_staffing");
     const map: Record<string, number> = {};
     for (const a of (data ?? []) as { persona_id: string; pct_dedicacion: number; estado_staffing?: string | null }[]) {
       if (rol === "AySr" && a.estado_staffing === "PLAN") continue; // A&Sr: sin "Por confirmar"
@@ -238,11 +238,7 @@ export function InicioClient() {
     setOcupacionMap(map);
 
     // También se refresca "Disponibles próximamente" (antes quedaba desactualizado tras asignar)
-    const { data: detalle } = await (sb as any).from("asignacion")
-      .select("persona_id, fecha_fin, estado_staffing, engagement:engagement_id(tipo)")
-      .eq("estado", "activa")
-      .lte("fecha_inicio", hoy)
-      .gte("fecha_fin", hoy);
+    const { data: detalle } = await asignacionesVigentes(sb, hoy, "persona_id, fecha_fin, estado_staffing");
     setAsignacionesDetalle(
       ((detalle ?? []) as any[])
         .filter((a) => !(rol === "AySr" && a.estado_staffing === "PLAN"))

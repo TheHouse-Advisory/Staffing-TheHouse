@@ -431,7 +431,7 @@ export function CapacityProyectosClient() {
                                   className="text-[11px] font-bold px-1 rounded"
                                   style={esBottle ? { color: "#dc2626", background: "#fee2e2" } : { color: "#1d4ed8" }}
                                 >
-                                  {suma}
+                                  {round2(suma)}
                                 </span>
                               </td>
                             );
@@ -545,7 +545,7 @@ export function CapacityProyectosClient() {
                                   style={esBottle ? { color: "#dc2626", background: "#fee2e2" } : { color: "#1d4ed8" }}
                                   title={esBottle ? "Cuello de botella" : undefined}
                                 >
-                                  {suma}
+                                  {round2(suma)}
                                 </span>
                               </td>
                             );
@@ -604,7 +604,7 @@ export function CapacityProyectosClient() {
                         title={bt ? `Cuello: ${GRUPO_LABEL_SHORT[bt] ?? bt}` : undefined}
                       >
                         <div className="flex flex-col items-center gap-0.5">
-                          <span className="text-[12px] font-black text-white leading-none">{v}</span>
+                          <span className="text-[12px] font-black text-white leading-none">{round2(v)}</span>
                           {bt && (
                             <span className="text-[8px] font-semibold text-[#f87171] leading-none">
                               {GRUPO_LABEL_SHORT[bt] ?? bt}

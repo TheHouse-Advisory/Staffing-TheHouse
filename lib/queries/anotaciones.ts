@@ -9,8 +9,9 @@ export async function getAnotaciones(
     .select("*")
     .order("created_at", { ascending: false });
 
-  if (error || !data) return [];
-  return data as Anotacion[];
+  // Se lanza el error: antes una falla se veía como "Aún no hay anotaciones"
+  if (error) throw new Error(error.message);
+  return (data ?? []) as Anotacion[];
 }
 
 /** Resuelve el nombre a mostrar del usuario autenticado actual (persona.nombre + apellido, o email). */
@@ -77,9 +78,11 @@ export async function createAnotacion(
 export async function updateAnotacion(
   supabase: any,
   id: string,
-  cambios: Partial<Pick<Anotacion, "titulo" | "contenido" | "categoria" | "folder_id" | "es_privada">>
+  cambios: Partial<Pick<Anotacion, "titulo" | "contenido" | "categoria" | "folder_id" | "es_privada">>,
+  /** Nombre ya conocido del usuario: evita una consulta extra en cada guardado */
+  nombreUsuario?: string | null
 ): Promise<{ error: string | null }> {
-  const usuarioActual = await getNombreUsuarioActual(supabase);
+  const usuarioActual = nombreUsuario ?? await getNombreUsuarioActual(supabase);
 
   const { error } = await supabase
     .from("anotacion")
@@ -123,9 +126,10 @@ export async function purgeAnotacion(
 }
 
 /** Borra definitivamente lo que lleva en la papelera desde antes de `corte` (RLS limita a lo propio). */
-export async function purgeAnotacionesVencidas(supabase: any, corte: string): Promise<void> {
-  await supabase.from("anotacion").delete().lt("deleted_at", corte);
-  await supabase.from("anotacion_folders").delete().lt("deleted_at", corte);
+export async function purgeAnotacionesVencidas(supabase: any, corte: string): Promise<{ error: string | null }> {
+  const { error: e1 } = await supabase.from("anotacion").delete().lt("deleted_at", corte);
+  const { error: e2 } = await supabase.from("anotacion_folders").delete().lt("deleted_at", corte);
+  return { error: (e1 ?? e2)?.message ?? null };
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -140,8 +144,8 @@ export async function getAnotacionFolders(
     .select("*")
     .order("nombre", { ascending: true });
 
-  if (error || !data) return [];
-  return data as AnotacionFolder[];
+  if (error) throw new Error(error.message);
+  return (data ?? []) as AnotacionFolder[];
 }
 
 export async function createAnotacionFolder(

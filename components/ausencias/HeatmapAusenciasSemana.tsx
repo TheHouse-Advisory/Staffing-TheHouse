@@ -12,16 +12,18 @@ import {
   COLOR_AUSENCIA,
   isHoliday,
   fetchViajesRango,
+  eliminarViaje,
   type ViajeDia,
   type FilaPersona,
   type CeldaAusencia,
   type PersonaConSeniority,
 } from "@/lib/queries/ausencias";
 import type { TipoAusencia } from "@/lib/types/database";
-import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
+import { useTiposAusencia, TIPOS_AUSENCIA_BASE } from "@/lib/hooks/useTiposAusencia";
 import { PopoverPersona } from "./PopoverPersona";
-import { buscarCruceAusencia } from "./HeatmapAusencias";
+import { buscarCruceAusencia, ViajeTooltip } from "./HeatmapAusencias";
 import { esAdmin } from "@/lib/roles";
+import { calculateBusinessDays } from "@/lib/utils/date-utils";
 
 const MESES_CORTO = ["Ene","Feb","Mar","Abr","May","Jun","Jul","Ago","Sep","Oct","Nov","Dic"];
 const DOW_LETRA   = ["L","M","X","J","V"];
@@ -120,7 +122,8 @@ interface ModalProps {
 function ModalAusencia({ personas, fechaInicial, personaInicial, editarId, onClose, onGuardado }: ModalProps) {
   const modoEdicion = !!editarId;
   const [personaId,   setPersonaId]   = useState(personaInicial ?? "");
-  const [tipo,        setTipo]        = useState<string>("vacaciones_confirmadas");
+  // Igual que en Mes: una ausencia nueva parte como pendiente
+  const [tipo,        setTipo]        = useState<string>("vacaciones_por_confirmar");
   const [fechaInicio, setFechaInicio] = useState(fechaInicial ?? "");
   const [fechaFin,    setFechaFin]    = useState(fechaInicial ?? "");
   const [descripcion, setDescripcion] = useState("");
@@ -152,6 +155,9 @@ function ModalAusencia({ personas, fechaInicial, personaInicial, editarId, onClo
   }
   async function handleEliminarTipo() {
     setTipoMsgError(null); setTipoMsgConfirm(null);
+    // El tipo se borra para todo el equipo: se pide confirmación
+    const nombreTipo = tiposDinamicos.find((t) => t.id === tipo)?.label ?? tipo;
+    if (!confirm(`¿Eliminar el tipo "${nombreTipo}"? Dejará de estar disponible para todo el equipo.`)) return;
     const { ok, count, error: errTipo } = await eliminarTipo(tipo);
     if (!ok) setTipoMsgError(errTipo ? `No se pudo eliminar: ${errTipo}` : `No se puede eliminar: hay ${count} ausencia(s) con este tipo.`);
     else { setTipoMsgConfirm("Tipo eliminado."); setTipo(tiposDinamicos[0]?.id ?? "otro"); }
@@ -180,6 +186,8 @@ function ModalAusencia({ personas, fechaInicial, personaInicial, editarId, onClo
     if (!modoEdicion && !personaId) { setError("Selecciona una persona."); return; }
     if (!fechaInicio || !fechaFin)  { setError("Las fechas son obligatorias."); return; }
     if (fechaFin < fechaInicio)     { setError("Fecha fin no puede ser anterior al inicio."); return; }
+    // Solo fin de semana o feriados: no se vería en ninguna vista
+    if (calculateBusinessDays(fechaInicio, fechaFin) === 0) { setError("El rango elegido solo tiene fines de semana o feriados. Elige al menos un día hábil."); return; }
     setGuardando(true);
     // No se permiten ausencias que se crucen para la misma persona (se contaban dos veces)
     const cruce = await buscarCruceAusencia(supabase, {
@@ -250,8 +258,9 @@ function ModalAusencia({ personas, fechaInicial, personaInicial, editarId, onClo
               <div className="flex gap-3 mt-1.5 pl-5">
                 <button type="button" onClick={() => { setMostrarNuevoTipo((v) => !v); setTipoMsgError(null); setTipoMsgConfirm(null); }}
                   className="text-[11px] text-[#4a90e2] hover:underline">+ Nuevo tipo</button>
-                <button type="button" onClick={handleEliminarTipo}
-                  className="text-[11px] text-red-400 hover:underline">🗑️ Eliminar tipo</button>
+                {/* Los tipos base no se pueden eliminar */}
+                {!TIPOS_AUSENCIA_BASE.includes(tipo) && <button type="button" onClick={handleEliminarTipo}
+                  className="text-[11px] text-red-400 hover:underline">🗑️ Eliminar tipo</button>}
               </div>
               {mostrarNuevoTipo && (
                 <div className="mt-1.5 pl-5 space-y-1.5">
@@ -390,6 +399,8 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
 
     setCargando(false);
     if (r1.error) { setError(r1.error); return; }
+    // Semana entre dos meses: si falla el segundo, se avisa (antes esos días quedaban vacíos)
+    setErrorAccion(r2?.error ? `No se pudieron cargar las ausencias de ${end.toLocaleDateString("es-CL", { month: "long" })}: ${r2.error}` : null);
 
     // Fusiona días de ambos meses por persona
     let merged = r1.filas;
@@ -441,6 +452,15 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
 
   // Aviso de error de eliminar / deshacer, sin tapar la grilla
   function avisarError(msg: string) { setErrorAccion(msg); setTimeout(() => setErrorAccion(null), 6000); }
+
+  async function handleEliminarViaje(viajeId: string) {
+    setEliminando(viajeId);
+    const { error: delErr } = await eliminarViaje(supabase, viajeId);
+    setEliminando(null);
+    setTooltip(null);
+    if (delErr) { avisarError(`No se pudo eliminar el viaje: ${delErr}`); return; }
+    cargar();
+  }
 
   async function handleEliminar(ausenciaId: string) {
     const { data } = await supabase.from("ausencia")
@@ -654,9 +674,28 @@ export function HeatmapAusenciasSemana({ selectedDate, externalModalOpen = false
                                 )}
                               </div>
                             ) : viaje ? (
-                              <div className="w-full h-5 rounded bg-indigo-600 text-white flex items-center justify-center gap-1 px-1" title={tituloViaje}>
-                                <Plane className="w-3 h-3 flex-shrink-0" />
-                                <span className="text-[9px] font-semibold leading-none truncate select-none">Viaje</span>
+                              // Igual que en Mes: al hacer clic se ve el detalle y se puede eliminar
+                              <div className="relative">
+                                <button type="button"
+                                  onClick={(e) => {
+                                    if (isActive) { setTooltip(null); return; }
+                                    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+                                    setTooltip({ personaId: fila.persona.id, fecha: iso, rect });
+                                  }}
+                                  className="w-full h-5 rounded bg-indigo-600 text-white flex items-center justify-center gap-1 px-1 hover:opacity-80 transition-opacity"
+                                  title={tituloViaje}
+                                >
+                                  <Plane className="w-3 h-3 flex-shrink-0" />
+                                  <span className="text-[9px] font-semibold leading-none truncate select-none">Viaje</span>
+                                </button>
+                                {isActive && (
+                                  <ViajeTooltip viaje={viaje} persona={fila.persona}
+                                    onEliminar={handleEliminarViaje} eliminando={eliminando === viaje.id}
+                                    readOnly={readOnly}
+                                    onCerrar={() => setTooltip(null)}
+                                    anchorRect={tooltip!.rect}
+                                  />
+                                )}
                               </div>
                             ) : esFeriado ? (
                               <div className="w-full h-5 rounded bg-gray-400 opacity-40" title="Feriado" />

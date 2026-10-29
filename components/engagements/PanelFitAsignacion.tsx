@@ -1,7 +1,10 @@
 "use client";
 
 import { useState, useEffect, useRef } from "react";
-import { format } from "date-fns";
+import { format, addDays } from "date-fns";
+
+// Desplaza una fecha "yyyy-MM-dd" en N días (hora local, sin correr el día por UTC)
+const moverDia = (fecha: string, dias: number) => format(addDays(new Date(fecha + "T00:00:00"), dias), "yyyy-MM-dd");
 import { es } from "date-fns/locale";
 import {
   X, ChevronRight, AlertTriangle, CalendarX, Info, Zap, Loader2, CheckCircle,
@@ -477,7 +480,7 @@ export function PanelFitAsignacion({
       const sb = createAnyClient();
       const hoy = today();
 
-      const [{ data: reqData }, { data: asigData }, { data: dcData }, { data: engData }, { data: extData }] = await Promise.all([
+      const [{ data: reqData, error: reqErr }, { data: asigData, error: asigErr }, { data: dcData }, { data: engData }, { data: extData }] = await Promise.all([
         sb.from("requerimiento_engagement")
           .select("id, engagement_id, cargo_requerido, pct_dedicacion, fecha_inicio, fecha_fin, fase_nombre")
           .eq("id", reqId)
@@ -494,6 +497,9 @@ export function PanelFitAsignacion({
       ]);
 
       if (cancelado) return;
+      // Requerimiento borrado (o error): antes quedaba en "Calculando fit…" para siempre
+      if (!reqData) { setErr(reqErr ? `No se pudo cargar el requerimiento: ${reqErr.message}` : "Requerimiento no encontrado."); setLoading(false); return; }
+      if (asigErr) setErr(`No se pudo cargar quiénes cubren el requerimiento: ${asigErr.message}`);
 
       // Chips de atajo: solo si el engagement tiene extensiones registradas
       if (extData && extData.length > 0) {
@@ -544,6 +550,7 @@ export function PanelFitAsignacion({
       setReq(reqEstado);
 
       const { personas: pFit } = await fetchPersonasFit(sb, reqEstado, [], []);
+      if (cancelado) return; // una carga anterior lenta no pisa la del requerimiento nuevo
       setPersonas(pFit);
 
       // Batch load ausencias futuras para todas las personas recomendadas
@@ -627,7 +634,8 @@ export function PanelFitAsignacion({
       engagement_id: engagementId,
       requerimiento_id: reqId,
       persona_id: persona.persona_id,
-      cargo_al_momento: persona.cargo_actual,
+      // Obligatorio en la base: sin cargo actual, se usa el del requerimiento (antes fallaba siempre)
+      cargo_al_momento: persona.cargo_actual ?? req.cargo_requerido ?? "Sin cargo",
       pct_dedicacion: req.pct_dedicacion,
       fecha_inicio: fechaInicio,
       fecha_fin: fechaFin,
@@ -648,10 +656,39 @@ export function PanelFitAsignacion({
         && a.fecha_inicio <= fechaFin && (a.fecha_fin === null || a.fecha_fin >= fechaInicio))
       .map((a) => a.asignacion_id);
     if (previasCruzadas.length > 0) {
+      // Si algo falla, se quita la asignación nueva para no dejar ocupación duplicada
+      const revertir = async (msg: string) => {
+        const { error: revErr } = await (sb as any).from("asignacion").delete().eq("id", nueva.id);
+        setErr(revErr ? `${msg} Además quedó guardada la asignación nueva: revisa el equipo.` : `${msg} No se hicieron cambios.`);
+        setAsignando(null);
+      };
+
+      // Antes se borraba la asignación anterior completa (ej: ene–jun al reasignar marzo se perdían
+      // ene–feb y abr–jun). Ahora se conservan las partes que quedan fuera de las fechas nuevas,
+      // con el mismo cargo, %, estado y extensión de la original.
+      const { data: originales, error: leerErr } = await (sb as any).from("asignacion")
+        .select("engagement_id, requerimiento_id, persona_id, cargo_al_momento, pct_dedicacion, estado, estado_staffing, extension_id, fecha_inicio, fecha_fin")
+        .in("id", previasCruzadas);
+      if (leerErr) { await revertir(`No se pudo leer la asignación anterior: ${leerErr.message}.`); return; }
+
+      const restos = ((originales ?? []) as any[]).flatMap((o) => {
+        const { fecha_inicio: ini, fecha_fin: fin, ...resto } = o;
+        const partes: any[] = [];
+        if (ini < fechaInicio) partes.push({ ...resto, fecha_inicio: ini, fecha_fin: moverDia(fechaInicio, -1) });
+        if (fin === null || fin > fechaFin) partes.push({ ...resto, fecha_inicio: moverDia(fechaFin, 1), fecha_fin: fin });
+        return partes;
+      });
+      let restosIds: string[] = [];
+      if (restos.length > 0) {
+        const { data: insRestos, error: restosErr } = await (sb as any).from("asignacion").insert(restos).select("id");
+        if (restosErr) { await revertir(`No se pudieron conservar los tramos fuera de las fechas nuevas: ${restosErr.message}.`); return; }
+        restosIds = ((insRestos ?? []) as { id: string }[]).map((r) => r.id);
+      }
+
       const { error: delErr } = await (sb as any).from("asignacion").delete().in("id", previasCruzadas);
       if (delErr) {
-        setErr(`Asignación guardada, pero no se pudo quitar la anterior: ${delErr.message}`);
-        setAsignando(null);
+        if (restosIds.length > 0) await (sb as any).from("asignacion").delete().in("id", restosIds);
+        await revertir(`No se pudo quitar la asignación anterior: ${delErr.message}.`);
         return;
       }
     }

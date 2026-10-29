@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { format, isSameDay, parseISO, startOfDay, addDays, subDays } from "date-fns";
 import { es } from "date-fns/locale";
 import { PartyPopper, Clock, CheckCircle2, Circle, ChevronDown, ChevronUp, Trash2, Cake, ClipboardCheck, FileSignature, Timer } from "lucide-react";
@@ -125,8 +125,9 @@ function alertaId(tipo: string, personaId: string, año: number) {
   return `${tipo}-${personaId}-${año}`;
 }
 
+// Días calendario entre dos fechas, desde el inicio del día (antes contaba uno de más y "Terminó hoy" nunca aparecía)
 function diffDiasEntre(a: Date, b: Date) {
-  return Math.ceil((b.getTime() - a.getTime()) / (1000 * 60 * 60 * 24));
+  return Math.round((startOfDay(b).getTime() - startOfDay(a).getTime()) / (1000 * 60 * 60 * 24));
 }
 
 /** Fecha (yyyy-MM-dd) en que una asignación iniciada en fechaInicio cumple exactamente N días hábiles */
@@ -453,6 +454,8 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
   const [loading, setLoading] = useState(true);
   const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [checks, setChecks] = useState<AlertaChecked[]>([]);
+  // Alertas que se están guardando (bloquea el doble clic)
+  const guardandoIds = useRef<Set<string>>(new Set());
   const [historialAbierto, setHistorialAbierto] = useState(false);
   const [planAccionAbierto, setPlanAccionAbierto] = useState(false); // colapsado por defecto
 
@@ -649,12 +652,14 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
       // ningún día hábil libre antes del inicio de la racha. Solo personas asignadas hoy.
       const propuestaMap = new Map((engPropuestaRes.data ?? []).map((e: any) => [e.id, e]));
       const propuestaIds = Array.from(propuestaMap.keys());
-      const { data: tramosData } = propuestaIds.length
+      const { data: tramosData, error: tramosErr } = propuestaIds.length
         ? await sb.from("asignacion")
             .select("engagement_id, persona_id, fecha_inicio, fecha_fin, estado")
             .in("engagement_id", propuestaIds)
             .neq("estado", "cancelada")
-        : { data: [] };
+        : { data: [], error: null };
+      // Antes "20 días hábiles cumplidos" quedaba vacía sin aviso
+      if (tramosErr) setErrorCarga(`No se pudieron calcular los "20 días hábiles cumplidos": ${tramosErr.message}`);
 
       type Tramo = { engagement_id: string; persona_id: string; fecha_inicio: string; fecha_fin: string | null; estado: string };
       const tramosPorClave = new Map<string, Tramo[]>();
@@ -747,33 +752,40 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
   }
 
   function togglePlanAccion(alerta: AlertaPlanAccion) {
-    const id = `plan_accion-${alerta.engagement_id}`;
-    toggleCheck(id, "plan_accion", `Planes de acción enviados — ${alerta.engagement_nombre}`);
+    toggleCheck(idPlanAccion(alerta), "plan_accion", `Planes de acción enviados — ${alerta.engagement_nombre}`);
   }
 
   function togglePropuesta20(alerta: AlertaPropuesta20Dias) {
-    const id = `propuesta20-${alerta.engagement_id}-${alerta.persona.id}`;
     const desc = `20 días hábiles — ${alerta.persona.nombre} ${alerta.persona.apellido} en ${alerta.engagement_nombre}`;
-    toggleCheck(id, "propuesta20", desc);
+    toggleCheck(idPropuesta20(alerta), "propuesta20", desc);
   }
 
-  // Marca o desmarca en la base compartida; la pantalla cambia solo si se guardó
+  // Marca o desmarca en la base compartida; la pantalla cambia solo si se guardó.
+  // Mientras guarda, otro clic sobre la misma alerta se ignora (antes el doble clic daba error)
   async function toggleCheck(id: string, tipo: string, descripcion: string) {
+    if (guardandoIds.current.has(id)) return;
+    guardandoIds.current.add(id);
     const sb = createAnyClient();
-    if (checks.some((c) => c.alertaId === id)) {
-      const { error } = await (sb as any).from("alerta_revisada").delete().eq("alerta_id", id);
+    const existente = marcaDe(id);
+    if (existente) {
+      const { error } = await (sb as any).from("alerta_revisada").delete().eq("alerta_id", existente.alertaId);
+      guardandoIds.current.delete(id);
       if (error) { setErrorCarga(`No se pudo desmarcar: ${error.message}`); return; }
-      setChecks((prev) => prev.filter((c) => c.alertaId !== id));
+      setChecks((prev) => prev.filter((c) => c.alertaId !== existente.alertaId));
     } else {
       const { data, error } = await (sb as any).from("alerta_revisada")
         .insert({ alerta_id: id, tipo, descripcion })
         .select("alerta_id, tipo, descripcion, revisada_en").single();
+      guardandoIds.current.delete(id);
       if (error || !data) { setErrorCarga(`No se pudo marcar como revisada: ${error?.message ?? ""}`); return; }
       setChecks((prev) => [...prev, aCheck(data as FilaRevisada)]);
     }
+    setErrorCarga(null); // un error anterior ya no aplica
   }
 
   async function eliminarDelHistorial(id: string) {
+    // Quitarla del historial vuelve a dejar la alerta pendiente para todo el equipo: se confirma
+    if (!confirm("¿Quitar esta alerta del historial? Volverá a aparecer como pendiente para todo el equipo.")) return;
     const { error } = await (createAnyClient() as any).from("alerta_revisada").delete().eq("alerta_id", id);
     if (error) { setErrorCarga(`No se pudo quitar del historial: ${error.message}`); return; }
     setChecks((prev) => prev.filter((c) => c.alertaId !== id));
@@ -782,14 +794,26 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
   const idAniv = (p: PersonaAniversario) => alertaId("aniversario", p.id, p.años);
   const idCumple = (p: PersonaCumpleanos) => alertaId("cumpleanos", p.id, p.edad);
   const idEPP = (a: AlertaEPP) => `epp-${a.engagement_id}-${a.fecha_fin}`;
-  const idPlanAccion = (a: AlertaPlanAccion) => `plan_accion-${a.engagement_id}`;
-  const idPropuesta20 = (a: AlertaPropuesta20Dias) => `propuesta20-${a.engagement_id}-${a.persona.id}`;
-  const esChecked = (id: string) => checks.some((c) => c.alertaId === id);
+  // Plan de acción y 20 días llevan fecha: si la situación se repite, nace una alerta nueva sin marcar
+  const idPlanAccion = (a: AlertaPlanAccion) => `plan_accion-${a.engagement_id}-${a.fecha.slice(0, 10)}`;
+  const idPropuesta20 = (a: AlertaPropuesta20Dias) => `propuesta20-${a.engagement_id}-${a.persona.id}-${a.fecha_inicio}`;
+  // Marcas antiguas (sin fecha) siguen valiendo solo si se hicieron después de que naciera la alerta
+  const marcaDe = (id: string) => {
+    const exacta = checks.find((c) => c.alertaId === id);
+    if (exacta) return exacta;
+    if (!/^(plan_accion|propuesta20)-.*-\d{4}-\d{2}-\d{2}$/.test(id)) return undefined;
+    const idAntiguo = id.slice(0, -11); // sin "-yyyy-MM-dd"
+    const fechaAlerta = id.slice(-10);
+    return checks.find((c) => c.alertaId === idAntiguo && c.fechaCheck.slice(0, 10) >= fechaAlerta);
+  };
+  const esChecked = (id: string) => !!marcaDe(id);
 
   // Oculta alertas chequeadas hace más de OCULTAR_CHECK_DIAS días corridos
   const limiteOculto = Date.now() - OCULTAR_CHECK_DIAS * 24 * 60 * 60 * 1000;
-  const visible = <T,>(idFn: (x: T) => string) => (x: T) =>
-    !checks.some((c) => c.alertaId === idFn(x) && new Date(c.fechaCheck).getTime() < limiteOculto);
+  const visible = <T,>(idFn: (x: T) => string) => (x: T) => {
+    const m = marcaDe(idFn(x));
+    return !(m && new Date(m.fechaCheck).getTime() < limiteOculto);
+  };
 
   // El historial muestra solo los últimos HISTORIAL_DIAS (la base guarda todo, para que no reaparezcan)
   const limiteHistorial = Date.now() - HISTORIAL_DIAS * 24 * 60 * 60 * 1000;

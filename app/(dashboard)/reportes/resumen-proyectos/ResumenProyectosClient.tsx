@@ -9,6 +9,7 @@ import { createAnyClient } from "@/lib/supabase/client";
 import { CARGOS } from "@/lib/constants";
 import { NavegadorFechas } from "@/components/ui/NavegadorFechas";
 import { getIniciales } from "@/lib/utils/iniciales";
+import { esAdmin } from "@/lib/roles";
 import { actualizarAsignacionSemana } from "@/lib/queries/engagements";
 import {
   CeldaAsignacionEditable,
@@ -149,8 +150,14 @@ function buildLineas(
     ...cargosConReq.filter((c) => !(CARGOS as readonly string[]).includes(c)),
   ];
 
-  return cargosOrdenados.map((cargo) => {
+  // Cargo de cada requerimiento activo: una persona asignada a un requerimiento cuenta en su
+  // línea aunque su cargo sea otro (antes la celda mostraba "?" y la persona no aparecía)
+  const cargoDeReq = new Map(reqsActivos.map((r) => [r.id, r.cargo]));
+  const usadas = new Set<string>();
+
+  const lineas: LineaEditable[] = cargosOrdenados.map((cargo) => {
     const asigsCargo = asigsSemana.filter((a) => {
+      if (a.requerimiento_id && cargoDeReq.has(a.requerimiento_id)) return cargoDeReq.get(a.requerimiento_id) === cargo;
       // Normalizar: Director de Proyectos ↔ Gerente de Proyectos ambos cuentan para el mismo req
       const esDG = ["Director de Proyectos", "Gerente de Proyectos"].includes(a.cargo);
       const reqEsDG = ["Director de Proyectos", "Gerente de Proyectos"].includes(cargo);
@@ -160,6 +167,7 @@ function buildLineas(
       if (esACS && reqEsACS) return true;
       return a.cargo === cargo;
     });
+    asigsCargo.forEach((a) => usadas.add(a.id));
 
     const confirmados = asigsCargo.filter((a) => a.estado_staffing === "CONFIRMADO").map(toSlot);
     const plan       = asigsCargo.filter((a) => a.estado_staffing === "PLAN").map(toSlot);
@@ -175,6 +183,22 @@ function buildLineas(
       vacio: confirmados.length === 0 && plan.length === 0,
     };
   });
+
+  // Línea "Otros": asignados sin requerimiento de esta semana y con un cargo que no coincide
+  // con ninguno de los pedidos; así se ven en vez de desaparecer
+  const otros = asigsSemana.filter((a) => !usadas.has(a.id));
+  if (otros.length > 0) {
+    lineas.push({
+      engagementId: engId,
+      cargo: "",
+      requerimientoId: null,
+      pctDedicacion: 100,
+      confirmados: otros.filter((a) => a.estado_staffing === "CONFIRMADO").map(toSlot),
+      plan: otros.filter((a) => a.estado_staffing === "PLAN").map(toSlot),
+      vacio: false,
+    });
+  }
+  return lineas;
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -273,10 +297,11 @@ export function ResumenProyectosClient() {
   const [errorGuardar, setErrorGuardar]   = useState<string | null>(null);
   const [baseFecha, setBaseFecha] = useState(() => startOfISOWeek(new Date()));
   const [actorNombre, setActorNombre] = useState("Usuario");
-  // Solo los roles que la base deja escribir asignaciones pueden editar celdas (admin, personas,
-  // planificador). Antes "proposer" veía celdas editables y la base rechazaba sus cambios.
+  // Solo los roles que la base deja escribir asignaciones pueden editar celdas (admin, personas).
+  // Antes "proposer" veía celdas editables y la base rechazaba sus cambios.
   // Mientras carga el rol, las celdas quedan en solo lectura.
   const [puedeEditar, setPuedeEditar] = useState(false);
+  const [puedeDescargar, setPuedeDescargar] = useState(false);
   const [ultimoCambio, setUltimoCambio] = useState<{ actor: string; fecha: string } | null>(null);
 
   const semanas = generarSemanas(12, baseFecha);
@@ -299,8 +324,14 @@ export function ResumenProyectosClient() {
       const sb = createAnyClient();
       const { data: { user } } = await sb.auth.getUser();
       if (!user) return;
-      const { data } = await sb.from("persona").select("nombre, apellido").eq("auth_user_id", user.id).single();
-      if (data) setActorNombre(`${data.nombre} ${data.apellido}`);
+      const { data } = await sb.from("persona").select("nombre, apellido, rol_sistema").eq("auth_user_id", user.id).single();
+      if (data) {
+        setActorNombre(`${data.nombre} ${data.apellido}`);
+        // Planificador ya no escribe en la base (migración 20261029_planificador_solo_lectura)
+        setPuedeEditar(esAdmin(data.rol_sistema));
+        // El Excel solo lo descargan admin y personas (planificador ya no)
+        setPuedeDescargar(esAdmin(data.rol_sistema));
+      }
     }
     cargarActor();
     cargarUltimoCambio();
@@ -347,7 +378,9 @@ export function ResumenProyectosClient() {
       sort_order: e.sort_order ?? null,
       fecha_inicio: e.fecha_inicio ?? null,
       fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? null,
-    }));
+    }))
+      // Solo lo que se muestra: proyectos y propuestas que no terminaron antes del período
+      .filter((e: EngRow) => (e.tipo === "proyecto" || e.tipo === "propuesta") && (!e.fecha_fin || e.fecha_fin >= rangoInicio));
     setEngs(rows);
 
     if (rows.length === 0) { setLoading(false); return; }
@@ -478,7 +511,7 @@ export function ResumenProyectosClient() {
         <div className="flex-1" />
         {!loading && (
           <div className="flex flex-col items-end leading-tight">
-            <span className="text-[11px] text-gray-400">{engs.length} proyectos activos</span>
+            <span className="text-[11px] text-gray-400">{engs.length} {engs.length === 1 ? "proyecto/propuesta activo" : "proyectos y propuestas activos"}</span>
             {ultimoCambio && (
               <span className="text-[10px] text-gray-300" title={new Date(ultimoCambio.fecha).toLocaleString("es-CL")}>
                 Último cambio por {ultimoCambio.actor} · {formatDistanceToNow(new Date(ultimoCambio.fecha), { addSuffix: true, locale: es })}
@@ -486,6 +519,7 @@ export function ResumenProyectosClient() {
             )}
           </div>
         )}
+        {puedeDescargar && (
         <button
           onClick={descargarExcel}
           disabled={sincronizando}
@@ -494,6 +528,7 @@ export function ResumenProyectosClient() {
           {sincronizando ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileSpreadsheet className="w-3.5 h-3.5" />}
           {sincronizando ? "Sincronizando..." : "Descargar Excel"}
         </button>
+        )}
       </header>
       {errorExcel && (
         <div className="px-6 py-2 text-[12px] text-red-600 bg-red-50 border-b border-red-100 flex-shrink-0">

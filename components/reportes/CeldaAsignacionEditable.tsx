@@ -140,8 +140,13 @@ function LineaCelda({
       return coincidencias[0];
     };
 
-    const confirmados = confTokens.map(resolver).filter((p): p is PersonaOpcion => !!p);
-    const plan = planTokens.map(resolver).filter((p): p is PersonaOpcion => !!p);
+    // Sin repetidos ("AB + AB" creaba dos asignaciones iguales); si está en ambos, queda como confirmada
+    const unicos = (lista: (PersonaOpcion | undefined)[], excluir = new Set<string>()) => {
+      const vistos = new Set(excluir);
+      return lista.filter((p): p is PersonaOpcion => !!p && !vistos.has(p.id) && !!vistos.add(p.id));
+    };
+    const confirmados = unicos(confTokens.map(resolver));
+    const plan = unicos(planTokens.map(resolver), new Set(confirmados.map((p) => p.id)));
 
     if (noResueltos.length > 0 || ambiguas.length > 0) {
       setNoReconocidos([

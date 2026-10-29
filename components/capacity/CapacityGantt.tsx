@@ -68,6 +68,7 @@ function PersonaEditModal({ persona, semanas, onConfirm, onClose }: PersonaEditM
   const [scope, setScope]         = useState<"anio" | "meses">("anio");
   const [mesesSel, setMesesSel]   = useState<Set<number>>(new Set());
   const [saving, setSaving]       = useState(false);
+  const [errorValor, setErrorValor] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
@@ -77,7 +78,11 @@ function PersonaEditModal({ persona, semanas, onConfirm, onClose }: PersonaEditM
   }
 
   async function handleConfirm() {
-    const v = Math.max(0, Math.min(10, parseFloat(valor) || 0));
+    // Vacío o inválido ya no guarda 0 en todas las semanas
+    const num = Number(valor.replace(",", "."));
+    if (valor.trim() === "" || isNaN(num) || num < 0 || num > 10) { setErrorValor("Ingresa un número entre 0 y 10."); return; }
+    setErrorValor(null);
+    const v = num;
     // Filtrar semanas según alcance
     const filtradas = scope === "anio"
       ? semanas
@@ -135,6 +140,8 @@ function PersonaEditModal({ persona, semanas, onConfirm, onClose }: PersonaEditM
               </div>
             </div>
           </div>
+
+          {errorValor && <p className="text-[11px] text-red-500 -mt-2">{errorValor}</p>}
 
           {/* Selector de alcance */}
           <div>
@@ -204,6 +211,7 @@ function BulkEditModal({ grupo, semanas, onConfirm, onClose }: BulkModalProps) {
   const [scope, setScope]       = useState<"anio" | "meses">("anio");
   const [mesesSel, setMesesSel] = useState<Set<number>>(new Set());
   const [saving, setSaving]     = useState(false);
+  const [errorValor, setErrorValor] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => { inputRef.current?.focus(); inputRef.current?.select(); }, []);
@@ -213,7 +221,11 @@ function BulkEditModal({ grupo, semanas, onConfirm, onClose }: BulkModalProps) {
   }
 
   async function handleConfirm() {
-    const v = Math.max(0, Math.min(10, parseFloat(valor) || 0));
+    // Vacío o inválido ya no guarda 0 en todas las semanas
+    const num = Number(valor.replace(",", "."));
+    if (valor.trim() === "" || isNaN(num) || num < 0 || num > 10) { setErrorValor("Ingresa un número entre 0 y 10."); return; }
+    setErrorValor(null);
+    const v = num;
     const filtradas = scope === "anio"
       ? semanas
       : semanas.filter(s => mesesSel.has(new Date(s + "T00:00:00").getMonth()));
@@ -271,6 +283,8 @@ function BulkEditModal({ grupo, semanas, onConfirm, onClose }: BulkModalProps) {
               ))}
             </div>
           </div>
+
+          {errorValor && <p className="text-[11px] text-red-500 -mt-2">{errorValor}</p>}
 
           {/* Selector de alcance */}
           <div>
@@ -392,15 +406,24 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
   // Aviso de error (carga o guardado), visible sin tapar la grilla
   const [errorCap, setErrorCap] = useState<string | null>(null);
   function avisarError(msg: string) { setErrorCap(msg); setTimeout(() => setErrorCap(null), 8000); }
+  // Error de carga del año: queda visible (no se borra solo)
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
+  // Celdas que el usuario dejó vacías mientras escribe (clave "fila:semana")
+  const [celdasVacias, setCeldasVacias] = useState<Set<string>>(new Set());
 
   const cargar = useCallback(async () => {
     setLoading(true);
+    setErrorCarga(null);
     try {
       const d = await fetchCapacityData(supabase, year);
       setData(d);
       setValores(d.valores);
     } catch (e) {
-      avisarError(`No se pudo cargar Capacity: ${e instanceof Error ? e.message : e}`);
+      // Se vacía la grilla: antes seguía viéndose la del año anterior como si fuera la nueva
+      setData(null);
+      setValores({});
+      onStatsChange?.({ grupoTotales: {}, semanas: [] });
+      setErrorCarga(`No se pudo cargar Capacity ${year}: ${e instanceof Error ? e.message : e}`);
     } finally {
       setLoading(false);
     }
@@ -653,9 +676,16 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
   // Edición individual con debounce. `p.id` (clave de fila) para timers/flash
   // — cosmético, por fila —; `p.personaId` (id real) para `valores`/DB.
   function handleChange(p: PersonaCapacity, semana: string, raw: string) {
-    const v = Math.max(0, Math.min(10, parseFloat(raw) || 0));
-    setValores(prev => ({ ...prev, [p.personaId]: { ...(prev[p.personaId] ?? {}), [semana]: v } }));
     const key = `${p.id}:${semana}`;
+    // Celda borrada para escribir otro número: se muestra vacía y no se guarda (antes guardaba 0)
+    if (raw.trim() === "" || isNaN(parseFloat(raw))) {
+      clearTimeout(timers.current[key]);
+      setCeldasVacias(prev => new Set(prev).add(key));
+      return;
+    }
+    setCeldasVacias(prev => { if (!prev.has(key)) return prev; const s = new Set(prev); s.delete(key); return s; });
+    const v = Math.max(0, Math.min(10, parseFloat(raw)));
+    setValores(prev => ({ ...prev, [p.personaId]: { ...(prev[p.personaId] ?? {}), [semana]: v } }));
     clearTimeout(timers.current[key]);
     timers.current[key] = setTimeout(async () => {
       const err = await upsertCapacity(supabase, p.personaId, semana, v);
@@ -760,7 +790,7 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
       </div>
     );
   }
-  if (!data) return errorCap ? <p className="p-6 text-sm text-red-500">{errorCap}</p> : null;
+  if (!data) return (errorCarga || errorCap) ? <p className="p-6 text-sm text-red-500">{errorCarga ?? errorCap}</p> : null;
 
   const { semanas } = data;
   const CELL_W = 52;
@@ -1081,9 +1111,11 @@ export function CapacityGantt({ year, onStatsChange }: Props) {
                                   <input
                                     type="number"
                                     min={0} max={10} step={0.5}
-                                    value={v}
+                                    value={celdasVacias.has(`${p.id}:${sem}`) ? "" : v}
                                     onChange={(e) => handleChange(p, sem, e.target.value)}
                                     onFocus={(e) => e.target.select()}
+                                    // Si se deja vacía, vuelve a mostrar el valor guardado
+                                    onBlur={() => setCeldasVacias(prev => { const k = `${p.id}:${sem}`; if (!prev.has(k)) return prev; const s = new Set(prev); s.delete(k); return s; })}
                                     className="w-9 text-center text-[11px] font-bold rounded border py-0.5 focus:outline-none focus:ring-1 focus:ring-[#2563eb] focus:border-[#2563eb] transition-all duration-300"
                                     style={{
                                       background: cellColor(v, flash),

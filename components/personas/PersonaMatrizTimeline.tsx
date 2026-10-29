@@ -29,6 +29,8 @@ interface Props {
   cargosSugeridos?: readonly string[];
   /** Historial de Desarrollo de Carrera, para autocompletar el cargo según la fecha */
   historialCargos?: PeriodoCargo[];
+  /** Avisa la nueva posición vigente (último hito) para refrescar la etiqueta del perfil */
+  onTalentoCambiado?: (potencial: number | null, desempeno: number | null) => void;
 }
 
 // Centro (escala 1-5) de cada cuadrante, para registros antiguos sin pin exacto
@@ -180,7 +182,7 @@ function CarpetaAnioMatriz({ anio, hitos, abiertaInicial, actualId, onEditar, on
   );
 }
 
-export function PersonaMatrizTimeline({ personaId, cargoActual, cargosSugeridos = [], historialCargos = [] }: Props) {
+export function PersonaMatrizTimeline({ personaId, cargoActual, cargosSugeridos = [], historialCargos = [], onTalentoCambiado }: Props) {
   const [hitos, setHitos] = useState<HitoMatriz[]>([]);
   const [draft, setDraft] = useState<HitoDraft | null>(null); // null = formulario cerrado
   const [guardando, setGuardando] = useState(false);
@@ -217,14 +219,34 @@ export function PersonaMatrizTimeline({ personaId, cargoActual, cargosSugeridos 
       : await sb.from("persona_matriz_hito").insert({ ...campos, persona_id: personaId }).select().single();
     setGuardando(false);
     if (error || !data) { setError("No se pudo guardar. Intenta nuevamente."); return; }
-    setHitos((prev) => ordenar([...prev.filter((h) => h.id !== data.id), data as HitoMatriz]));
+    const nueva = ordenar([...hitos.filter((h) => h.id !== data.id), data as HitoMatriz]);
+    setHitos(nueva);
     setDraft(null);
+    await sincronizarTalento(nueva);
+  }
+
+  // La etiqueta de talento (perfil, Reportes) usa persona.talento_*: se actualiza con el último hito
+  async function sincronizarTalento(lista: HitoMatriz[]) {
+    const ult = lista[lista.length - 1];
+    const pos = !ult ? null
+      : ult.potencial != null && ult.desempeno != null ? { potencial: ult.potencial, desempeno: ult.desempeno }
+      : ult.cuadrante != null ? centroCuadrante(ult.cuadrante) : null;
+    const potencial = pos?.potencial ?? null;
+    const desempeno = pos?.desempeno ?? null;
+    const { error } = await createAnyClient().from("persona")
+      .update({ talento_potencial: potencial, talento_desempeno: desempeno }).eq("id", personaId);
+    if (error) { alert(`Se guardó la evaluación, pero no se pudo actualizar la etiqueta de talento: ${error.message}`); return; }
+    onTalentoCambiado?.(potencial, desempeno);
   }
 
   async function eliminar(id: string) {
     if (!confirm("¿Eliminar esta evaluación de matriz?")) return;
     const { error } = await createAnyClient().from("persona_matriz_hito").delete().eq("id", id);
-    // Si falla se avisa (antes no pasaba nada visible)
+    // Si falla se avisa; si no, se quita la tarjeta sin recargar
+    if (error) { alert(`No se pudo eliminar: ${error.message}`); return; }
+    const nueva = hitos.filter((h) => h.id !== id);
+    setHitos(nueva);
+    await sincronizarTalento(nueva);
   }
 
   return (

@@ -150,6 +150,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   const [desactivando, setDesactivando] = useState<Persona | null>(null);
   const [accionando, setAccionando] = useState(false);
   const [errorAccion, setErrorAccion] = useState<string | null>(null);
+  const [errorLista, setErrorLista] = useState<string | null>(null);
 
   // Confirm eliminación definitiva
   const [confirmDefinitivo, setConfirmDefinitivo] = useState<{ id: string; nombre: string } | null>(null);
@@ -163,13 +164,15 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   const sb = createAnyClient();
 
   const load = useCallback(async () => {
-    const { data } = await sb
+    const { data, error } = await sb
       .from("persona")
       .select("*")
       .eq("activo", true)
       .eq("is_deleted", false)
       .eq("is_ex_houser", false)
       .order("apellido");
+    // Antes un error mostraba "0 personas activas" sin aviso
+    setErrorLista(error ? `No se pudo cargar la lista de personas: ${error.message}` : null);
     const all = (data ?? []) as Persona[];
     setPersonas(all);
     setLoading(false);
@@ -245,6 +248,21 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   // Aviso de error de las acciones de la lista (antes fallaban sin avisar)
   function avisarError(msg: string) { setErrorAccion(msg); setTimeout(() => setErrorAccion(null), 6000); }
 
+  // Recarga Ex-Housers (página y lista completa de búsqueda) tras cualquier cambio
+  function refrescarExHousers() {
+    setExHousersAll([]); // el efecto la vuelve a cargar si se está buscando
+    if (vista === "ex_housers") loadExHousers(paginaEx);
+  }
+
+  // Deshace la baja en el historial: quita el hito "Ex-Houser" y reabre el cargo cerrado en la salida
+  async function limpiarBajaExHouser(id: string, salida: string | null | undefined) {
+    const { error: eHito } = await sb.from("historial_cargos").delete().eq("persona_id", id).eq("cargo", "Ex-Houser");
+    const { error: eCargo } = !eHito && salida
+      ? await sb.from("historial_cargos").update({ fecha_fin: null }).eq("persona_id", id).eq("fecha_fin", salida)
+      : { error: null };
+    return eHito ?? eCargo ?? null;
+  }
+
   async function reactivarExHouser(id: string) {
     setAccionando(true);
     // Reactivar deshace la baja completa: sin fecha de salida, sin hito "Ex-Houser"
@@ -252,18 +270,13 @@ export function PersonasList({ rolActual }: PersonasListProps) {
     const { data: per } = await sb.from("persona").select("fecha_salida").eq("id", id).maybeSingle();
     const { error } = await sb.from("persona").update({ activo: true, is_ex_houser: false, fecha_salida: null }).eq("id", id);
     if (error) { setAccionando(false); avisarError(`No se pudo reactivar: ${error.message}`); return; }
-    const { error: eHito } = await sb.from("historial_cargos").delete().eq("persona_id", id).eq("cargo", "Ex-Houser");
-    const salida = (per as { fecha_salida: string | null } | null)?.fecha_salida;
-    const { error: eCargo } = !eHito && salida
-      ? await sb.from("historial_cargos").update({ fecha_fin: null }).eq("persona_id", id).eq("fecha_fin", salida)
-      : { error: null };
+    const eHist = await limpiarBajaExHouser(id, (per as { fecha_salida: string | null } | null)?.fecha_salida);
     setAccionando(false);
     setDesactivando(null);
-    if (eHito || eCargo) avisarError(`Reactivado, pero no se pudo ajustar su historial de cargos: ${(eHito ?? eCargo)!.message}`);
-    setExHousers((prev) => prev.filter((p) => p.id !== id));
-    setExHousersAll((prev) => prev.filter((p) => p.id !== id));
+    if (eHist) avisarError(`Reactivado, pero no se pudo ajustar su historial de cargos: ${eHist.message}`);
     setTotalEx((prev) => Math.max(0, prev - 1));
     setExCount((prev) => Math.max(0, prev - 1));
+    refrescarExHousers();
     load(); // recarga lista de activos
   }
 
@@ -314,9 +327,12 @@ export function PersonasList({ rolActual }: PersonasListProps) {
     setDesactivando(null);
     setPersonas((prev) => prev.filter((p) => p.id !== id));
     setExCount((prev) => prev + 1);
+    refrescarExHousers();
   }
 
   async function moverAPapelera(id: string) {
+    // Si no está entre los activos, es un Ex-Houser: su contador también baja
+    const eraExHouser = !personas.some((p) => p.id === id);
     setAccionando(true);
     const { error } = await sb.from("persona").update({
       activo: false,
@@ -329,16 +345,26 @@ export function PersonasList({ rolActual }: PersonasListProps) {
     setPersonas((prev) => prev.filter((p) => p.id !== id));
     setExHousers((prev) => prev.filter((p) => p.id !== id));
     setExHousersAll((prev) => prev.filter((p) => p.id !== id));
-    setTotalEx((prev) => Math.max(0, prev - 1));
+    if (eraExHouser) {
+      setTotalEx((prev) => Math.max(0, prev - 1));
+      setExCount((prev) => Math.max(0, prev - 1));
+    }
     setPapeleraCount((prev) => prev + 1);
   }
 
   async function restaurarComoActivo(id: string) {
+    // Si era Ex-Houser, se limpia igual que al reactivar (fecha de salida e hito "Ex-Houser")
+    const { data: per } = await sb.from("persona").select("fecha_salida, is_ex_houser").eq("id", id).maybeSingle();
     const { error } = await sb.from("persona").update({
-      activo: true, is_deleted: false, deleted_at: null, is_ex_houser: false,
+      activo: true, is_deleted: false, deleted_at: null, is_ex_houser: false, fecha_salida: null,
     }).eq("id", id);
     setRestaurando(null);
     if (error) { avisarError(`No se pudo restaurar: ${error.message}`); return; }
+    const previo = per as { fecha_salida: string | null; is_ex_houser: boolean } | null;
+    if (previo?.is_ex_houser || previo?.fecha_salida) {
+      const eHist = await limpiarBajaExHouser(id, previo.fecha_salida);
+      if (eHist) avisarError(`Restaurado, pero no se pudo ajustar su historial de cargos: ${eHist.message}`);
+    }
     setPapeleraCount((prev) => Math.max(0, prev - 1));
     load();       // recarga lista de activos
     loadPapelera();
@@ -352,6 +378,7 @@ export function PersonasList({ rolActual }: PersonasListProps) {
     if (error) { avisarError(`No se pudo restaurar: ${error.message}`); return; }
     setPapeleraCount((prev) => Math.max(0, prev - 1));
     setExCount((prev) => prev + 1);
+    refrescarExHousers();
     loadPapelera();
   }
 
@@ -366,9 +393,9 @@ export function PersonasList({ rolActual }: PersonasListProps) {
   }
 
   // Aviso flotante, visible en las tres vistas (activos, Ex-Housers, papelera)
-  const avisoError = errorAccion && (
+  const avisoError = (errorAccion || errorLista) && (
     <div className="fixed bottom-6 right-6 z-50 max-w-sm bg-red-50 border border-red-200 text-red-700 text-sm rounded-lg px-4 py-3 shadow-lg">
-      {errorAccion}
+      {errorAccion ?? errorLista}
     </div>
   );
   if (loading) return <PersonasSkeleton />;
@@ -738,6 +765,8 @@ function DesactivarModal({
   modoExHouser: boolean;
 }) {
   const [fechaSalida, setFechaSalida] = useState(() => format(new Date(), "yyyy-MM-dd"));
+  // Cada vez que se abre para otra persona, la fecha vuelve a hoy
+  useEffect(() => { setFechaSalida(format(new Date(), "yyyy-MM-dd")); }, [persona?.id]);
 
   if (!persona) return null;
   const nombre = `${persona.nombre} ${persona.apellido}`;

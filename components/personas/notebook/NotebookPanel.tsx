@@ -169,7 +169,14 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
 
   // Al salir de la ficha (o cambiar de persona) se guarda lo pendiente
   useEffect(() => {
-    const antesDeSalir = () => { void guardarPendiente(); };
+    // Si queda algo sin guardar, el navegador pregunta "¿Salir sin guardar?" (el guardado
+    // asíncrono no alcanza a terminar al cerrar la pestaña)
+    const antesDeSalir = (e: BeforeUnloadEvent) => {
+      if (!pendiente.current) return;
+      void guardarPendiente();
+      e.preventDefault();
+      e.returnValue = "";
+    };
     window.addEventListener("beforeunload", antesDeSalir);
     return () => { window.removeEventListener("beforeunload", antesDeSalir); void guardarPendiente(); };
   }, [personaId]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -666,7 +673,9 @@ export function NotebookPanel({ personaId, personaNombre }: Props) {
       {/* ═══ Modal: eliminar carpeta ═══ */}
       {deletingFolder && (() => {
         const f = folders.find(x => x.id === deletingFolder);
-        const count = notesByFolder(deletingFolder).length;
+        // Cuenta también las notas de las subcarpetas (antes avisaba "0 notas" y las movía sin preguntar)
+        const count = [deletingFolder, ...descendantFolderIds(deletingFolder)]
+          .reduce((s, fid) => s + notesByFolder(fid).length, 0);
         return (
           <div className="fixed inset-0 z-[400] flex items-center justify-center bg-black/50">
             <div className="relative bg-white rounded-xl shadow-2xl p-6 w-full max-w-sm mx-4">

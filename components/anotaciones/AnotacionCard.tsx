@@ -26,6 +26,9 @@ export function AnotacionCard({ anotacion, selected, onSelect, onDelete, onError
 
   async function handleDelete(e: React.MouseEvent) {
     e.stopPropagation();
+    if (deleting) return;
+    // Antes se borraba al primer clic, sin preguntar
+    if (!window.confirm(`¿Enviar "${anotacion.titulo || "Sin título"}" a la papelera? Podrás restaurarla desde ahí.`)) return;
     setDeleting(true);
     const supabase = createAnyClient();
     const { error, deleted_at } = await deleteAnotacion(supabase, anotacion.id);

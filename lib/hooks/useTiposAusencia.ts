@@ -34,6 +34,15 @@ export interface TipoAusenciaRow {
   color_text: string;
 }
 
+// Tipos base del sistema: no se pueden eliminar (el Resumen de vacaciones y los colores dependen de ellos)
+export const TIPOS_AUSENCIA_BASE = [
+  "vacaciones_confirmadas", "vacaciones_por_confirmar", "permiso_sin_goce",
+  "dia_post_proyecto", "dia_beneficio", "dia_administrativo", "otro",
+];
+
+// Evento para que todas las vistas (leyenda, colores, selects) recarguen al crear/borrar un tipo
+const EVENTO_TIPOS = "tiposAusenciaChanged";
+
 export function useTiposAusencia() {
   const [tipos, setTipos] = useState<TipoAusenciaRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,11 +54,18 @@ export function useTiposAusencia() {
     setLoading(false);
   }, []);
 
-  useEffect(() => { cargar(); }, [cargar]);
+  useEffect(() => {
+    cargar();
+    window.addEventListener(EVENTO_TIPOS, cargar);
+    return () => window.removeEventListener(EVENTO_TIPOS, cargar);
+  }, [cargar]);
 
   /** Crea un nuevo tipo. Si no se pasa color, asigna el siguiente disponible de la paleta. */
   async function crearTipo(label: string, color?: string): Promise<{ tipo: TipoAusenciaRow | null; error: string | null }> {
-    const id = label.trim().toLowerCase().replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+    // Quita los acentos sin perder la letra ("Día" → "dia", antes quedaba "da")
+    const id = label.trim().toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "")
+      .replace(/\s+/g, "_").replace(/[^a-z0-9_]/g, "");
+    if (!id) return { tipo: null, error: "El nombre debe tener letras o números." };
     const color_bg = color ?? siguienteColor(tipos);
     const sb = createAnyClient();
     const { data, error } = await sb
@@ -60,6 +76,7 @@ export function useTiposAusencia() {
     // Se devuelve el error real: antes cualquier fallo se mostraba como "ya existe"
     if (error) return { tipo: null, error: error.code === "23505" ? "Ya existe un tipo con ese nombre." : error.message };
     await cargar();
+    window.dispatchEvent(new Event(EVENTO_TIPOS));
     return { tipo: data as TipoAusenciaRow, error: null };
   }
 
@@ -68,6 +85,7 @@ export function useTiposAusencia() {
    * Devuelve { ok: true } o { ok: false, count: number } si está en uso.
    */
   async function eliminarTipo(id: string): Promise<{ ok: boolean; count: number; error?: string }> {
+    if (TIPOS_AUSENCIA_BASE.includes(id)) return { ok: false, count: 0, error: "Este es un tipo base del sistema y no se puede eliminar." };
     const sb = createAnyClient();
     const { count, error: countErr } = await sb.from("ausencia").select("id", { count: "exact", head: true }).eq("tipo", id);
     if (countErr) return { ok: false, count: 0, error: countErr.message };
@@ -76,6 +94,7 @@ export function useTiposAusencia() {
     const { error } = await sb.from("tipo_ausencia").delete().eq("id", id);
     if (error) return { ok: false, count: 0, error: error.message };
     await cargar();
+    window.dispatchEvent(new Event(EVENTO_TIPOS));
     return { ok: true, count: 0 };
   }
 

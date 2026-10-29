@@ -51,23 +51,28 @@ function TableroContent() {
   const [periodo, setPeriodo] = useState<Periodo>("semana");
   const [base, setBase] = useState<Date>(() => startOfISOWeek(new Date()));
 
-  // Etiqueta de rango para el header
+  // Columnas visibles por vista: Proyectos = 9 semanas / 8 meses · Perfil individual = 5 semanas / 4 meses
+  const nSemanas = vistaPrincipal === "perfil" ? 5 : 9;
+  const nMeses   = vistaPrincipal === "perfil" ? 4 : 8;
+
+  // Etiqueta de rango para el header: termina en la última columna visible
   const rangoLabel = (() => {
-    if (periodo === "semana") return `${format(base, "d MMM", { locale: es })} – ${format(addWeeks(base, 9), "d MMM yyyy", { locale: es })}`;
-    if (periodo === "mes")    return `${format(base, "MMM", { locale: es })} – ${format(addMonths(base, 8), "MMM yyyy", { locale: es })}`;
+    if (periodo === "semana") return `${format(base, "d MMM", { locale: es })} – ${format(addDays(addWeeks(base, nSemanas), -1), "d MMM yyyy", { locale: es })}`;
+    if (periodo === "mes")    return `${format(base, "MMM", { locale: es })} – ${format(addMonths(base, nMeses - 1), "MMM yyyy", { locale: es })}`;
     // dia: muestra la semana
     return `${format(startOfISOWeek(base), "d MMM", { locale: es })} – ${format(addDays(startOfISOWeek(base), 6), "d MMM yyyy", { locale: es })}`;
   })();
 
+  // Las flechas avanzan exactamente lo que se ve (no se saltan semanas ni meses)
   function navPrev() {
     if (periodo === "dia")    setBase((b) => addDays(startOfISOWeek(b), -7));
-    if (periodo === "semana") setBase((b) => subWeeks(b, 9));
-    if (periodo === "mes")    setBase((b) => subMonths(b, 8));
+    if (periodo === "semana") setBase((b) => subWeeks(b, nSemanas));
+    if (periodo === "mes")    setBase((b) => subMonths(b, nMeses));
   }
   function navNext() {
     if (periodo === "dia")    setBase((b) => addDays(startOfISOWeek(b), 7));
-    if (periodo === "semana") setBase((b) => addWeeks(b, 9));
-    if (periodo === "mes")    setBase((b) => addMonths(b, 8));
+    if (periodo === "semana") setBase((b) => addWeeks(b, nSemanas));
+    if (periodo === "mes")    setBase((b) => addMonths(b, nMeses));
   }
 
   return (

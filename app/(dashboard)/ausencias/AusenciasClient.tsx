@@ -152,7 +152,8 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
       return;
     }
     const d = new Date(selectedDate);
-    if (vistaActiva === "month") d.setMonth(d.getMonth() - 1);
+    // En Mes se parte del día 1: desde un 31, setMonth saltaba un mes extra
+    if (vistaActiva === "month") { d.setDate(1); d.setMonth(d.getMonth() - 1); }
     else                         d.setDate(d.getDate() - 7);
     setSelectedDate(d);
   }
@@ -163,7 +164,7 @@ export function AusenciasClient({ isAdmin = false }: AusenciasClientProps) {
       return;
     }
     const d = new Date(selectedDate);
-    if (vistaActiva === "month") d.setMonth(d.getMonth() + 1);
+    if (vistaActiva === "month") { d.setDate(1); d.setMonth(d.getMonth() + 1); }
     else                         d.setDate(d.getDate() + 7);
     setSelectedDate(d);
   }
