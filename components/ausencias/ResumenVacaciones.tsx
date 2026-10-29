@@ -7,6 +7,9 @@ import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import { es } from "date-fns/locale";
 import { createAnyClient } from "@/lib/supabase/client";
 
+// Tipos que cuentan como "días ya tomados" (se usa también en el Heatmap Mes)
+export const TIPOS_RESUMEN_VACACIONES = ["vacaciones_confirmadas", "vacaciones_por_confirmar", "dia_administrativo", "permiso_sin_goce"];
+
 const JERARQUIA: Record<string, number> = {
   "Socio": 1, "Director de Proyectos": 2, "Director": 2,
   "Gerente de Proyectos": 3, "Gerente": 3, "Asociado": 4,
@@ -34,6 +37,7 @@ export function ResumenVacaciones({ open, onClose }: Props) {
   const [desde, setDesde] = useState(() => `${new Date().getFullYear()}-01-01`);
   const [personas, setPersonas] = useState<PersonaVac[]>([]);
   const [loading, setLoading] = useState(false);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -46,10 +50,14 @@ export function ResumenVacaciones({ open, onClose }: Props) {
         sb.from("persona").select("id, nombre, apellido, cargo_actual").eq("activo", true),
         sb.from("ausencia")
           .select("persona_id, fecha_inicio, fecha_fin")
-          .in("tipo", ["vacaciones_confirmadas", "vacaciones_por_confirmar", "dia_administrativo", "permiso_sin_goce"])
+          .in("tipo", TIPOS_RESUMEN_VACACIONES)
           .lte("fecha_inicio", hasta)
           .gte("fecha_fin", desde),
       ]);
+      // Antes un error mostraba a todos con 0 días
+      const errCarga = persRes.error ?? vacRes.error;
+      setErrorCarga(errCarga ? `No se pudo cargar el resumen: ${errCarga.message}` : null);
+      if (errCarga) { setPersonas([]); setLoading(false); return; }
 
       const pers = (persRes.data ?? []) as { id: string; nombre: string; apellido: string; cargo_actual: string | null }[];
       const vacs = (vacRes.data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string }[];
@@ -163,7 +171,9 @@ export function ResumenVacaciones({ open, onClose }: Props) {
 
         {/* Lista */}
         <div className="flex-1 overflow-y-auto">
-          {loading ? (
+          {errorCarga ? (
+            <p className="text-sm text-red-600 text-center py-10">{errorCarga}</p>
+          ) : loading ? (
             <div className="flex items-center justify-center gap-2 text-gray-400 py-10">
               <Loader2 className="w-4 h-4 animate-spin" />
               <span className="text-sm">Cargando resumen...</span>

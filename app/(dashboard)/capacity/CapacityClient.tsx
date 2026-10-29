@@ -46,12 +46,14 @@ export function CapacityClient() {
     if (!stats) return {};
     const result: Record<string, string> = {};
     for (const sem of stats.semanas) {
-      let minVal = Infinity; let minGrupo = "";
+      let minVal = Infinity; let minGrupo = ""; let maxVal = 0;
       for (const g of GRUPOS_BOTTLENECK) {
         const v = stats.grupoTotales[g]?.[sem] ?? 0;
         if (v < minVal) { minVal = v; minGrupo = g; }
+        if (v > maxVal) maxVal = v;
       }
-      result[sem] = minGrupo;
+      // Con todo en 0 no hay un grupo que restrinja (antes decía "Restringido por Gerencia")
+      result[sem] = maxVal > 0 ? minGrupo : "";
     }
     return result;
   }, [stats]);
@@ -82,10 +84,21 @@ export function CapacityClient() {
   }, [capacidadRealPorSemana, bottleneckPorSemana, stats]);
 
   // ── Mes actual para el indicador principal ────────────────
+  // En el año actual se muestra el mes en curso; en otros años, el promedio anual
+  // (antes siempre buscaba el mes de hoy y en otros años mostraba "0 proyectos")
   const mesActualKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
   const mesActual    = capacidadMensual.find(m => m.key === mesActualKey);
-  const capReal      = mesActual?.promedio ?? 0;
-  const bottleneck   = mesActual?.bottleneck ?? "";
+  const esAnioActual = !!mesActual;
+  const promedioAnual = capacidadMensual.length
+    ? Math.round((capacidadMensual.reduce((s, m) => s + m.promedio, 0) / capacidadMensual.length) * 10) / 10
+    : 0;
+  const btAnual = (() => {
+    const cuenta: Record<string, number> = {};
+    for (const m of capacidadMensual) if (m.bottleneck) cuenta[m.bottleneck] = (cuenta[m.bottleneck] ?? 0) + 1;
+    return Object.entries(cuenta).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "";
+  })();
+  const capReal      = esAnioActual ? mesActual!.promedio : promedioAnual;
+  const bottleneck   = esAnioActual ? mesActual!.bottleneck : btAnual;
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -117,7 +130,7 @@ export function CapacityClient() {
               <div className="flex items-center gap-2">
                 <TrendingUp className="w-4 h-4 text-[#2563eb]" />
                 <div>
-                  <p className="text-[10px] text-[#6b7280] leading-none">Capacity de proyectos / mensual</p>
+                  <p className="text-[10px] text-[#6b7280] leading-none">{esAnioActual ? "Capacity de proyectos / mensual" : `Capacity de proyectos / promedio ${year}`}</p>
                   <p className="text-[18px] font-black text-[#1d4ed8] leading-tight">{capReal} proyectos</p>
                 </div>
               </div>

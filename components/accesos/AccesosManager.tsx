@@ -17,7 +17,6 @@ import { Modal, ConfirmDialog } from "@/components/ui/Modal";
 import { FieldWrapper, Select } from "@/components/ui/FormField";
 import { CARGO_COLORS, CARGO_COLOR_DEFAULT } from "@/lib/constants";
 import type { Persona, RolSistema, EstadoAcceso } from "@/lib/types/database";
-import { esAdmin } from "@/lib/roles";
 
 const ROL_OPTIONS = [
   { value: "admin",          label: "Admin" },
@@ -27,6 +26,16 @@ const ROL_OPTIONS = [
   { value: "Desarrollo",     label: "Desarrollo" },
   { value: "planificador",   label: "Planificador" },
 ];
+
+// Qué puede hacer cada rol (textos de ayuda; antes describían mal los permisos)
+const DESCRIPCION_ROL: Record<string, string> = {
+  admin:        "acceso total: gestiona accesos, personas, proyectos y configuración.",
+  personas:     "acceso total, igual que Admin, más las anotaciones de todo el equipo.",
+  GyD:          "solo lectura; no ve el % de ocupación por equipo ni las vacaciones por confirmar.",
+  AySr:         "solo lectura; no ve asignaciones ni vacaciones \"por confirmar\".",
+  Desarrollo:   "solo lectura, con información sensible oculta.",
+  planificador: "solo lectura mientras Planificación esté desactivada.",
+};
 
 // Planificación está desactivada temporalmente: se advierte antes de asignar este rol
 const AVISO_PLANIFICADOR_TITULO = "Planificación está desactivada temporalmente";
@@ -45,6 +54,7 @@ export function AccesosManager() {
   const [accesos, setAccesos] = useState<Persona[]>([]);
   const [sinAcceso, setSinAcceso] = useState<Persona[]>([]);
   const [loading, setLoading] = useState(true);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [miId, setMiId] = useState<string | null>(null);
 
   const [modalOpen, setModalOpen] = useState(false);
@@ -73,6 +83,9 @@ export function AccesosManager() {
         .eq("is_ex_houser", false)
         .order("apellido"),
     ]);
+    // Antes un error mostraba "Aún no hay personas con acceso"
+    const errCarga = conAcceso.error ?? sinRol.error;
+    setErrorCarga(errCarga ? `No se pudo cargar la lista de accesos: ${errCarga.message}` : null);
     setAccesos((conAcceso.data ?? []) as Persona[]);
     setSinAcceso((sinRol.data ?? []) as Persona[]);
     setLoading(false);
@@ -133,7 +146,7 @@ export function AccesosManager() {
     const r = await reactivarAcceso({ personaId: persona.id });
     setFeedback({ ok: r.ok, text: r.message });
     setBusyId(null);
-    if (r.ok) load();
+    load(); // siempre: un paso pudo aplicarse aunque otro fallara
   }
 
   async function ejecutarConfirmacion() {
@@ -148,7 +161,8 @@ export function AccesosManager() {
     setFeedback({ ok: r.ok, text: r.message });
     setBusyId(null);
     setConfirmAccion(null);
-    if (r.ok) load();
+    // Siempre se refresca: si falló el bloqueo, la lista muestra el estado real (antes seguía "Activo")
+    load();
   }
 
   if (loading) return <p className="text-sm text-[#888]">Cargando...</p>;
@@ -182,7 +196,9 @@ export function AccesosManager() {
       )}
 
       {/* Lista de accesos */}
-      {accesos.length === 0 ? (
+      {errorCarga ? (
+        <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">{errorCarga}</p>
+      ) : accesos.length === 0 ? (
         <div className="text-center py-14 text-[#888] border border-dashed border-[#e0e0e0] rounded-xl">
           <ShieldCheck className="w-10 h-10 mx-auto mb-3 opacity-20" />
           <p className="text-sm font-medium">Aún no hay personas con acceso al sistema.</p>
@@ -294,11 +310,12 @@ export function AccesosManager() {
       )}
 
       {/* Nota de roles */}
-      <p className="text-xs text-[#aaa] mt-4 leading-relaxed">
-        <strong className="text-[#888]">Proposer</strong>: puede proponer asignaciones.{" "}
-        <strong className="text-[#888]">Admin</strong>: además gestiona accesos y configuración.
-        Las personas sin acceso siguen disponibles como recurso de staffing en la sección Personas.
-      </p>
+      <div className="text-xs text-[#aaa] mt-4 leading-relaxed space-y-0.5">
+        {ROL_OPTIONS.map((o) => (
+          <p key={o.value}><strong className="text-[#888]">{o.label}</strong>: {DESCRIPCION_ROL[o.value]}</p>
+        ))}
+        <p className="pt-1">Las personas sin acceso siguen disponibles como recurso de staffing en la sección Personas.</p>
+      </div>
 
       <OtorgarAccesoModal
         open={modalOpen}
@@ -307,7 +324,7 @@ export function AccesosManager() {
         onResult={(r) => {
           setModalOpen(false);
           setFeedback({ ok: r.ok, text: r.text });
-          if (r.ok) load();
+          load(); // siempre, para ver a la persona aunque haya fallado el correo
         }}
       />
 
@@ -394,7 +411,8 @@ function OtorgarAccesoModal({
     });
     setLoading(false);
     if (!r.ok) {
-      setError(r.message);
+      // El rol pudo quedar guardado aunque falle el correo: se cierra y se refresca la lista
+      onResult({ ok: false, text: `${r.message} Si la persona ya aparece en la lista, usa “Reenviar invitación”.` });
       return;
     }
     onResult({ ok: true, text: r.message });
@@ -460,11 +478,7 @@ function OtorgarAccesoModal({
               options={ROL_OPTIONS}
               onChange={(e) => setRol(e.target.value as RolSistema)}
             />
-            <p className="text-xs text-[#888]">
-              {esAdmin(rol)
-                ? "Acceso total: gestiona accesos, personas y configuración."
-                : "Puede proponer asignaciones y ver la información de la plataforma."}
-            </p>
+            <p className="text-xs text-[#888]">{DESCRIPCION_ROL[rol] ?? ""}</p>
           </FieldWrapper>
 
           <div className="p-3 rounded-lg bg-[#f0f6ff] border border-[#d6e6fb] text-xs text-[#3a5a7a] flex gap-2">

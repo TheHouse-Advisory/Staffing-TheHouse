@@ -100,26 +100,31 @@ export function Sidebar({
       const hoy = new Date();
       const hoyStr = format(hoy, "yyyy-MM-dd");
 
-      const [personasRes, engRes] = await Promise.all([
+      // Mismos filtros que la pestaña Alertas: sin papelera ni posibles proyectos, y sin las ya revisadas
+      const [personasRes, engRes, revRes] = await Promise.all([
         sb.from("persona").select("id, fecha_ingreso, fecha_nacimiento").eq("activo", true),
-        sb.from("engagement").select("id, fecha_fin_estimada, fecha_fin_real, estado"),
+        sb.from("engagement").select("id, fecha_fin_estimada, fecha_fin_real, estado")
+          .neq("tipo", "posibles_proyectos").eq("is_deleted", false),
+        sb.from("alerta_revisada").select("alerta_id"),
       ]);
+      const revisadas = new Set(((revRes.data ?? []) as { alerta_id: string }[]).map((r) => r.alerta_id));
 
       let count = 0;
-      for (const p of (personasRes.data ?? []) as { fecha_ingreso: string | null; fecha_nacimiento: string | null }[]) {
+      for (const p of (personasRes.data ?? []) as { id: string; fecha_ingreso: string | null; fecha_nacimiento: string | null }[]) {
         if (p.fecha_ingreso) {
           const ingreso = parseISO(p.fecha_ingreso);
           const aniv = new Date(hoy.getFullYear(), ingreso.getMonth(), ingreso.getDate());
           // Incluye años=0 (ingresó hoy mismo) como alerta de bienvenida
-          if (isSameDay(aniv, hoy)) count++;
+          if (isSameDay(aniv, hoy) && !revisadas.has(`aniversario-${p.id}-${hoy.getFullYear() - ingreso.getFullYear()}`)) count++;
         }
         if (p.fecha_nacimiento) {
           const nac = parseISO(p.fecha_nacimiento);
           const cumple = new Date(hoy.getFullYear(), nac.getMonth(), nac.getDate());
-          if (isSameDay(cumple, hoy)) count++;
+          if (isSameDay(cumple, hoy) && !revisadas.has(`cumpleanos-${p.id}-${hoy.getFullYear() - nac.getFullYear()}`)) count++;
         }
       }
-      for (const e of (engRes.data ?? []) as { fecha_fin_estimada: string | null; fecha_fin_real: string | null; estado: string }[]) {
+      for (const e of (engRes.data ?? []) as { id: string; fecha_fin_estimada: string | null; fecha_fin_real: string | null; estado: string }[]) {
+        if (revisadas.has(`epp-${e.id}-${hoyStr}`)) continue;
         if (e.fecha_fin_real === hoyStr) count++;
         else if (e.estado === "activo" && e.fecha_fin_estimada === hoyStr) count++;
       }

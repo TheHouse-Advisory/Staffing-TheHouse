@@ -114,6 +114,13 @@ function siguienteDiaISO(iso: string): string {
   return toISO(d);
 }
 
+// Siguiente día hábil (salta sábado y domingo)
+function siguienteHabilISO(iso: string): string {
+  let sig = siguienteDiaISO(iso);
+  while ([0, 6].includes(new Date(sig + "T00:00:00").getDay())) sig = siguienteDiaISO(sig);
+  return sig;
+}
+
 function formatFechaCL(iso: string): string {
   const [y, m, d] = iso.split("-");
   return `${d}/${m}/${y}`;
@@ -137,7 +144,8 @@ function calcularBloquesConsecutivos(ausencias: AusenciaTrimestral[]): BloqueCon
   for (let i = 1; i < ordenadas.length; i++) {
     const a = ordenadas[i];
     const actual = bloques[bloques.length - 1];
-    if (a.fecha_inicio <= siguienteDiaISO(actual.fin)) {
+    // Se unen también si solo las separa un fin de semana (viernes → lunes)
+    if (a.fecha_inicio <= siguienteHabilISO(actual.fin)) {
       if (a.fecha_fin > actual.fin) actual.fin = a.fecha_fin;
     } else {
       bloques.push({ inicio: a.fecha_inicio, fin: a.fecha_fin });
@@ -195,6 +203,8 @@ export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasDat
   const [popoverPersona, setPopoverPersona] = useState<PersonaTrimestral | null>(null);
   // AySr/Desarrollo/planificador/GyD no deben ver la tarjeta resumen de ausencias al clicar el nombre
   const ocultarPopoverPersona = rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo";
+  // Mismo criterio que Mes y Semana: estos roles no ven los % por grupo
+  const ocultarPctResumen = rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador";
 
   // Columnas continuas del trimestre completo, con marca de inicio de mes/semana/feriado para los bordes y estilos
   const columnas = useMemo(
@@ -384,7 +394,8 @@ export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasDat
                     <tr key={p.id} className={pi % 2 === 0 ? "bg-white" : "bg-[#fafafa]"}>
                       <td className={`sticky left-0 z-20 bg-white border-r border-[#ebebeb] px-1 py-0 ${PERSONA_CLS}`}>
                         <div className="flex items-center gap-0.5 min-w-0">
-                          {p.is_leverager && (
+                          {/* Misma regla que Mes y Semana: estos roles no ven la insignia "A" */}
+                          {p.is_leverager && !ocultarPopoverPersona && (
                             <span
                               className="w-3 h-3 rounded-full bg-[#3b5bdb] flex-shrink-0 flex items-center justify-center text-white font-black leading-none"
                               style={{ fontSize: 6 }}
@@ -453,7 +464,7 @@ export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasDat
                     semana (igual que el header Sem1/Sem2...) en vez de una celda por día — eso le
                     da ~50px+ por celda, suficiente para el texto sin comprimirlo.
                   */}
-                  <tr className="bg-[#f4f4f4] border-t border-b border-[#e0e0e0]">
+                  {!ocultarPctResumen && <tr className="bg-[#f4f4f4] border-t border-b border-[#e0e0e0]">
                     <td
                       className={`sticky left-0 z-20 bg-[#f4f4f4] border-r border-[#e0e0e0] px-2 py-0.5 truncate ${PERSONA_CLS}`}
                       title={`RESUMEN - ${bloque.toUpperCase()}`}
@@ -461,7 +472,8 @@ export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasDat
                       <span className="text-[8px] font-bold text-[#555] uppercase tracking-wide truncate">RESUMEN - {bloque.toUpperCase()}</span>
                     </td>
                     {semanasFlat.map((s) => {
-                      const pctsDias = s.dias.map((d) => {
+                      // Los feriados no cuentan en el promedio (no son días de trabajo)
+                      const pctsDias = s.dias.filter((d) => !isHoliday(toISO(d.fecha))).map((d) => {
                         const iso = toISO(d.fecha);
                         const total = personas.filter((p) => tipoEnDia(p.id, iso) !== null).length;
                         return personas.length > 0 ? (total / personas.length) * 100 : 0;
@@ -483,7 +495,7 @@ export function HeatmapTrimestral({ year, startMonth, personasData, ausenciasDat
                         </td>
                       );
                     })}
-                  </tr>
+                  </tr>}
                 </React.Fragment>
               );
             })}

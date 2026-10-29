@@ -14,7 +14,7 @@ import {
   fetchEngagementsConCobertura,
   fetchEngagementsHistoricos,
 } from "@/lib/queries/engagements";
-import { cambiarEstadoEngagement } from "@/lib/queries/engagements";
+import { cambiarEstadoEngagement, sincronizarFechasEquipoEngagement } from "@/lib/queries/engagements";
 import { limpiarEngagementsCaducados, diasRestantesPapelera } from "@/lib/tasks/cleanupEngagements";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
@@ -566,6 +566,11 @@ export function EngagementsList({ rolActual }: Props) {
       ? await sb.from("engagement").update({ estado: "activo", fecha_fin_estimada: nuevaFin, fecha_fin_real: null }).eq("id", id)
       : await cambiarEstadoEngagement(sb, id, "activo").then((r) => ({ error: r.error ? { message: r.error } : null }));
     if (error) { setProcesandoHistoricoId(null); showToast(`No se pudo reactivar: ${error.message}`); return; }
+    // Con nueva fecha de fin, el equipo que terminaba con el proyecto se extiende también
+    if (nuevaFin) {
+      const { error: syncErr } = await sincronizarFechasEquipoEngagement(sb, id, "fecha_fin_estimada", nuevaFin, e.fecha_fin_real ?? e.fecha_fin_estimada ?? null);
+      if (syncErr) showToast(`"${nombre}" se reactivó, pero no se pudo extender al equipo: ${syncErr}`);
+    }
     setArchivados((prev) => prev.filter((x) => x.id !== id));
     await load(); // refresca activos para que reaparezca de inmediato
     setProcesandoHistoricoId(null);
@@ -676,7 +681,8 @@ export function EngagementsList({ rolActual }: Props) {
                 : <>{engagements.length} proyecto{engagements.length !== 1 ? "s" : ""}</>
               }
             </p>
-            {!(rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
+            {/* Papelera solo para quienes pueden editar (proposer no puede restaurar en la base) */}
+            {!(rolActual === null || rolActual === "proposer" || rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
             <button onClick={() => setVista("papelera")}
               className="flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-lg border border-[#e8e8e8] hover:bg-[#f5f5f5] text-[#888] transition-colors">
               <Trash2 className="w-3 h-3" />

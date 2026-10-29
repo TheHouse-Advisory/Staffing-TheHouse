@@ -186,25 +186,74 @@ export async function cambiarEstadoEngagement(
   return { error: error?.message ?? null };
 }
 
+/** Fechas previas de una fila del equipo, para poder deshacer la cascada. */
+export type CambioFechaEquipo = {
+  tabla: "asignacion" | "requerimiento_engagement";
+  id: string;
+  fecha_inicio: string | null;
+  fecha_fin: string | null;
+};
+
 /**
- * Ajusta en cascada las asignaciones activas y los requerimientos del equipo a la misma
- * fecha límite — evita que el equipo quede staffeado fuera del rango real del proyecto.
- * `field` es el campo del ENGAGEMENT que cambió ("fecha_inicio" | "fecha_fin_real" | "fecha_fin_estimada");
- * se traduce a la columna equivalente en asignacion/requerimiento_engagement ("fecha_inicio" | "fecha_fin").
+ * Ajusta en cascada las asignaciones activas y los requerimientos del equipo al nuevo borde
+ * del proyecto, respetando las fechas propias de cada fila:
+ * - Las filas alineadas al borde anterior (`prevDate`) lo siguen (extender/acortar).
+ * - Las filas que quedan fuera del nuevo rango se recortan al borde.
+ * - El resto (personas con fechas propias, desasignadas, tramos partidos) no se toca.
+ * - Una fila que quedaría con fechas invertidas no se modifica.
+ * Devuelve las fechas previas de cada fila cambiada para que el deshacer las restaure.
  */
 export async function sincronizarFechasEquipoEngagement(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   supabase: any,
   engagementId: string,
   field: "fecha_inicio" | "fecha_fin_real" | "fecha_fin_estimada",
-  newDate: string
-): Promise<{ error: string | null }> {
-  const columna = field === "fecha_inicio" ? "fecha_inicio" : "fecha_fin";
-  const [{ error: asigErr }, { error: reqErr }] = await Promise.all([
-    supabase.from("asignacion").update({ [columna]: newDate }).eq("engagement_id", engagementId).eq("estado", "activa"),
-    supabase.from("requerimiento_engagement").update({ [columna]: newDate }).eq("engagement_id", engagementId),
+  newDate: string,
+  prevDate: string | null
+): Promise<{ error: string | null; cambios: CambioFechaEquipo[] }> {
+  const esInicio = field === "fecha_inicio";
+  const [{ data: asigs, error: aErr }, { data: reqs, error: rErr }] = await Promise.all([
+    supabase.from("asignacion").select("id, fecha_inicio, fecha_fin").eq("engagement_id", engagementId).eq("estado", "activa"),
+    supabase.from("requerimiento_engagement").select("id, fecha_inicio, fecha_fin").eq("engagement_id", engagementId),
   ]);
-  return { error: asigErr?.message ?? reqErr?.message ?? null };
+  if (aErr || rErr) return { error: aErr?.message ?? rErr?.message ?? null, cambios: [] };
+
+  type Fila = { id: string; fecha_inicio: string | null; fecha_fin: string | null };
+  const cambios: CambioFechaEquipo[] = [];
+  const updates: Promise<{ error: { message: string } | null }>[] = [];
+  const procesar = (tabla: CambioFechaEquipo["tabla"], filas: Fila[]) => {
+    for (const f of filas) {
+      const actual = esInicio ? f.fecha_inicio : f.fecha_fin;
+      if (!actual) continue; // sin fecha (abierta): no se toca
+      const sigueBorde = prevDate != null && actual === prevDate;
+      const quedaFuera = esInicio ? actual < newDate : actual > newDate;
+      if (!sigueBorde && !quedaFuera) continue;
+      // Evita fechas invertidas: la fila quedaría completamente fuera del proyecto
+      if (esInicio && f.fecha_fin && newDate > f.fecha_fin) continue;
+      if (!esInicio && f.fecha_inicio && newDate < f.fecha_inicio) continue;
+      cambios.push({ tabla, id: f.id, fecha_inicio: f.fecha_inicio, fecha_fin: f.fecha_fin });
+      updates.push(supabase.from(tabla).update({ [esInicio ? "fecha_inicio" : "fecha_fin"]: newDate }).eq("id", f.id));
+    }
+  };
+  procesar("asignacion", (asigs ?? []) as Fila[]);
+  procesar("requerimiento_engagement", (reqs ?? []) as Fila[]);
+
+  const resultados = await Promise.all(updates);
+  const err = resultados.find((r) => r.error)?.error;
+  return { error: err?.message ?? null, cambios };
+}
+
+/** Restaura las fechas previas devueltas por sincronizarFechasEquipoEngagement (deshacer). */
+export async function restaurarFechasEquipo(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  supabase: any,
+  cambios: CambioFechaEquipo[]
+): Promise<{ error: string | null }> {
+  const resultados = await Promise.all(cambios.map((c) =>
+    supabase.from(c.tabla).update({ fecha_inicio: c.fecha_inicio, fecha_fin: c.fecha_fin }).eq("id", c.id)
+  ));
+  const err = resultados.find((r: { error: { message: string } | null }) => r.error)?.error;
+  return { error: err?.message ?? null };
 }
 
 /**
@@ -220,10 +269,13 @@ export async function redimensionarEngagementConEquipo(
   engagementId: string,
   field: "fecha_inicio" | "fecha_fin_real" | "fecha_fin_estimada",
   newDate: string
-): Promise<{ error: string | null }> {
+): Promise<{ error: string | null; cambios: CambioFechaEquipo[] }> {
+  // Borde anterior: las filas alineadas a él lo siguen
+  const { data: engPrev } = await supabase.from("engagement").select(field).eq("id", engagementId).single();
+  const prevDate: string | null = engPrev?.[field] ?? null;
   const { error: engErr } = await supabase.from("engagement").update({ [field]: newDate }).eq("id", engagementId);
-  if (engErr) return { error: engErr.message };
-  return sincronizarFechasEquipoEngagement(supabase, engagementId, field, newDate);
+  if (engErr) return { error: engErr.message, cambios: [] };
+  return sincronizarFechasEquipoEngagement(supabase, engagementId, field, newDate, prevDate);
 }
 
 /**
@@ -241,12 +293,14 @@ export async function desplazarFechasEquipoEngagement(
   if (!deltaDays) return { error: null };
   const desplazar = (fecha: string) => format(addDays(new Date(fecha + "T00:00:00"), deltaDays), "yyyy-MM-dd");
 
-  const [{ data: asigs, error: asigFetchErr }, { data: reqs, error: reqFetchErr }] = await Promise.all([
+  const [{ data: asigs, error: asigFetchErr }, { data: reqs, error: reqFetchErr }, { data: exts, error: extFetchErr }] = await Promise.all([
     supabase.from("asignacion").select("id, fecha_inicio, fecha_fin").eq("engagement_id", engagementId).eq("estado", "activa"),
     supabase.from("requerimiento_engagement").select("id, fecha_inicio, fecha_fin").eq("engagement_id", engagementId),
+    supabase.from("engagement_extension").select("id, fecha_inicio, fecha_fin").eq("engagement_id", engagementId),
   ]);
   if (asigFetchErr) return { error: asigFetchErr.message };
   if (reqFetchErr) return { error: reqFetchErr.message };
+  if (extFetchErr) return { error: extFetchErr.message };
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const results = await Promise.all([
@@ -261,6 +315,13 @@ export async function desplazarFechasEquipoEngagement(
         fecha_inicio: r.fecha_inicio ? desplazar(r.fecha_inicio) : null,
         fecha_fin: r.fecha_fin ? desplazar(r.fecha_fin) : null,
       }).eq("id", r.id)
+    ),
+    // Las extensiones se mueven con el proyecto (antes quedaban en sus fechas viejas)
+    ...((exts ?? []) as any[]).map((e) =>
+      supabase.from("engagement_extension").update({
+        fecha_inicio: desplazar(e.fecha_inicio),
+        fecha_fin: desplazar(e.fecha_fin),
+      }).eq("id", e.id)
     ),
   ]);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -412,8 +473,9 @@ export async function quitarAsignacionSemana(
 
   const { error: delError } = await sb.from("asignacion").delete().eq("id", asignacion.id);
   if (delError) {
-    if (nuevasIds.length > 0) await sb.from("asignacion").delete().in("id", nuevasIds);
-    return { error: delError.message };
+    // Si la limpieza también falla, se avisa: quedaron tramos duplicados
+    const { error: limpErr } = nuevasIds.length > 0 ? await sb.from("asignacion").delete().in("id", nuevasIds) : { error: null };
+    return { error: limpErr ? `${delError.message} (y no se pudieron quitar los tramos nuevos: ${limpErr.message})` : delError.message };
   }
 
   return { error: null };
@@ -521,8 +583,9 @@ export async function actualizarAsignacionSemana(
   if (originales.length > 0) {
     const { error } = await sb.from("asignacion").delete().in("id", originales.map((o) => o.id));
     if (error) {
-      if (insertadosIds.length > 0) await sb.from("asignacion").delete().in("id", insertadosIds);
-      return { error: error.message };
+      // Si la limpieza también falla, se avisa: quedaron asignaciones duplicadas
+      const { error: limpErr } = insertadosIds.length > 0 ? await sb.from("asignacion").delete().in("id", insertadosIds) : { error: null };
+      return { error: limpErr ? `${error.message} (y no se pudieron quitar las nuevas: ${limpErr.message})` : error.message };
     }
   }
 
@@ -622,7 +685,11 @@ export async function crearExtensionEngagement(
         estado_staffing: "CONFIRMADO",
       }))
     );
-    if (asigErr) return { error: asigErr.message };
+    if (asigErr) {
+      // No dejar una extensión sin equipo: se borra la recién creada
+      const { error: limpErr } = await sb.from("engagement_extension").delete().eq("id", ext.id);
+      return { error: limpErr ? `${asigErr.message} (y la extensión quedó creada sin equipo)` : asigErr.message };
+    }
   }
 
   return { error: null };

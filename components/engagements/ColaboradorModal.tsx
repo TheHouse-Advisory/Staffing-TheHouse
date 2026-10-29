@@ -42,6 +42,11 @@ interface Rango {
   asignacionId: string | null;
   inicio: string;
   fin: string;
+  /** Valores propios del tramo ya guardado (se conservan al reemplazar) */
+  pct?: number;
+  estadoStaffing?: string;
+  cargo?: string | null;
+  estado?: string;
 }
 interface ResumenData {
   ocupacion: number; totalProyectos: number; industrias: string[];
@@ -97,15 +102,19 @@ export function ColaboradorModal({
     const sb = createAnyClient();
     const q = sb
       .from("asignacion")
-      .select("id, fecha_inicio, fecha_fin")
+      .select("id, fecha_inicio, fecha_fin, pct_dedicacion, estado_staffing, cargo_al_momento, estado")
       .eq("persona_id", personaId)
       .eq("engagement_id", engagementId)
       .order("fecha_inicio");
-    (requerimientoId ? (q as any).eq("requerimiento_id", requerimientoId) : q)
+    // Solo los tramos de este requerimiento (o los directos sin requerimiento), no los de otros
+    (requerimientoId ? (q as any).eq("requerimiento_id", requerimientoId) : (q as any).is("requerimiento_id", null))
       .then(({ data }: { data: any[] | null }) => {
         setRangos(
           data?.length
-            ? data.map((a) => ({ tempId: a.id, asignacionId: a.id, inicio: a.fecha_inicio, fin: a.fecha_fin }))
+            ? data.map((a) => ({
+                tempId: a.id, asignacionId: a.id, inicio: a.fecha_inicio, fin: a.fecha_fin,
+                pct: Number(a.pct_dedicacion), estadoStaffing: a.estado_staffing, cargo: a.cargo_al_momento, estado: a.estado,
+              }))
             : [{ tempId: "new-0", asignacionId: null, inicio: engInicio, fin: engFin }]
         );
         setAsigLoad(false);
@@ -122,7 +131,10 @@ export function ColaboradorModal({
       const [{ data: per }, asigRes, histRes, indRes, capRes, temRes, mentoreRes, ausDetalle] =
         await Promise.all([
           sb.from("persona").select("*").eq("id", personaId).single(),
-          sb.from("asignacion").select("pct_dedicacion").eq("persona_id", personaId).eq("estado", "activa"),
+          // Ocupación: solo asignaciones vigentes hoy (antes sumaba también las ya terminadas)
+          sb.from("asignacion").select("pct_dedicacion").eq("persona_id", personaId).eq("estado", "activa")
+            .lte("fecha_inicio", new Date().toISOString().slice(0, 10))
+            .or(`fecha_fin.is.null,fecha_fin.gte.${new Date().toISOString().slice(0, 10)}`),
           sb.from("asignacion").select("engagement_id").eq("persona_id", personaId),
           sb.from("persona_industria").select("cat_industria(nombre)").eq("persona_id", personaId),
           sb.from("persona_capacidad").select("cat_capacidad(nombre)").eq("persona_id", personaId),
@@ -227,10 +239,11 @@ export function ColaboradorModal({
         engagement_id:    engagementId,
         requerimiento_id: requerimientoId,
         persona_id:       personaId,
-        cargo_al_momento: cargo,
-        pct_dedicacion:   pct,
-        estado:           "activa",
-        estado_staffing:  estadoStaffing,
+        // Tramos existentes conservan su %, estado y cargo; los nuevos usan los del cupo
+        cargo_al_momento: r.asignacionId ? (r.cargo ?? cargo) : cargo,
+        pct_dedicacion:   r.pct ?? pct,
+        estado:           r.estado ?? "activa",
+        estado_staffing:  r.estadoStaffing ?? estadoStaffing,
         fecha_inicio:     r.inicio,
         fecha_fin:        r.fin,
       }))
@@ -245,7 +258,7 @@ export function ColaboradorModal({
     const nuevasIds = ((nuevas ?? []) as { id: string }[]).map(n => n.id);
     let delQ = (sb as any).from("asignacion").delete()
       .eq("persona_id", personaId).eq("engagement_id", engagementId);
-    if (requerimientoId) delQ = delQ.eq("requerimiento_id", requerimientoId);
+    delQ = requerimientoId ? delQ.eq("requerimiento_id", requerimientoId) : delQ.is("requerimiento_id", null);
     if (nuevasIds.length > 0) delQ = delQ.not("id", "in", `(${nuevasIds.join(",")})`);
     const { error: delErr } = await delQ;
     if (delErr) {

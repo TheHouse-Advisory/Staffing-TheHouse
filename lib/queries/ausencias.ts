@@ -362,6 +362,8 @@ export interface DetalleAusenciasPersona {
   ausenciasPasadasAnioActual: AusenciaDetalle[];
   /** Suma de días hábiles de todas las ausencias del año actual (pasadas + en curso hasta hoy) */
   totalDiasAnioActual: number;
+  /** Si la consulta falló (para no mostrar "Total 0 / Sin ausencias" como si fuera real) */
+  error?: string;
 }
 
 /**
@@ -386,7 +388,7 @@ export async function getDetailedPersonAbsences(
     .order("fecha_inicio", { ascending: true });
 
   if (error || !data) {
-    return { ausenciasFuturas: [], ausenciasPasadasAnioActual: [], totalDiasAnioActual: 0 };
+    return { ausenciasFuturas: [], ausenciasPasadasAnioActual: [], totalDiasAnioActual: 0, error: error?.message ?? "Sin datos" };
   }
 
   type RawRow = { id: string; tipo: string; fecha_inicio: string; fecha_fin: string; descripcion: string | null };

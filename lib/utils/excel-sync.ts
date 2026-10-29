@@ -471,8 +471,9 @@ export async function syncExcelResumenProyectos(sb: any): Promise<SyncResult> {
   const anioActual = new Date().getFullYear();
   const anios = new Set<number>();
   engs.forEach((e) => {
-    const y0 = e.fecha_inicio ? new Date(e.fecha_inicio).getFullYear() : anioActual;
-    const y1 = e.fecha_fin ? new Date(e.fecha_fin).getFullYear() : anioActual;
+    // Año tomado del texto "yyyy-MM-dd": new Date() lo leía en UTC y un 1 de enero caía en el año anterior
+    const y0 = e.fecha_inicio ? Number(e.fecha_inicio.slice(0, 4)) : anioActual;
+    const y1 = e.fecha_fin ? Number(e.fecha_fin.slice(0, 4)) : anioActual;
     for (let y = y0; y <= Math.min(y1, anioActual); y++) anios.add(y);
   });
 

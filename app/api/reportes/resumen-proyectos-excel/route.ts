@@ -10,7 +10,8 @@ import { esAdmin } from "@/lib/roles";
 
 export async function POST() {
   const authUser = await requireAuth();
-  if (!esAdmin(authUser.rol) && authUser.rol !== "planificador") {
+  // Solo admin y personas (planificador ya no puede descargarlo)
+  if (!esAdmin(authUser.rol)) {
     return NextResponse.json({ error: "Sin permisos para sincronizar el Excel." }, { status: 403 });
   }
 

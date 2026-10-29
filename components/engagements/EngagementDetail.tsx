@@ -28,6 +28,14 @@ import type { Engagement, CoberturaEngagement } from "@/lib/types/database";
 
 interface Props { id: string; }
 
+// Nombres legibles del tipo (mismos que las secciones de la lista)
+const TIPO_LABEL: Record<string, string> = {
+  proyecto: "Proyecto",
+  propuesta: "Propuesta comercial",
+  posibles_proyectos: "Posible proyecto",
+  ayuda_interna: "Desarrollo interno",
+};
+
 interface AsignacionReq {
   id: string;
   persona_id: string;
@@ -97,6 +105,7 @@ export function EngagementDetail({ id }: Props) {
 
   // Archivar (estado → 'terminado')
   const [archivando, setArchivando] = useState(false);
+  const [confirmArchivar, setConfirmArchivar] = useState(false);
   const [toastArchivo, setToastArchivo] = useState<string | null>(null);
 
   // Confirmar proyecto real (tipo 'posibles_proyectos' → 'proyecto')
@@ -179,6 +188,8 @@ export function EngagementDetail({ id }: Props) {
         setCobertura(cobResult.data);
       }
       if (cobResult.error) setError(cobResult.error);
+      // Antes, si fallaba, el equipo se veía vacío sin aviso
+      if (asigResult.error) setError(`No se pudo cargar el equipo: ${asigResult.error.message}`);
       setCaracteristicas({
         industria: (eng as any).cat_industria?.nombre ?? null,
         capacidades: ((capResult.data ?? []) as any[]).map((r: any) => r.cat_capacidad?.nombre).filter(Boolean),
@@ -233,10 +244,11 @@ export function EngagementDetail({ id }: Props) {
     const personaIds = [...porPersona.keys()];
     const ausenciasPorPersona = new Map<string, { inicio: string; fin: string; tipo: string }[]>();
     if (personaIds.length > 0) {
-      const { data: ausData } = await sb
+      const { data: ausData, error: ausErr } = await sb
         .from("ausencia")
         .select("persona_id, fecha_inicio, fecha_fin, tipo")
         .in("persona_id", personaIds);
+      if (ausErr) setError(`No se pudieron cargar las ausencias del equipo: ${ausErr.message}`);
       for (const row of (ausData ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string }[]) {
         const arr = ausenciasPorPersona.get(row.persona_id) ?? [];
         arr.push({ inicio: row.fecha_inicio, fin: row.fecha_fin, tipo: row.tipo });
@@ -302,6 +314,7 @@ export function EngagementDetail({ id }: Props) {
     const sb = createAnyClient();
     const { error } = await cambiarEstadoEngagement(sb, engagement.id, "terminado");
     setArchivando(false);
+    setConfirmArchivar(false);
     if (error) { setEliminandoError(error); return; }
     setToastArchivo("Proyecto archivado correctamente.");
     setTimeout(() => router.push("/engagements"), 1200);
@@ -460,13 +473,23 @@ export function EngagementDetail({ id }: Props) {
           Volver a Engagements
         </Link>
 
+        {/* Aviso de carga parcial (equipo, cobertura o ausencias) */}
+        {error && (
+          <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-lg px-4 py-3">{error}</p>
+        )}
+
         {/* Encabezado */}
         <div className="bg-white rounded-xl border border-[#e8e8e8] p-6">
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <h2 className="text-xl font-bold truncate">{engagement.codigo ? `${engagement.codigo}: ${engagement.nombre}` : engagement.nombre}</h2>
-                {tieneAlerta && <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />}
+                {/* Mismos roles que en la lista; el title explica qué falta */}
+                {tieneAlerta && !(rolActual === null || rolActual === "GyD" || rolActual === "AySr" || rolActual === "planificador" || rolActual === "Desarrollo") && (
+                  <span title="Hay requerimientos sin cobertura completa (ver Cobertura)">
+                    <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                  </span>
+                )}
               </div>
               <p className="text-[#888]">{engagement.cliente}</p>
             </div>
@@ -479,7 +502,7 @@ export function EngagementDetail({ id }: Props) {
                 </Button>
               )}
               {!isReadOnly && engagement.estado === "activo" && (
-                <Button variant="ghost" size="sm" onClick={handleArchivar} loading={archivando}
+                <Button variant="ghost" size="sm" onClick={() => setConfirmArchivar(true)} loading={archivando}
                   className="text-[#888] hover:text-[#1a1a1a]" title="Finalizar/Archivar Proyecto">
                   <Archive className="w-3.5 h-3.5" />
                   <span className="text-xs">Finalizar/Archivar Proyecto</span>
@@ -513,7 +536,7 @@ export function EngagementDetail({ id }: Props) {
           <div className="mt-4 grid grid-cols-2 sm:grid-cols-3 gap-4 text-sm border-t border-[#f0f0f0] pt-4">
             <div>
               <span className="text-[#888] text-xs">Tipo</span>
-              <p className="font-medium mt-0.5 capitalize">{engagement.tipo}</p>
+              <p className="font-medium mt-0.5">{TIPO_LABEL[engagement.tipo] ?? engagement.tipo}</p>
             </div>
             {engagement.fecha_inicio && (
               <div>
@@ -523,11 +546,12 @@ export function EngagementDetail({ id }: Props) {
                 </p>
               </div>
             )}
-            {engagement.fecha_fin_estimada && (
+            {/* Fin efectivo = real si existe, si no el estimado (mismo criterio que el resto de la app) */}
+            {((engagement as any).fecha_fin_real || engagement.fecha_fin_estimada) && (
               <div>
-                <span className="text-[#888] text-xs">Fin estimado</span>
+                <span className="text-[#888] text-xs">{(engagement as any).fecha_fin_real ? "Fin real" : "Fin estimado"}</span>
                 <p className="font-medium mt-0.5">
-                  {format(fLocal(engagement.fecha_fin_estimada), "d MMM yyyy", { locale: es })}
+                  {format(fLocal((engagement as any).fecha_fin_real || engagement.fecha_fin_estimada), "d MMM yyyy", { locale: es })}
                 </p>
               </div>
             )}
@@ -793,6 +817,17 @@ export function EngagementDetail({ id }: Props) {
           engagement={engagement}
         />
       )}
+
+      {/* ── Confirmación archivar ─────────────────────────────── */}
+      <ConfirmDialog
+        open={confirmArchivar}
+        onClose={() => setConfirmArchivar(false)}
+        onConfirm={handleArchivar}
+        loading={archivando}
+        title="Finalizar/Archivar proyecto"
+        message={`¿Archivar "${engagement?.nombre}"? Pasará al Archivo Histórico y podrás reactivarlo desde ahí.`}
+        confirmLabel="Archivar"
+      />
 
       {/* ── Confirmación eliminar engagement ─────────────────── */}
       <ConfirmDialog

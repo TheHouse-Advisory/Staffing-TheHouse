@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
@@ -88,6 +88,10 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
   const [capacidades, setCapacidades] = useState<Option[]>([]);
   const [tematicas, setTematicas] = useState<Option[]>([]);
   const [periodosCargo, setPeriodosCargo] = useState<PeriodoCargo[]>([]);
+  // Error al cargar relaciones: bloquea "Guardar" para no borrar datos de la base
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
+  // id de la persona creada en este formulario, para que un reintento no la duplique
+  const creadaIdRef = useRef<string | null>(null);
   // Marca cuando terminó de cargar los datos de relaciones (industrias/capacidades/temáticas/historial),
   // para no hacer scroll a una sección antes de que su layout final (chips, filas) esté renderizado
   const [relacionesReady, setRelacionesReady] = useState(false);
@@ -113,7 +117,9 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
 
   // Poblar form al editar
   useEffect(() => {
-    if (!open) { setForm(EMPTY); setErrors({}); setServerError(null); setRelacionesReady(false); return; }
+    // Periodos de cargo y error de carga se vacían al abrir y al cerrar (antes "Nueva persona" heredaba los anteriores)
+    if (!open) { setForm(EMPTY); setErrors({}); setServerError(null); setRelacionesReady(false); setPeriodosCargo([]); setErrorCarga(null); return; }
+    setPeriodosCargo([]); setErrorCarga(null); creadaIdRef.current = null;
     if (!persona) { setRelacionesReady(true); return; }
     setRelacionesReady(false);
 
@@ -126,6 +132,9 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
         supabase.from("historial_cargos").select("cargo, fecha_inicio, fecha_fin, es_apalancador, es_referente")
           .eq("persona_id", persona!.id).order("fecha_inicio", { ascending: true }),
       ]);
+      // Si falla la carga, guardar borraría el historial/industrias de la base: se bloquea "Guardar"
+      const errRel = [pi, pc, pt, hc].find((r: any) => r.error)?.error;
+      if (errRel) setErrorCarga(`No se pudieron cargar los datos de la persona (${errRel.message}). Cierra y vuelve a abrir antes de guardar.`);
       const periodos = ((hc.data ?? []) as { cargo: string; fecha_inicio: string; fecha_fin: string | null; es_apalancador: boolean | null; es_referente: boolean | null }[]).map(
         (r) => ({ id: nextId(), cargo: r.cargo, fecha_inicio: r.fecha_inicio, fecha_fin: r.fecha_fin ?? "", es_apalancador: r.es_apalancador ?? false, es_referente: r.es_referente ?? false })
       );
@@ -178,13 +187,29 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
     else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = "Email inválido";
     if (!form.cargo_actual) e.cargo_actual = "Requerido";
     setErrors(e);
-    return Object.keys(e).length === 0;
+    if (Object.keys(e).length > 0) return false;
+    // Periodos de carrera: antes los incompletos se descartaban sin aviso
+    const periodosUsados = periodosCargo.filter((p) => p.cargo || p.fecha_inicio || p.fecha_fin);
+    for (const p of periodosUsados) {
+      if (!p.cargo || !p.fecha_inicio) { setServerError("Cada periodo de cargo necesita cargo y fecha de inicio."); return false; }
+      if (p.fecha_fin && p.fecha_fin < p.fecha_inicio) { setServerError(`El periodo de ${p.cargo} termina antes de empezar.`); return false; }
+    }
+    if (periodosUsados.filter((p) => !p.fecha_fin).length > 1) {
+      setServerError("Solo puede haber un cargo actual (un periodo sin fecha de fin).");
+      return false;
+    }
+    return true;
   };
 
+  // Mensaje legible para errores de la base
+  const mensajeError = (msg: string) =>
+    /duplicate key|unique/i.test(msg) && /email/i.test(msg) ? "Ya existe una persona con ese email." : msg;
+
   const handleSubmit = async () => {
+    if (loading || errorCarga) return;
+    setServerError(null);
     if (!validate()) return;
     setLoading(true);
-    setServerError(null);
     const supabase = createAnyClient();
 
     // persona.is_leverager/referente se derivan del periodo de cargo actual (sin fecha_fin)
@@ -205,14 +230,16 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
 
     let personaId: string;
 
-    if (persona) {
+    // Ya creada en un intento anterior (falló después): se actualiza en vez de duplicarla
+    const idExistente = persona?.id ?? creadaIdRef.current;
+    if (idExistente) {
       // Editar
       const { error } = await supabase
         .from("persona")
         .update(payload)
-        .eq("id", persona.id);
-      if (error) { setServerError(error.message); setLoading(false); return; }
-      personaId = persona.id;
+        .eq("id", idExistente);
+      if (error) { setServerError(mensajeError(error.message)); setLoading(false); return; }
+      personaId = idExistente;
     } else {
       // Crear
       const { data, error } = await supabase
@@ -220,8 +247,9 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
         .insert(payload)
         .select("id")
         .single();
-      if (error || !data) { setServerError(error?.message ?? "Error al crear"); setLoading(false); return; }
+      if (error || !data) { setServerError(mensajeError(error?.message ?? "Error al crear")); setLoading(false); return; }
       personaId = data.id;
+      creadaIdRef.current = data.id;
 
       // Registrar cargo inicial en historial si no viene de periodosCargo
       // (se sincroniza justo abajo junto al resto de periodos)
@@ -262,16 +290,16 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
           <Button variant="secondary" onClick={onClose} disabled={loading}>
             Cancelar
           </Button>
-          <Button onClick={handleSubmit} loading={loading}>
+          <Button onClick={handleSubmit} loading={loading} disabled={!!errorCarga}>
             {persona ? "Guardar cambios" : "Crear persona"}
           </Button>
         </>
       }
     >
       <div className="space-y-5">
-        {serverError && (
+        {(errorCarga || serverError) && (
           <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">
-            {serverError}
+            {errorCarga ?? serverError}
           </div>
         )}
 

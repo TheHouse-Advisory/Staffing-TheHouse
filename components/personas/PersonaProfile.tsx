@@ -76,13 +76,13 @@ function fmtMesAnio(iso: string): string {
   return `${parseInt(d)} de ${MESES[parseInt(m) - 1]} ${y}`;
 }
 
-function diasEnEmpresa(fechaIngreso: string | null): string | null {
+// Tiempo exacto en la empresa: hasta hoy, o hasta la fecha de salida si es Ex-Houser
+function diasEnEmpresa(fechaIngreso: string | null, fechaSalida?: string | null): string | null {
   if (!fechaIngreso) return null;
-  const total = Math.floor((Date.now() - new Date(fechaIngreso + "T00:00:00").getTime()) / 86_400_000);
-  if (total < 0) return null;
-  const years = Math.floor(total / 365);
-  const months = Math.floor((total % 365) / 30);
-  const days = (total % 365) % 30;
+  const inicio = new Date(fechaIngreso + "T00:00:00");
+  const fin = fechaSalida ? new Date(fechaSalida + "T00:00:00") : new Date();
+  if (fin < inicio) return null;
+  const { years = 0, months = 0, days = 0 } = intervalToDuration({ start: inicio, end: fin });
   const partes: string[] = [];
   if (years > 0) partes.push(`${years} ${years === 1 ? "año" : "años"}`);
   if (months > 0) partes.push(`${months} ${months === 1 ? "mes" : "meses"}`);
@@ -224,7 +224,24 @@ export function PersonaProfile({ id }: Props) {
       sincronizarExperienciaPersona(supabase, id),
     ]);
     setAusenciasDetalle(ausencias);
-    setExperiencia(experienciaData);
+    // Una sola fuente: lo guardado en la persona (incluye lo editado en el formulario)
+    // más lo que viene de los proyectos (con su detalle de engagements)
+    const [{ data: indGuardadas }, { data: temGuardadas }] = await Promise.all([
+      supabase.from("persona_industria").select("industria_id, cat_industria(nombre)").eq("persona_id", id),
+      supabase.from("persona_tematica").select("tematica_id, cat_tematica(nombre)").eq("persona_id", id),
+    ]);
+    const unir = (deProyectos: ExperienciaDinamica["industrias"], guardadas: { id: string; nombre?: string }[]) => {
+      const ids = new Set(deProyectos.map((t) => t.id));
+      const extra = guardadas.filter((g) => g.nombre && !ids.has(g.id)).map((g) => ({ id: g.id, nombre: g.nombre!, engagements: [] }));
+      return [...deProyectos, ...extra].sort((a, b) => a.nombre.localeCompare(b.nombre, "es"));
+    };
+    setExperiencia({
+      ...experienciaData,
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      industrias: unir(experienciaData.industrias, ((indGuardadas ?? []) as any[]).map((r) => ({ id: r.industria_id, nombre: r.cat_industria?.nombre }))),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      tematicas: unir(experienciaData.tematicas, ((temGuardadas ?? []) as any[]).map((r) => ({ id: r.tematica_id, nombre: r.cat_tematica?.nombre }))),
+    });
 
     setHistorialCargosDB(
       ((cargosRes.data ?? []) as { cargo: string; fecha_inicio: string; fecha_fin: string | null; es_apalancador: boolean | null; es_referente: boolean | null }[]).map(
@@ -280,7 +297,11 @@ export function PersonaProfile({ id }: Props) {
     (rolActual === "AySr" && CARGOS_OCULTOS_AYSR.includes(persona.cargo_actual ?? ""));
 
   const initials = getIniciales(persona.nombre, persona.apellido, persona.iniciales);
-  const pctTotal = asignaciones.reduce((sum, a) => sum + a.pct_dedicacion, 0);
+  // Ocupación actual: solo asignaciones vigentes hoy (antes sumaba también las terminadas)
+  const hoyStr = format(new Date(), "yyyy-MM-dd");
+  const pctTotal = asignaciones
+    .filter((a) => a.fecha_inicio <= hoyStr && (!a.fecha_fin || a.fecha_fin >= hoyStr))
+    .reduce((sum, a) => sum + a.pct_dedicacion, 0);
   const { bg: bgOcp, text: textOcp } = colorOcupacion(pctTotal);
   const cargoColor = CARGO_COLORS[persona.cargo_actual ?? ""] ?? CARGO_COLOR_DEFAULT;
   const talentBoxName = getTalentBoxName(persona.talento_potencial, persona.talento_desempeno);
@@ -341,9 +362,9 @@ export function PersonaProfile({ id }: Props) {
                   {pctTotal}% ocupado actualmente
                 </span>
                 )}
-                {diasEnEmpresa(persona.fecha_ingreso) && (
+                {diasEnEmpresa(persona.fecha_ingreso, (persona as any).fecha_salida) && (
                   <span className="text-xs px-2.5 py-0.5 rounded-full bg-[#f8f8f8] text-[#888] border border-[#ebebeb]">
-                    ⌛ {diasEnEmpresa(persona.fecha_ingreso)} en la empresa
+                    ⌛ {diasEnEmpresa(persona.fecha_ingreso, (persona as any).fecha_salida)} en la empresa
                   </span>
                 )}
               </div>
@@ -444,6 +465,8 @@ export function PersonaProfile({ id }: Props) {
               cargoActual={persona.cargo_actual}
               cargosSugeridos={ESCALONES_SENIORITY}
               historialCargos={historialCargosDB}
+              onTalentoCambiado={(talento_potencial, talento_desempeno) =>
+                setPersona((p) => (p ? { ...p, talento_potencial, talento_desempeno } as Persona : p))}
             />
           </div>
 

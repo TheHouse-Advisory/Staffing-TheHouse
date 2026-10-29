@@ -140,9 +140,10 @@ export function MentoresMenteesSection({ personaId, mentor, mentees, onMentorCha
   }, [abierto, editando, personas.length, personaId]);
 
   // Cierra la mentoría vigente en `fecha` y (si hay nuevo mentor) abre una nueva desde esa fecha
-  async function asignar(nuevo: PersonaMini | null) {
+  async function asignar(nuevo: PersonaMini | null, fechaForzada?: string) {
     if (nuevo && nuevo.id === mentor?.id) { setAbierto(false); return; }
-    const fecha = fechaInicio || format(new Date(), "yyyy-MM-dd");
+    // "Finalizar actual" usa hoy (antes tomaba una fecha que había quedado escrita)
+    const fecha = fechaForzada || fechaInicio || format(new Date(), "yyyy-MM-dd");
     // La mentoría vigente no puede cerrarse antes de haber empezado
     const vigente = historial.find((m) => m.fecha_fin == null);
     if (vigente?.fecha_inicio && fecha < vigente.fecha_inicio) {
@@ -200,11 +201,13 @@ export function MentoresMenteesSection({ personaId, mentor, mentees, onMentorCha
       .eq("id", editando.id)
       .select("id, fecha_inicio, fecha_fin, mentor:mentor_id(id, nombre, apellido, cargo_actual)")
       .single();
+    // La ficha solo se toca si la mentoría se guardó (antes cambiaba aunque esta fallara)
+    if (error || !data) { setGuardando(false); setError("No se pudo guardar. Intenta nuevamente."); return; }
     // Si cambia la persona de la mentoría vigente, se sincroniza persona.mentor_id
     const cambiaVigente = actual && edMentorId !== mentor?.id;
     const sync = cambiaVigente ? await sb.from("persona").update({ mentor_id: edMentorId }).eq("id", personaId) : { error: null };
     setGuardando(false);
-    if (error || sync.error || !data) { setError("No se pudo guardar. Intenta nuevamente."); return; }
+    if (sync.error) { setError(`Mentoría guardada, pero no se pudo actualizar la ficha: ${sync.error.message}`); return; }
     const editada = data as Mentoria;
     setHistorial((prev) => prev.map((m) => (m.id === editada.id ? editada : m))
       .sort((a, b) => (a.fecha_inicio ?? "").localeCompare(b.fecha_inicio ?? "")));
@@ -213,13 +216,16 @@ export function MentoresMenteesSection({ personaId, mentor, mentees, onMentorCha
   }
 
   async function eliminarMentoria() {
-    if (!editando || !confirm("¿Eliminar esta mentoría del historial?")) return;
+    if (!editando || guardando || !confirm("¿Eliminar esta mentoría del historial?")) return;
     const actual = editando.fecha_fin == null;
+    setGuardando(true); // bloquea el doble clic
     const sb = createAnyClient();
     const { error } = await sb.from("persona_mentoria").delete().eq("id", editando.id);
+    if (error) { setGuardando(false); setError("No se pudo eliminar. Intenta nuevamente."); return; }
     // Eliminar la vigente deja a la persona sin mentor
     const sync = actual ? await sb.from("persona").update({ mentor_id: null }).eq("id", personaId) : { error: null };
-    if (error || sync.error) { setError("No se pudo eliminar. Intenta nuevamente."); return; }
+    setGuardando(false);
+    if (sync.error) { setError(`Mentoría eliminada, pero no se pudo actualizar la ficha: ${sync.error.message}`); return; }
     setHistorial((prev) => prev.filter((m) => m.id !== editando.id));
     if (actual) onMentorChange(null);
     setEditando(null);
@@ -248,7 +254,7 @@ export function MentoresMenteesSection({ personaId, mentor, mentees, onMentorCha
             <div className="flex items-center gap-2">
               {mentor && (
                 <button
-                  onClick={() => { if (confirm("¿Finalizar la mentoría actual sin asignar un nuevo mentor?")) asignar(null); }}
+                  onClick={() => { if (confirm("¿Finalizar la mentoría actual sin asignar un nuevo mentor?")) asignar(null, format(new Date(), "yyyy-MM-dd")); }}
                   className="text-xs px-3 py-1.5 rounded-lg border border-[#e8e8e8] text-[#888] hover:bg-[#f5f5f5] transition-colors"
                 >
                   Finalizar actual
@@ -371,7 +377,7 @@ export function MentoresMenteesSection({ personaId, mentor, mentees, onMentorCha
         title="Editar mentoría"
         footer={
           <div className="flex items-center justify-between w-full">
-            <button onClick={eliminarMentoria} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg text-red-500 hover:bg-red-50 transition-colors">
+            <button onClick={eliminarMentoria} disabled={guardando} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg text-red-500 hover:bg-red-50 transition-colors disabled:opacity-50">
               <Trash2 className="w-3.5 h-3.5" /> Eliminar
             </button>
             <div className="flex gap-2">

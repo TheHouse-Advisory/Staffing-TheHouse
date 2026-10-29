@@ -192,7 +192,10 @@ export async function otorgarAcceso({
     return { ok: false, message: "La persona está inactiva." };
   }
   if (persona.rol_sistema) {
-    return { ok: false, message: "La persona ya tiene un acceso asignado." };
+    // Reintento tras fallar el correo: se orienta a reenviar en vez de un "ya tiene acceso" sin salida
+    return { ok: false, message: persona.acceso_estado === "invitada"
+      ? "Esta persona ya tiene una invitación pendiente. Usa “Reenviar invitación” en la lista."
+      : "La persona ya tiene un acceso asignado." };
   }
 
   const { error: updErr } = await service

@@ -110,6 +110,8 @@ export function PopoverPersona({ persona, onClose }: { persona: PersonaPopover; 
             <Loader2 className="w-4 h-4 animate-spin" />
             <span className="text-xs">Cargando...</span>
           </div>
+        ) : data?.error ? (
+          <p className="px-4 py-8 text-center text-xs text-red-500">No se pudo cargar. Cierra la tarjeta e inténtalo de nuevo.</p>
         ) : data ? (
           <div className="px-4 py-4 space-y-4">
             {/* Total destacado */}

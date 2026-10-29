@@ -50,6 +50,7 @@ export function AnotacionesList() {
   const [selectedVisibilidad, setSelectedVisibilidad] = useState(TODOS);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [errorCarga, setErrorCarga] = useState<string | null>(null);
   const [isExpanded, setIsExpanded] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCreator, setSelectedCreator] = useState(TODOS);
@@ -61,17 +62,24 @@ export function AnotacionesList() {
     setLoading(true);
     const supabase = createAnyClient();
     // Purga automática: lo que lleva más de 15 días en la papelera se borra definitivamente
-    await purgeAnotacionesVencidas(supabase, new Date(Date.now() - DIAS_PAPELERA * DIA_MS).toISOString());
-    const [data, nombre, personaId, folderData] = await Promise.all([
-      getAnotaciones(supabase),
-      getNombreUsuarioActual(supabase),
-      getPersonaIdActual(supabase),
-      getAnotacionFolders(supabase),
-    ]);
-    setAnotaciones(data);
-    setCurrentUserNombre(nombre);
-    setCurrentPersonaId(personaId);
-    setFolders(folderData);
+    const { error: purgaErr } = await purgeAnotacionesVencidas(supabase, new Date(Date.now() - DIAS_PAPELERA * DIA_MS).toISOString());
+    if (purgaErr) setError(`No se pudo vaciar la papelera automática: ${purgaErr}`);
+    try {
+      const [data, nombre, personaId, folderData] = await Promise.all([
+        getAnotaciones(supabase),
+        getNombreUsuarioActual(supabase),
+        getPersonaIdActual(supabase),
+        getAnotacionFolders(supabase),
+      ]);
+      setAnotaciones(data);
+      setCurrentUserNombre(nombre);
+      setCurrentPersonaId(personaId);
+      setFolders(folderData);
+      setErrorCarga(null);
+    } catch (e) {
+      // Antes se mostraba "Aún no hay anotaciones", como si se hubiera borrado todo
+      setErrorCarga(`No se pudieron cargar las notas: ${e instanceof Error ? e.message : e}`);
+    }
     setLoading(false);
   }, []);
 
@@ -128,7 +136,7 @@ export function AnotacionesList() {
   async function handleEliminarCarpeta(id: string) {
     // Antes se eliminaba sin preguntar
     const nombre = folders.find((f) => f.id === id)?.nombre ?? "esta carpeta";
-    if (!window.confirm(`¿Enviar "${nombre}" y sus subcarpetas a la papelera? Podrás restaurarlas desde ahí.`)) return;
+    if (!window.confirm(`¿Enviar "${nombre}" y sus subcarpetas a la papelera? Sus notas no se borran: quedarán en "Sin carpeta" y vuelven a su lugar si restauras la carpeta.`)) return;
     const supabase = createAnyClient();
     // Carpeta + subcarpetas activas van a la papelera (sus anotaciones conservan folder_id para restaurar)
     const aEliminar = new Set([id, ...descendientesDe(id, foldersActivas)]);
@@ -305,7 +313,10 @@ export function AnotacionesList() {
         </div>
         ) : (
         <div className="flex-1 overflow-y-auto p-2 flex flex-col gap-1">
-          {!loading && activas.length === 0 && (
+          {!loading && errorCarga && (
+            <p className="text-xs text-red-500 text-center p-4">{errorCarga}</p>
+          )}
+          {!loading && !errorCarga && activas.length === 0 && (
             <p className="text-xs text-gray-400 text-center p-4">Aún no hay anotaciones.</p>
           )}
           {!loading && activas.length > 0 && anotacionesFiltradas.length === 0 && (

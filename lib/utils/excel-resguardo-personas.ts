@@ -7,6 +7,7 @@ import ExcelJS from "exceljs";
 import { CARGOS } from "@/lib/constants";
 import type { PersonaResguardoInfo } from "@/lib/queries/personas";
 import type { Anotacion, AnotacionFolder } from "@/lib/types/database";
+import { htmlToText } from "@/lib/utils/html";
 
 const COLUMNS = [
   { header: "Nombre", key: "nombre", width: 16 },
@@ -122,8 +123,11 @@ export async function buildExcelPersonasResguardo(
 
   // ── Hoja 2: Anotaciones del año actual ────────────────────────
   const folderNombre = new Map(folders.map((f) => [f.id, f.nombre]));
+  // Sin las notas en la papelera (las privadas sí se incluyen)
+  // Fecha en hora de Chile (el servidor usa UTC: notas de noche quedaban con el día siguiente)
+  const fechaChile = (iso: string) => new Date(iso).toLocaleDateString("en-CA", { timeZone: "America/Santiago" });
   const anotacionesAnio = anotaciones
-    .filter((a) => new Date(a.created_at).getFullYear() === anio)
+    .filter((a) => !a.deleted_at && Number(fechaChile(a.created_at).slice(0, 4)) === anio)
     .sort((a, b) => a.created_at.localeCompare(b.created_at));
 
   const sheetAnotaciones = wb.addWorksheet(`Anotaciones ${anio}`, { views: [{ state: "frozen", ySplit: 1 }] });
@@ -132,11 +136,12 @@ export async function buildExcelPersonasResguardo(
 
   for (const a of anotacionesAnio) {
     const row = sheetAnotaciones.addRow({
-      fecha: a.created_at.split("T")[0],
+      fecha: fechaChile(a.created_at),
       autor: a.creado_por ?? "—",
       carpeta: a.folder_id ? folderNombre.get(a.folder_id) ?? "—" : "Sin carpeta",
       titulo: a.titulo,
-      contenido: a.contenido || "(sin contenido)",
+      // Texto plano: antes salía con código (<p>, <strong>)
+      contenido: htmlToText(a.contenido) || "(sin contenido)",
     });
     row.alignment = { vertical: "top", wrapText: true };
   }

@@ -20,7 +20,8 @@ import {
   type PersonaConSeniority,
 } from "@/lib/queries/ausencias";
 import type { TipoAusencia } from "@/lib/types/database";
-import { useTiposAusencia } from "@/lib/hooks/useTiposAusencia";
+import { useTiposAusencia, TIPOS_AUSENCIA_BASE } from "@/lib/hooks/useTiposAusencia";
+import { TIPOS_RESUMEN_VACACIONES } from "./ResumenVacaciones";
 import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import { PopoverPersona } from "./PopoverPersona";
 import { esAdmin } from "@/lib/roles";
@@ -193,7 +194,7 @@ interface ViajeTooltipProps {
   readOnly?: boolean;
 }
 
-function ViajeTooltip({ viaje, persona, onEliminar, eliminando, onCerrar, anchorRect, readOnly = false }: ViajeTooltipProps) {
+export function ViajeTooltip({ viaje, persona, onEliminar, eliminando, onCerrar, anchorRect, readOnly = false }: ViajeTooltipProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   return createPortal(
     <>
@@ -331,6 +332,9 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
     if (!tipo) return;
     setTipoMsgError(null);
     setTipoMsgConfirm(null);
+    // El tipo se borra para todo el equipo: se pide confirmación
+    const nombreTipo = tiposDinamicos.find((t) => t.id === tipo)?.label ?? tipo;
+    if (!confirm(`¿Eliminar el tipo "${nombreTipo}"? Dejará de estar disponible para todo el equipo.`)) return;
     const { ok, count, error: errTipo } = await eliminarTipo(tipo);
     if (!ok) {
       setTipoMsgError(errTipo
@@ -372,6 +376,11 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
     }
     if (fechaFin < fechaInicio) {
       setError("La fecha de fin no puede ser anterior al inicio.");
+      return;
+    }
+    // Solo fin de semana o feriados: no se vería en ninguna vista
+    if (calculateBusinessDays(fechaInicio, fechaFin) === 0) {
+      setError("El rango elegido solo tiene fines de semana o feriados. Elige al menos un día hábil.");
       return;
     }
     setGuardando(true);
@@ -476,8 +485,9 @@ function ModalNuevaAusencia({ personas, fechaInicial, personaInicial, editarAuse
             <div className="flex gap-3 mt-1.5 pl-5">
               <button type="button" onClick={() => { setMostrarNuevoTipo((v) => !v); setTipoMsgError(null); setTipoMsgConfirm(null); }}
                 className="text-[11px] text-[#4a90e2] hover:underline">+ Nuevo tipo</button>
-              <button type="button" onClick={handleEliminarTipo}
-                className="text-[11px] text-red-400 hover:underline">🗑️ Eliminar tipo</button>
+              {/* Los tipos base no se pueden eliminar */}
+              {!TIPOS_AUSENCIA_BASE.includes(tipo) && <button type="button" onClick={handleEliminarTipo}
+                className="text-[11px] text-red-400 hover:underline">🗑️ Eliminar tipo</button>}
             </div>
             {/* Input nuevo tipo + paleta de colores */}
             {mostrarNuevoTipo && (
@@ -716,6 +726,8 @@ export function HeatmapAusencias({
       supabase
         .from("ausencia")
         .select("persona_id, fecha_inicio, fecha_fin")
+        // Mismos tipos que el Resumen vacaciones, para que ambos totales coincidan
+        .in("tipo", TIPOS_RESUMEN_VACACIONES)
         .gte("fecha_fin", inicioAnio)
         .lte("fecha_inicio", hoy),
       (supabase as any).from("persona").select("id, orden_ausencias"),
@@ -1105,7 +1117,8 @@ export function HeatmapAusencias({
                                   {showMetrics && esAdmin(rolActual) && fila.persona.referente && (
                                     <span className="w-4 h-4 rounded-full bg-[#e2884a] flex-shrink-0 flex items-center justify-center text-white font-black leading-none" style={{ fontSize: 8 }}>R</span>
                                   )}
-                                  {ocultarPctResumen ? (
+                                  {/* Misma regla que Semana y Trimestre: Desarrollo tampoco abre la tarjeta */}
+                                  {ocultarPctResumen || rolActual === "Desarrollo" ? (
                                     <span className="text-[11px] font-medium leading-tight text-[#1a1a1a] truncate text-left">
                                       {fila.persona.nombre} {fila.persona.apellido}
                                     </span>
@@ -1130,7 +1143,7 @@ export function HeatmapAusencias({
                                     return (
                                       <span
                                         className="flex-shrink-0 text-[9px] font-medium px-1.5 py-0.5 rounded-full bg-blue-50 text-blue-700 border border-blue-200"
-                                        title="Total de días de ausencia consumidos en el período seleccionado"
+                                        title="Días de vacaciones, día administrativo y permiso sin goce tomados este año (mismo criterio que el Resumen vacaciones)"
                                       >
                                         {d === 1 ? "1 día ya tomado" : `${d} días ya tomados`}
                                       </span>

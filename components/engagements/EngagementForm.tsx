@@ -68,6 +68,54 @@ interface ReqRow {
    * asignación (para editarla/eliminarla directo) y de la persona. */
   asignacionId?: string;
   personaId?: string;
+  /** Asignación de otra persona sobre un requerimiento compartido: id de ese requerimiento
+   * (para no borrarlo como huérfano). */
+  reqVinculadoId?: string;
+}
+
+// Arma las filas de "Equipo del proyecto" desde la BD. Si varias personas comparten un
+// requerimiento, la primera queda en la fila del requerimiento y las demás como filas propias
+// (asignacionId), para que cada una se vea y se pueda quitar sin afectar a las otras.
+function armarFilasEquipo(reqData: RequerimientoEngagement[], asigRows: any[]): ReqRow[] {
+  const personaPorReq = new Map<string, { nombre: string; personaId: string }>();
+  for (const a of asigRows) {
+    if (a.requerimiento_id && a.persona && !personaPorReq.has(a.requerimiento_id)) {
+      personaPorReq.set(a.requerimiento_id, { nombre: `${a.persona.nombre} ${a.persona.apellido}`, personaId: a.persona_id });
+    }
+  }
+  const filaAsignacion = (a: any, reqVinculadoId?: string): ReqRow => ({
+    asignacionId: a.id,
+    personaId: a.persona_id,
+    reqVinculadoId,
+    fase_nombre: "",
+    cargo_requerido: toCargoOption(a.cargo_al_momento ?? a.persona.cargo_actual ?? ""),
+    descripcion: "",
+    pct_dedicacion: String(a.pct_dedicacion),
+    fecha_inicio: a.fecha_inicio,
+    fecha_fin: a.fecha_fin ?? "",
+    persona_nombre: `${a.persona.nombre} ${a.persona.apellido}`,
+  });
+  const filasReq: ReqRow[] = reqData.map((r) => {
+    const asignado = r.id ? personaPorReq.get(r.id) : undefined;
+    return {
+      id: r.id,
+      fase_nombre: r.fase_nombre ?? "",
+      cargo_requerido: toCargoOption(r.cargo_requerido),
+      descripcion: r.descripcion ?? "",
+      pct_dedicacion: String(r.pct_dedicacion),
+      fecha_inicio: r.fecha_inicio ?? "",
+      fecha_fin: r.fecha_fin ?? "",
+      persona_nombre: asignado?.nombre,
+      personaId: asignado?.personaId,
+    };
+  });
+  // Asignaciones de otras personas sobre un requerimiento ya mostrado
+  const filasCompartidas = asigRows
+    .filter((a) => a.requerimiento_id && a.persona && personaPorReq.get(a.requerimiento_id)?.personaId !== a.persona_id)
+    .map((a) => filaAsignacion(a, a.requerimiento_id));
+  // Asignaciones directas sin requerimiento: se editan con UPDATE directo sobre `asignacion`
+  const filasDirectas = asigRows.filter((a) => !a.requerimiento_id && a.persona).map((a) => filaAsignacion(a));
+  return [...filasReq, ...filasCompartidas, ...filasDirectas];
 }
 
 interface ActividadRow {
@@ -114,11 +162,14 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   const [loading, setLoading] = useState(false);
   // id del proyecto ya creado en este formulario, para que un reintento no lo duplique
   const creadoIdRef = useRef<string | null>(null);
-  useEffect(() => { if (open) creadoIdRef.current = null; }, [open]);
+  useEffect(() => { if (open) { creadoIdRef.current = null; extendidoRef.current = false; } }, [open]);
   const [serverError, setServerError] = useState<string | null>(null);
   const [industrias, setIndustrias] = useState<{ value: string; label: string }[]>([]);
   const [capacidadesOpts, setCapacidadesOpts] = useState<{ value: string; label: string }[]>([]);
   const [tematicasOpts, setTematicasOpts] = useState<{ value: string; label: string }[]>([]);
+  // Catálogo desactivado en Configuración: antes el proyecto que la tenía mostraba "Sin industria"
+  const [industriasInactivas, setIndustriasInactivas] = useState<{ value: string; label: string }[]>([]);
+  const [tematicasInactivas, setTematicasInactivas] = useState<{ value: string; label: string }[]>([]);
 
   const [extOpen, setExtOpen] = useState(false);
   // Sección "Equipo del proyecto": colapsada por defecto al abrir el formulario
@@ -167,11 +218,63 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   const [asignacionesAEliminar, setAsignacionesAEliminar] = useState<string[]>([]);
   // Ausencias por persona, para intercalarlas cronológicamente en su tarjeta de "Equipo del proyecto"
   const [ausenciasPorPersona, setAusenciasPorPersona] = useState<Map<string, { inicio: string; fin: string; tipo: string }[]>>(new Map());
+  // Persona quitada de un requerimiento compartido: se borran solo sus asignaciones de ese req
+  const [asigPersonaReqAEliminar, setAsigPersonaReqAEliminar] = useState<{ reqId: string; personaId: string }[]>([]);
+  // Fechas guardadas del alargue rápido (para mover al equipo si cambian)
+  const [extPrev, setExtPrev] = useState<{ inicio: string; fin: string } | null>(null);
+  const [confirmQuitarExt, setConfirmQuitarExt] = useState(false);
+  // Se guardó una extensión desde "Extender Proyecto" sin cerrar el formulario
+  const extendidoRef = useRef(false);
+
+  // Ausencias de las personas con tramo en este engagement, para intercalarlas en su tarjeta
+  async function cargarAusencias(supabase: any, filas: ReqRow[]) {
+    const personaIds = [...new Set(filas.map((r) => r.personaId).filter(Boolean))] as string[];
+    const { data: ausenciasData } = await fetchAusenciasPersonas(supabase, personaIds);
+    const mapaAusencias = new Map<string, { inicio: string; fin: string; tipo: string }[]>();
+    for (const a of ausenciasData) {
+      const arr = mapaAusencias.get(a.persona_id) ?? [];
+      arr.push({ inicio: a.fecha_inicio, fin: a.fecha_fin, tipo: a.tipo });
+      mapaAusencias.set(a.persona_id, arr);
+    }
+    setAusenciasPorPersona(mapaAusencias);
+  }
+
+  // Tras "Extender Proyecto": agrega al equipo lo nuevo de la BD sin perder lo editado en pantalla
+  async function recargarEquipo() {
+    if (!engagement) return;
+    extendidoRef.current = true;
+    const supabase = createAnyClient();
+    const [{ data: reqData }, asigResult, { data: extRows }] = await Promise.all([
+      supabase.from("requerimiento_engagement").select("*").eq("engagement_id", engagement.id).order("fase_nombre"),
+      fetchAsignacionesEngagement(supabase, engagement.id),
+      (supabase as any).from("engagement_extension").select("id, fecha_inicio, fecha_fin")
+        .eq("engagement_id", engagement.id).order("created_at", { ascending: false }).limit(1),
+    ]);
+    const frescas = armarFilasEquipo((reqData ?? []) as RequerimientoEngagement[], asigResult.data);
+    const nuevas = frescas.filter((f) => !reqs.some((r) =>
+      (f.id && !f.asignacionId && r.id === f.id) || (f.asignacionId && r.asignacionId === f.asignacionId)));
+    const combinadas = [...reqs, ...nuevas];
+    setReqs(combinadas);
+    await cargarAusencias(supabase, combinadas);
+    const ext = ((extRows ?? []) as { id: string; fecha_inicio: string; fecha_fin: string }[])[0];
+    if (ext) {
+      setMostrarExtension(true); setExtId(ext.id);
+      setExtFechaInicio(ext.fecha_inicio); setExtFechaFin(ext.fecha_fin);
+      setExtPrev({ inicio: ext.fecha_inicio, fin: ext.fecha_fin });
+    }
+  }
+
+  // Cerrar: si hubo extensión, avisa al padre para que recargue
+  const cerrar = () => {
+    if (extendidoRef.current) { extendidoRef.current = false; onSuccess(); }
+    onClose();
+  };
 
   useEffect(() => {
     if (!open) {
       setForm({ ...EMPTY_ENG }); setReqs([]); setErrors({}); setServerError(null);
       setAsignacionesAEliminar([]); setAusenciasPorPersona(new Map());
+      setAsigPersonaReqAEliminar([]); setExtPrev(null); setConfirmQuitarExt(false);
       setExtOpen(false); setEquipoOpen(false); setActividades([]); setActividadOpen(false); setNuevaActividad({ ...EMPTY_ACTIVIDAD }); setEditingActividadIdx(null);
       setMostrarExtension(false); setExtFechaInicio(""); setExtFechaFin(""); setExtId(null);
       return;
@@ -179,13 +282,18 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     async function load() {
       const supabase = createAnyClient();
       const [iData, capData, temData] = await Promise.all([
-        supabase.from("cat_industria").select("id,nombre").eq("activo", true).order("nombre"),
+        supabase.from("cat_industria").select("id,nombre,activo").order("nombre"),
         supabase.from("cat_capacidad").select("id,nombre").eq("activo", true).order("nombre"),
-        supabase.from("cat_tematica").select("id,nombre").eq("activo", true).order("nombre"),
+        supabase.from("cat_tematica").select("id,nombre,activo").order("nombre"),
       ]);
-      setIndustrias((iData.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
-      setCapacidadesOpts((capData.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
-      setTematicasOpts((temData.data ?? []).map((r: any) => ({ value: r.id, label: r.nombre })));
+      // Activas para elegir; las inactivas se guardan aparte para mostrarlas solo si el proyecto ya las tiene
+      const opcion = (r: any) => ({ value: r.id, label: r.nombre });
+      const opcionInactiva = (r: any) => ({ value: r.id, label: `${r.nombre} (inactiva)` });
+      setIndustrias((iData.data ?? []).filter((r: any) => r.activo).map(opcion));
+      setIndustriasInactivas((iData.data ?? []).filter((r: any) => !r.activo).map(opcionInactiva));
+      setCapacidadesOpts((capData.data ?? []).map(opcion));
+      setTematicasOpts((temData.data ?? []).filter((r: any) => r.activo).map(opcion));
+      setTematicasInactivas((temData.data ?? []).filter((r: any) => !r.activo).map(opcionInactiva));
 
       if (engagement) {
         const [{ data: reqData }, { data: ecData }, { data: etData }, asigResult, { data: extRows }] = await Promise.all([
@@ -207,30 +315,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
         setExtFechaInicio(ext?.fecha_inicio ?? "");
         setExtFechaFin(ext?.fecha_fin ?? "");
 
-        // TODAS las asignaciones activas del engagement (con o sin requerimiento vinculado)
-        const asigRows = asigResult.data;
-        // Mapa requerimiento_id → { nombre, personaId } (match exacto)
-        const personaPorReq = new Map<string, { nombre: string; personaId: string }>(
-          asigRows
-            .filter((a) => a.requerimiento_id && a.persona)
-            .map((a) => [a.requerimiento_id!, { nombre: `${a.persona!.nombre} ${a.persona!.apellido}`, personaId: a.persona_id }])
-        );
-        // Asignaciones directas SIN requerimiento_engagement vinculado: se muestran como
-        // filas propias de "Equipo del proyecto", editables (cargo/fechas/%) y eliminables,
-        // pero guardan haciendo UPDATE directo sobre la fila `asignacion` (no crean un requerimiento nuevo).
-        const reqsDeAsignacionesDirectas: ReqRow[] = asigRows
-          .filter((a) => !a.requerimiento_id && a.persona)
-          .map((a) => ({
-            asignacionId: a.id,
-            personaId: a.persona_id,
-            fase_nombre: "",
-            cargo_requerido: toCargoOption(a.cargo_al_momento ?? a.persona!.cargo_actual ?? ""),
-            descripcion: "",
-            pct_dedicacion: String(a.pct_dedicacion),
-            fecha_inicio: a.fecha_inicio,
-            fecha_fin: a.fecha_fin ?? "",
-            persona_nombre: `${a.persona!.nombre} ${a.persona!.apellido}`,
-          }));
+        setExtPrev(ext ? { inicio: ext.fecha_inicio, fin: ext.fecha_fin } : null);
         setForm({
           codigo: engagement.codigo ?? "",
           nombre: engagement.nombre,
@@ -296,34 +381,9 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           }
           setReqs(consolidados);
         } else {
-          const reqsDeRequerimientos: ReqRow[] = (reqData ?? []).map((r: RequerimientoEngagement) => {
-            const asignado = r.id ? personaPorReq.get(r.id) : undefined;
-            return {
-              id: r.id,
-              fase_nombre: r.fase_nombre ?? "",
-              cargo_requerido: toCargoOption(r.cargo_requerido),
-              descripcion: r.descripcion ?? "",
-              pct_dedicacion: String(r.pct_dedicacion),
-              fecha_inicio: r.fecha_inicio ?? "",
-              fecha_fin: r.fecha_fin ?? "",
-              persona_nombre: asignado?.nombre,
-              personaId: asignado?.personaId,
-            };
-          });
-          const todosLosReqs = [...reqsDeRequerimientos, ...reqsDeAsignacionesDirectas];
+          const todosLosReqs = armarFilasEquipo((reqData ?? []) as RequerimientoEngagement[], asigResult.data);
           setReqs(todosLosReqs);
-
-          // Ausencias de todas las personas con tramo en este engagement, para intercalar
-          // cronológicamente dentro de la tarjeta consolidada de cada persona.
-          const personaIds = [...new Set(todosLosReqs.map((r) => r.personaId).filter(Boolean))] as string[];
-          const { data: ausenciasData } = await fetchAusenciasPersonas(supabase, personaIds);
-          const mapaAusencias = new Map<string, { inicio: string; fin: string; tipo: string }[]>();
-          for (const a of ausenciasData) {
-            const arr = mapaAusencias.get(a.persona_id) ?? [];
-            arr.push({ inicio: a.fecha_inicio, fin: a.fecha_fin, tipo: a.tipo });
-            mapaAusencias.set(a.persona_id, arr);
-          }
-          setAusenciasPorPersona(mapaAusencias);
+          await cargarAusencias(supabase, todosLosReqs);
         }
         // En simulación: usar actividades del snapshot local
         if (simulationMode && simulationActividades) {
@@ -493,6 +553,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
 
   // fecha_fin_estimada puede estar vacía si el engagement usa fecha_fin_real
   const fechaFinEfectiva = form.fecha_fin_estimada || (engagement as any)?.fecha_fin_real || "";
+  // Fin permitido para el equipo: incluye el alargue (si no, tras extender no se podía guardar)
+  const limiteFinEquipo = mostrarExtension && extFechaFin && extFechaFin > fechaFinEfectiva ? extFechaFin : fechaFinEfectiva;
 
   const addReq = () => {
     setReqs((r) => {
@@ -506,14 +568,17 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     });
   };
 
-  const removeReq = (idx: number) =>
-    setReqs((r) => {
-      const target = r[idx];
-      if (target?.asignacionId) {
-        setAsignacionesAEliminar((prev) => [...prev, target.asignacionId!]);
-      }
-      return r.filter((_, i) => i !== idx);
-    });
+  const removeReq = (idx: number) => {
+    const target = reqs[idx];
+    if (!target) return;
+    if (target.asignacionId) {
+      setAsignacionesAEliminar((prev) => [...prev, target.asignacionId!]);
+    } else if (target.id && target.personaId && reqs.some((o) => o.reqVinculadoId === target.id)) {
+      // Requerimiento compartido: se quita solo a esta persona, el resto del equipo sigue
+      setAsigPersonaReqAEliminar((prev) => [...prev, { reqId: target.id!, personaId: target.personaId! }]);
+    }
+    setReqs((r) => r.filter((_, i) => i !== idx));
+  };
 
   /** Agrega un tramo nuevo a la tarjeta consolidada de una persona (sin requerimiento vinculado). */
   const addTramoParaPersona = (personaId: string, personaNombre: string) => {
@@ -549,19 +614,21 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     const e: Record<string, string> = {};
     const esPropuesta = form.tipo === "propuesta";
 
+    // El nombre es obligatorio siempre: sin él la propuesta no se puede abrir desde la lista
+    if (!form.nombre.trim()) e.nombre = "Requerido";
     if (!esPropuesta) {
-      if (!form.nombre.trim()) e.nombre = "Requerido";
       if (form.tipo !== "ayuda_interna" && form.tipo !== "posibles_proyectos" && !form.cliente.trim()) e.cliente = "Requerido";
     }
     if (form.fecha_fin_estimada && form.fecha_inicio && form.fecha_fin_estimada < form.fecha_inicio) {
       e.fecha_fin_estimada = "No puede ser anterior a la fecha de inicio";
     }
-    // Usa fecha_fin_real como límite cuando fecha_fin_estimada no está disponible
-    const maxFin = form.fecha_fin_estimada || (engagement as any)?.fecha_fin_real || null;
+    // Límite = fin del proyecto o, si hay alargue, su fin
+    const maxFin = limiteFinEquipo || null;
     if (!esPropuesta) {
       reqs.forEach((r, i) => {
-        if (!r.pct_dedicacion || isNaN(Number(r.pct_dedicacion))) {
-          e[`req_${i}_pct`] = "% inválido";
+        const pct = Number(r.pct_dedicacion);
+        if (!r.pct_dedicacion || isNaN(pct) || pct < 1 || pct > 100) {
+          e[`req_${i}_pct`] = "Debe estar entre 1 y 100";
         }
         if (!r.fecha_inicio) {
           e[`req_${i}_inicio`] = "Requerida";
@@ -578,11 +645,29 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       });
     }
     setErrors(e);
+    // Errores dentro de "Equipo del proyecto": abrir la sección y avisar arriba (antes quedaban ocultos)
+    const erroresEquipo = Object.keys(e).filter((k) => k.startsWith("req_"));
+    if (erroresEquipo.length > 0) {
+      setEquipoOpen(true);
+      const idxs = new Set(erroresEquipo.map((k) => Number(k.split("_")[1])));
+      setReqsColapsados((prev) => new Set([...prev].filter((i) => !idxs.has(i))));
+      setServerError("Revisa los campos marcados en \"Equipo del proyecto\".");
+    } else if (Object.keys(e).length > 0) {
+      setServerError("Revisa los campos marcados.");
+    } else {
+      setServerError(null);
+    }
     return Object.keys(e).length === 0;
   };
 
-  const handleSubmit = async () => {
+  const handleSubmit = async (extQuitadaConfirmada = false) => {
     if (!validate()) return;
+    // Apagar el alargue borra su período y al equipo asignado: pedir confirmación
+    if (!simulationMode && !mostrarExtension && extId && !extQuitadaConfirmada) {
+      setConfirmQuitarExt(true);
+      return;
+    }
+    setConfirmQuitarExt(false);
     setLoading(true); setServerError(null);
 
     // ── SIMULACIÓN: sin Supabase, notifica al padre con los datos del form ──
@@ -625,7 +710,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       if (error) { setServerError(error.message); setLoading(false); return; }
       engId = engagement.id;
       // Borrar reqs huérfanos (los que el usuario quitó de "Equipo del proyecto")
-      const savedIds = reqs.filter((r) => r.id).map((r) => r.id!);
+      // Incluye los requerimientos compartidos que siguen teniendo a otra persona
+      const savedIds = [...new Set(reqs.map((r) => r.id ?? r.reqVinculadoId).filter(Boolean) as string[])];
       const { data: reqsHuerfanos } = await (savedIds.length > 0
         ? supabase.from("requerimiento_engagement").select("id").eq("engagement_id", engId).not("id", "in", `(${savedIds.join(",")})`)
         : supabase.from("requerimiento_engagement").select("id").eq("engagement_id", engId));
@@ -677,6 +763,12 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     if (asignacionesAEliminar.length > 0) {
       const { error: delAsigErr } = await supabase.from("asignacion").delete().in("id", asignacionesAEliminar);
       if (delAsigErr) { setServerError(`Error al quitar asignaciones: ${delAsigErr.message}`); setLoading(false); return; }
+    }
+    // Persona quitada de un requerimiento compartido: solo sus asignaciones de ese requerimiento
+    for (const { reqId, personaId } of asigPersonaReqAEliminar) {
+      const { error: delPerErr } = await supabase.from("asignacion").delete()
+        .eq("requerimiento_id", reqId).eq("persona_id", personaId);
+      if (delPerErr) { setServerError(`Error al quitar asignaciones: ${delPerErr.message}`); setLoading(false); return; }
     }
 
     // Valores actuales de los cupos en la base, para saber qué cambió realmente al guardar
@@ -914,6 +1006,19 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           .update({ fecha_inicio: extFechaInicio, fecha_fin: extFechaFin })
           .eq("id", extId);
         if (extErr) { setServerError(`Error al actualizar extensión: ${extErr.message}`); setLoading(false); return; }
+        // Si cambiaron las fechas del alargue, mover también al equipo de ese período
+        if (extPrev && (extPrev.inicio !== extFechaInicio || extPrev.fin !== extFechaFin)) {
+          const nuevas = { fecha_inicio: extFechaInicio, fecha_fin: extFechaFin };
+          const movOps = await Promise.all([
+            supabase.from("asignacion").update(nuevas).eq("extension_id" as any, extId),
+            supabase.from("asignacion").update(nuevas).eq("engagement_id", engId)
+              .eq("fecha_inicio", extPrev.inicio).eq("fecha_fin", extPrev.fin),
+            supabase.from("requerimiento_engagement").update(nuevas).eq("engagement_id", engId)
+              .eq("fecha_inicio", extPrev.inicio).eq("fecha_fin", extPrev.fin),
+          ]);
+          const movErr = movOps.find((x: any) => x.error)?.error;
+          if (movErr) { setServerError(`Error al mover el equipo del alargue: ${movErr.message}`); setLoading(false); return; }
+        }
       } else {
         const { error: extErr } = await crearExtensionEngagement(supabase, {
           engagementId: engId,
@@ -939,7 +1044,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
 
   // Límites de fecha para requerimientos (usa fecha_fin_real como fallback)
   const minReqDate = form.fecha_inicio || undefined;
-  const maxReqDate = form.fecha_fin_estimada || (engagement as any)?.fecha_fin_real || undefined;
+  const maxReqDate = limiteFinEquipo || undefined;
 
   // Viajes/talleres deben caer dentro del engagement (incluida su extensión): si quedaban
   // fuera se guardaban igual pero no se veían en ninguna vista
@@ -986,13 +1091,13 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   return (
     <Drawer
       open={open}
-      onClose={onClose}
+      onClose={cerrar}
       title={engagement ? "Editar proyecto" : "Nuevo proyecto"}
       width="lg"
       footer={
         <>
-          <Button variant="secondary" onClick={onClose} disabled={loading}>Cancelar</Button>
-          <Button onClick={handleSubmit} loading={loading}>
+          <Button variant="secondary" onClick={cerrar} disabled={loading}>Cancelar</Button>
+          <Button onClick={() => handleSubmit()} loading={loading}>
             {engagement ? "Guardar cambios" : "Crear proyecto"}
           </Button>
         </>
@@ -1026,7 +1131,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
             />
           </FieldWrapper>
           <FieldWrapper label="Industria">
-            <Select value={form.industria_id} onChange={setField("industria_id")} options={industrias} placeholder="Sin industria" allowEmpty />
+            <Select value={form.industria_id} onChange={setField("industria_id")} options={[...industrias, ...industriasInactivas.filter((o) => o.value === form.industria_id)]} placeholder="Sin industria" allowEmpty />
             <div className="mt-1 flex items-center gap-3">
               <button
                 type="button"
@@ -1209,7 +1314,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           {/* ── Temáticas ── */}
           <FieldWrapper label="Temáticas" hint="Áreas temáticas del engagement">
             <MultiSelect
-              options={tematicasOpts}
+              options={[...tematicasOpts, ...tematicasInactivas.filter((o) => form.tematicas.includes(o.value))]}
               value={form.tematicas}
               onChange={(v) => setForm((f) => ({ ...f, tematicas: v }))}
               placeholder="Agregar temáticas..."
@@ -1651,6 +1756,17 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           message={`Las fechas (${nuevaActividad.fecha_inicio} a ${nuevaActividad.fecha_fin}) quedan fuera del engagement (${minActDate ?? "…"} a ${maxActDate ?? "…"}). Se guardará igual y en el Tablero se mostrará solo el ícono de ${nuevaActividad.tipo === "Taller" ? "taller" : "viaje"} en esas semanas, sin la barra del proyecto. ¿Quieres continuar?`}
         />
 
+        {/* Confirmación al apagar "¿Quieres extender el proyecto?" */}
+        <ConfirmDialog
+          open={confirmQuitarExt}
+          onClose={() => setConfirmQuitarExt(false)}
+          onConfirm={() => handleSubmit(true)}
+          loading={loading}
+          title="Eliminar alargue"
+          confirmLabel="Eliminar y guardar"
+          message={`Se eliminará el alargue${extPrev ? ` (${extPrev.inicio} a ${extPrev.fin})` : ""} y todas las asignaciones de ese período. ¿Quieres continuar?`}
+        />
+
         {/* ── Extender Proyecto (solo en modo edición) ── */}
         {engagement && (
           <div className="border-t border-[#f0f0f0] pt-5">
@@ -1675,7 +1791,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                 <ExtenderProyecto
                   engagementId={engagement.id}
                   engagementTipo={engagement.tipo}
-                  onExtended={onSuccess}
+                  onExtended={recargarEquipo}
                 />
               </div>
             )}

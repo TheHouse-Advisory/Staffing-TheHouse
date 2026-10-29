@@ -31,9 +31,10 @@ function TooltipEvaluacion({ active, payload }: { active?: boolean; payload?: { 
   );
 }
 
-// Gráfico de evolución de notas (escala 1–7), puntos en orden cronológico
-export function EvaluacionesChart({ datos }: { datos: PuntoEvaluacion[] }) {
+// Gráfico de evolución de notas, puntos en orden cronológico. Escala según el tipo (EDD 1–5, EPP 1–3)
+export function EvaluacionesChart({ datos, min = 1, max = 5 }: { datos: PuntoEvaluacion[]; min?: number; max?: number }) {
   const serie = datos.map((d) => ({ ...d, nota: Number(d.nota) }));
+  const ticks = Array.from({ length: max - min + 1 }, (_, i) => min + i);
   return (
     <div className="h-48 w-full">
       <ResponsiveContainer width="100%" height="100%">
@@ -48,8 +49,8 @@ export function EvaluacionesChart({ datos }: { datos: PuntoEvaluacion[] }) {
             padding={{ left: 16, right: 16 }}
           />
           <YAxis
-            domain={[1, 7]}
-            ticks={[1, 2, 3, 4, 5, 6, 7]}
+            domain={[min, max]}
+            ticks={ticks}
             tick={{ fontSize: 10, fill: COLOR_EJE }}
             axisLine={false}
             tickLine={false}

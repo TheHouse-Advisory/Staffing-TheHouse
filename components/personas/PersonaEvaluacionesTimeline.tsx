@@ -20,14 +20,17 @@ interface Evaluacion {
 
 type EvaluacionDraft = Omit<Evaluacion, "id" | "nota"> & { id?: string; nota: number | null };
 
-// Escala chilena 1.0 – 7.0
-const NOTA_MIN = 1;
-const NOTA_MAX = 7;
+// Escala por tipo: EDD de 1 a 5, EPP de 1 a 3
+const ESCALA: Record<"EPP" | "EDD", { min: number; max: number; alto: number; medio: number }> = {
+  EDD: { min: 1, max: 5, alto: 4, medio: 3 },
+  EPP: { min: 1, max: 3, alto: 3, medio: 2 },
+};
 
-// Color del badge según nota (≥6 alto, ≥4 medio, <4 bajo)
-function colorNota(nota: number): string {
-  if (nota >= 6) return "bg-emerald-50 text-emerald-700 border-emerald-200";
-  if (nota >= 4) return "bg-blue-50 text-blue-700 border-blue-200";
+// Color del badge según la escala de su tipo (alto / medio / bajo)
+function colorNota(nota: number, tipo: "EPP" | "EDD"): string {
+  const e = ESCALA[tipo];
+  if (nota >= e.alto) return "bg-emerald-50 text-emerald-700 border-emerald-200";
+  if (nota >= e.medio) return "bg-blue-50 text-blue-700 border-blue-200";
   return "bg-red-50 text-red-600 border-red-200";
 }
 
@@ -70,7 +73,7 @@ function TarjetaEvaluacion({ ev, ultima, onEditar, onEliminar }: {
       </div>
 
       <div className="flex items-center gap-2 pr-12">
-        <span className={`shrink-0 text-lg font-bold px-2.5 py-0.5 rounded-lg border tabular-nums ${colorNota(ev.nota)}`}>
+        <span className={`shrink-0 text-lg font-bold px-2.5 py-0.5 rounded-lg border tabular-nums ${colorNota(ev.nota, ev.tipo)}`}>
           {Number(ev.nota).toFixed(1)}
         </span>
         <span className="text-xs text-[#555] leading-tight break-words">{ev.cargo || "Sin cargo"}</span>
@@ -89,8 +92,9 @@ function TarjetaEvaluacion({ ev, ultima, onEditar, onEliminar }: {
 }
 
 // Bloque de un tipo (EDD/EPP) dentro de un año: toggle tarjetas/gráfico + fila horizontal
-function FilaTipo({ titulo, evaluaciones, ultimaId, onEditar, onEliminar }: {
+function FilaTipo({ titulo, tipo, evaluaciones, ultimaId, onEditar, onEliminar }: {
   titulo: string;
+  tipo: "EPP" | "EDD";
   evaluaciones: Evaluacion[];
   ultimaId: string | null;
   onEditar: (ev: Evaluacion) => void;
@@ -118,7 +122,7 @@ function FilaTipo({ titulo, evaluaciones, ultimaId, onEditar, onEliminar }: {
       {evaluaciones.length === 0 ? (
         <p className="text-[12px] text-[#ccc] italic">Sin evaluaciones este año.</p>
       ) : vista === "grafico" ? (
-        <EvaluacionesChart datos={evaluaciones} />
+        <EvaluacionesChart datos={evaluaciones} min={ESCALA[tipo].min} max={ESCALA[tipo].max} />
       ) : (
         <div ref={scrollRef} className="flex flex-row overflow-x-auto gap-4 pb-2">
           {evaluaciones.map((ev) => (
@@ -160,7 +164,8 @@ function CarpetaAnio({ anio, evaluaciones, abiertaInicial, ultimaPorTipo, onEdit
           {TIPOS.map((tipo) => (
             <FilaTipo
               key={tipo}
-              titulo={`Evaluaciones ${tipo}`}
+              titulo={`Evaluaciones ${tipo} (escala ${ESCALA[tipo].min} a ${ESCALA[tipo].max})`}
+              tipo={tipo}
               evaluaciones={evaluaciones.filter((e) => e.tipo === tipo)}
               ultimaId={ultimaPorTipo[tipo]}
               onEditar={onEditar}
@@ -207,8 +212,9 @@ export function PersonaEvaluacionesTimeline({ personaId, cargoActual, cargosSuge
       setError("Fecha y nota son obligatorias.");
       return;
     }
-    if (draft.nota < NOTA_MIN || draft.nota > NOTA_MAX) {
-      setError(`La nota debe estar entre ${NOTA_MIN} y ${NOTA_MAX}.`);
+    const escala = ESCALA[draft.tipo];
+    if (draft.nota < escala.min || draft.nota > escala.max) {
+      setError(`La nota ${draft.tipo} debe estar entre ${escala.min} y ${escala.max}.`);
       return;
     }
     setGuardando(true);
@@ -227,7 +233,9 @@ export function PersonaEvaluacionesTimeline({ personaId, cargoActual, cargosSuge
   async function eliminar(id: string) {
     if (!confirm("¿Eliminar esta evaluación?")) return;
     const { error } = await createAnyClient().from("persona_evaluacion").delete().eq("id", id);
-    // Si falla se avisa (antes no pasaba nada visible)
+    // Si falla se avisa; si no, se quita la tarjeta sin recargar
+    if (error) { alert(`No se pudo eliminar: ${error.message}`); return; }
+    setEvaluaciones((prev) => prev.filter((e) => e.id !== id));
   }
 
   return (
@@ -291,11 +299,11 @@ export function PersonaEvaluacionesTimeline({ personaId, cargoActual, cargosSuge
             </datalist>
           </label>
           <label className="space-y-1">
-            <span className="text-[11px] text-[#888]">Nota ({NOTA_MIN} a {NOTA_MAX})</span>
+            <span className="text-[11px] text-[#888]">Nota ({ESCALA[draft.tipo].min} a {ESCALA[draft.tipo].max})</span>
             <input
               type="number"
-              min={NOTA_MIN}
-              max={NOTA_MAX}
+              min={ESCALA[draft.tipo].min}
+              max={ESCALA[draft.tipo].max}
               step={0.1}
               value={draft.nota ?? ""}
               onChange={(e) => setDraft({ ...draft, nota: e.target.value === "" ? null : Number(e.target.value) })}

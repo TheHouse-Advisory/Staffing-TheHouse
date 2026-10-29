@@ -69,7 +69,8 @@ export function AnotacionEditor({
     if (!id || Object.keys(cambios).length === 0) return;
     pendiente.current = {};
     setEstadoGuardado("guardando");
-    const { error } = await updateAnotacion(createAnyClient(), id, cambios);
+    // Se pasa el nombre ya conocido: guarda más rápido (sin consultar el usuario cada vez)
+    const { error } = await updateAnotacion(createAnyClient(), id, cambios, currentUserNombre);
     if (error) {
       // Se reintenta en la próxima edición (si sigue en la misma nota)
       if (pendienteId.current === id) pendiente.current = { ...cambios, ...pendiente.current };
@@ -94,7 +95,13 @@ export function AnotacionEditor({
 
   // Al cambiar de nota o salir de la página se guarda lo pendiente de esta nota
   useEffect(() => {
-    const antesDeSalir = () => { void guardarPendiente(); };
+    // Con algo sin guardar, el navegador pregunta "¿Salir sin guardar?"
+    const antesDeSalir = (e: BeforeUnloadEvent) => {
+      if (Object.keys(pendiente.current).length === 0) return;
+      void guardarPendiente();
+      e.preventDefault();
+      e.returnValue = "";
+    };
     window.addEventListener("beforeunload", antesDeSalir);
     return () => { window.removeEventListener("beforeunload", antesDeSalir); void guardarPendiente(); };
   }, [anotacion.id]); // eslint-disable-line react-hooks/exhaustive-deps
