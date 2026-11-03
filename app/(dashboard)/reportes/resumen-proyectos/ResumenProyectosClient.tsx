@@ -10,7 +10,7 @@ import { CARGOS } from "@/lib/constants";
 import { NavegadorFechas } from "@/components/ui/NavegadorFechas";
 import { getIniciales } from "@/lib/utils/iniciales";
 import { esAdmin } from "@/lib/roles";
-import { actualizarAsignacionSemana } from "@/lib/queries/engagements";
+import { actualizarAsignacionSemana, finEfectivo } from "@/lib/queries/engagements";
 import {
   CeldaAsignacionEditable,
   type LineaEditable,
@@ -359,6 +359,15 @@ export function ResumenProyectosClient() {
       }))
     );
 
+    // 0. Alargues que llegan al rango: mantienen visible el proyecto aunque su contrato haya terminado
+    const { data: extData } = await (sb as any).from("engagement_extension")
+      .select("engagement_id, fecha_fin").gte("fecha_fin", rangoInicio);
+    const finAlargue = new Map<string, string>();
+    for (const x of (extData ?? []) as { engagement_id: string; fecha_fin: string }[]) {
+      if (!finAlargue.has(x.engagement_id) || x.fecha_fin > finAlargue.get(x.engagement_id)!) finAlargue.set(x.engagement_id, x.fecha_fin);
+    }
+    const idsAlargue = [...finAlargue.keys()];
+
     // 1. Engagements activos que solapan el rango de 12 semanas
     const { data: engData, error: engErr } = await sb
       .from("engagement")
@@ -366,7 +375,8 @@ export function ResumenProyectosClient() {
       .eq("estado", "activo")
       .eq("is_deleted", false)
       .neq("tipo", "ayuda_interna")
-      .or(`fecha_fin_real.gte.${rangoInicio},fecha_fin_estimada.gte.${rangoInicio},fecha_fin_real.is.null,fecha_inicio.gte.${rangoInicio}`)
+      .or(`fecha_fin_real.gte.${rangoInicio},fecha_fin_estimada.gte.${rangoInicio},fecha_fin_real.is.null,fecha_inicio.gte.${rangoInicio}` +
+        (idsAlargue.length > 0 ? `,id.in.(${idsAlargue.join(",")})` : ""))
       .order("nombre");
 
     if (engErr) { setError(engErr.message); setLoading(false); return; }
@@ -377,7 +387,7 @@ export function ResumenProyectosClient() {
       tipo: e.tipo ?? "",
       sort_order: e.sort_order ?? null,
       fecha_inicio: e.fecha_inicio ?? null,
-      fecha_fin: e.fecha_fin_real ?? e.fecha_fin_estimada ?? null,
+      fecha_fin: finEfectivo({ ...e, fin_alargue: finAlargue.get(e.id) ?? null }), // incluye el último alargue
     }))
       // Solo lo que se muestra: proyectos y propuestas que no terminaron antes del período
       .filter((e: EngRow) => (e.tipo === "proyecto" || e.tipo === "propuesta") && (!e.fecha_fin || e.fecha_fin >= rangoInicio));

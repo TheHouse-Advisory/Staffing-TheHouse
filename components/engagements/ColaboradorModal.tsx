@@ -9,6 +9,7 @@ import { getDetailedPersonAbsences } from "@/lib/queries/ausencias";
 import { ProyectosPersonaDetalle } from "@/components/personas/ProyectosPersonaDetalle";
 import { TalentMatrix, getTalentBoxName } from "@/components/personas/TalentMatrix";
 import type { Persona } from "@/lib/types/database";
+import { armarTramos, cruzaPausa, finPermitido, inicioPermitido, pausasEntre, tramoDePeriodo, type ExtensionBasica, type Tramo } from "./tramosEngagement";
 
 // ── Helpers ───────────────────────────────────────────────────────
 const COLORES: Record<string, string> = {
@@ -47,6 +48,10 @@ interface Rango {
   estadoStaffing?: string;
   cargo?: string | null;
   estado?: string;
+  /** Alargue al que pertenece (se conserva al guardar para poder liberarlo si se borra el alargue) */
+  extensionId?: string | null;
+  /** Requerimiento (cupo) del período: cada alargue tiene su propia copia del cupo */
+  requerimientoId?: string | null;
 }
 interface ResumenData {
   ocupacion: number; totalProyectos: number; industrias: string[];
@@ -88,6 +93,10 @@ export function ColaboradorModal({
   const [asigLoad,   setAsigLoad]   = useState(true);
   const [saving,     setSaving]     = useState(false);
   const [error,      setError]      = useState<string | null>(null);
+  // Tramos del proyecto (Contrato + Extensión N); vacío = sin alargues → vista simple de siempre
+  const [tramos,     setTramos]     = useState<Tramo[]>([]);
+  // Asignaciones cargadas al abrir: son las que se reemplazan al guardar
+  const [idsOriginales, setIdsOriginales] = useState<string[]>([]);
 
   // ── Estado Tab 2 — Perfil ─────────────────────────────────────
   const [persona,       setPersona]       = useState<Persona | null>(null);
@@ -102,18 +111,28 @@ export function ColaboradorModal({
     const sb = createAnyClient();
     const q = sb
       .from("asignacion")
-      .select("id, fecha_inicio, fecha_fin, pct_dedicacion, estado_staffing, cargo_al_momento, estado")
+      .select("id, fecha_inicio, fecha_fin, pct_dedicacion, estado_staffing, cargo_al_momento, estado, extension_id, requerimiento_id")
       .eq("persona_id", personaId)
       .eq("engagement_id", engagementId)
       .order("fecha_inicio");
-    // Solo los tramos de este requerimiento (o los directos sin requerimiento), no los de otros
-    (requerimientoId ? (q as any).eq("requerimiento_id", requerimientoId) : (q as any).is("requerimiento_id", null))
-      .then(({ data }: { data: any[] | null }) => {
+    Promise.all([
+      q,
+      (sb as any).from("engagement_extension").select("id, fecha_inicio, fecha_fin").eq("engagement_id", engagementId),
+    ]).then(([{ data: todas }, { data: exts }]: [{ data: any[] | null }, { data: ExtensionBasica[] | null }]) => {
+        setTramos(exts?.length ? armarTramos(engInicio, engFin, exts) : []);
+        // Sin alargues: solo los períodos de este requerimiento (o los directos sin requerimiento).
+        // Con alargues: todos los de la persona en el proyecto, porque cada alargue tiene su propio
+        // requerimiento (copia del cupo) y si no, se veía solo el contrato o solo el alargue.
+        const data = exts?.length
+          ? (todas ?? [])
+          : (todas ?? []).filter((a) => (requerimientoId ? a.requerimiento_id === requerimientoId : !a.requerimiento_id));
+        setIdsOriginales(data.map((a) => a.id));
         setRangos(
-          data?.length
+          data.length
             ? data.map((a) => ({
                 tempId: a.id, asignacionId: a.id, inicio: a.fecha_inicio, fin: a.fecha_fin,
                 pct: Number(a.pct_dedicacion), estadoStaffing: a.estado_staffing, cargo: a.cargo_al_momento, estado: a.estado,
+                extensionId: a.extension_id ?? null, requerimientoId: a.requerimiento_id ?? null,
               }))
             : [{ tempId: "new-0", asignacionId: null, inicio: engInicio, fin: engFin }]
         );
@@ -171,8 +190,24 @@ export function ColaboradorModal({
   }, [tab, personaId, perfilCargado]);
 
   // ── Helpers Tab 1 ─────────────────────────────────────────────
-  function addRango() {
-    setRangos(prev => [...prev, { tempId: `new-${Date.now()}`, asignacionId: null, inicio: engInicio, fin: engFin }]);
+  // Sin tramo: período en todo el contrato; con tramo: limitado a ese tramo y vinculado a su alargue
+  function addRango(tramo?: Tramo) {
+    setRangos(prev => [...prev, {
+      tempId: `new-${Date.now()}`, asignacionId: null,
+      inicio: tramo?.inicio ?? engInicio, fin: tramo?.fin ?? engFin, extensionId: tramo?.extensionId ?? null,
+    }]);
+  }
+  /** Corta un período que cruza una pausa en un período por cada tramo que toca. */
+  function dividirRango(rng: Rango) {
+    const partes = tramos
+      .filter((t) => rng.inicio <= t.fin && rng.fin >= t.inicio)
+      .map((t, i) => ({
+        ...rng, tempId: `${rng.tempId}-p${i}`, asignacionId: i === 0 ? rng.asignacionId : null,
+        inicio: rng.inicio > t.inicio ? rng.inicio : t.inicio,
+        fin: rng.fin < t.fin ? rng.fin : t.fin,
+        extensionId: t.extensionId,
+      }));
+    setRangos(prev => prev.flatMap((r) => (r.tempId === rng.tempId ? partes : [r])));
   }
   function removeRango(tempId: string) {
     if (rangos.length === 1) return;
@@ -185,8 +220,9 @@ export function ColaboradorModal({
     for (const r of rangos) {
       if (!r.inicio || !r.fin) return "Completa todas las fechas antes de guardar.";
       if (r.inicio > r.fin)     return `Inicio (${r.inicio}) posterior al fin (${r.fin}).`;
-      if (r.inicio < engInicio) return `Fecha ${r.inicio} anterior al inicio del proyecto (${engInicio}).`;
-      if (r.fin   > engFin)     return `Fecha ${r.fin} posterior al fin del proyecto (${engFin}).`;
+      // Partir antes del inicio del contrato está permitido (trabajo anticipado)
+      if (r.fin   > finLimite)  return `Fecha ${r.fin} posterior al fin del proyecto (${finLimite}).`;
+      // Partir en una pausa está permitido (trabajo anticipado antes de que arranque el tramo)
     }
     const sorted = [...rangos].sort((a, b) => a.inicio.localeCompare(b.inicio));
     for (let i = 1; i < sorted.length; i++) {
@@ -233,11 +269,20 @@ export function ColaboradorModal({
     // ─────────────────────────────────────────────────────────────────────────────
 
     const sb = createAnyClient();
+    // Requerimiento de cada período: los existentes conservan el suyo; uno nuevo usa el de otro
+    // período del mismo tramo (el cupo del contrato o la copia del alargue), si no el del cupo abierto
+    const reqDe = (r: Rango) => {
+      if (r.asignacionId) return r.requerimientoId ?? null;
+      if (tramos.length === 0) return requerimientoId;
+      const t = tramoDePeriodo(tramos, { fecha_inicio: r.inicio, fecha_fin: r.fin });
+      const vecino = rangos.find((o) => o !== r && o.requerimientoId && tramoDePeriodo(tramos, { fecha_inicio: o.inicio, fecha_fin: o.fin })?.key === t?.key);
+      return vecino?.requerimientoId ?? requerimientoId;
+    };
     // 1) Insertar primero: si falla, las asignaciones previas quedan intactas
-    const { data: nuevas, error: insErr } = await (sb as any).from("asignacion").insert(
+    const { error: insErr } = await (sb as any).from("asignacion").insert(
       rangos.map(r => ({
         engagement_id:    engagementId,
-        requerimiento_id: requerimientoId,
+        requerimiento_id: reqDe(r),
         persona_id:       personaId,
         // Tramos existentes conservan su %, estado y cargo; los nuevos usan los del cupo
         cargo_al_momento: r.asignacionId ? (r.cargo ?? cargo) : cargo,
@@ -246,21 +291,23 @@ export function ColaboradorModal({
         estado_staffing:  r.estadoStaffing ?? estadoStaffing,
         fecha_inicio:     r.inicio,
         fecha_fin:        r.fin,
+        // Vínculo al alargue según las fechas del período (antes se perdía al guardar, o quedaba
+        // el antiguo aunque el período se hubiera movido al contrato)
+        extension_id:     tramos.length > 0
+          ? (tramoDePeriodo(tramos, { fecha_inicio: r.inicio, fecha_fin: r.fin })?.extensionId ?? null)
+          : (r.extensionId ?? null),
       }))
-    ).select("id");
+    );
     if (insErr) {
       setError(`No se pudo guardar la asignación: ${insErr.message}`);
       setSaving(false);
       return;
     }
 
-    // 2) Recién ahora reemplazar: borrar las anteriores, excluyendo las recién creadas
-    const nuevasIds = ((nuevas ?? []) as { id: string }[]).map(n => n.id);
-    let delQ = (sb as any).from("asignacion").delete()
-      .eq("persona_id", personaId).eq("engagement_id", engagementId);
-    delQ = requerimientoId ? delQ.eq("requerimiento_id", requerimientoId) : delQ.is("requerimiento_id", null);
-    if (nuevasIds.length > 0) delQ = delQ.not("id", "in", `(${nuevasIds.join(",")})`);
-    const { error: delErr } = await delQ;
+    // 2) Recién ahora reemplazar: borrar exactamente las que se cargaron al abrir (las nuevas ya las reemplazan)
+    const { error: delErr } = idsOriginales.length > 0
+      ? await (sb as any).from("asignacion").delete().in("id", idsOriginales)
+      : { error: null };
     if (delErr) {
       setError(`Asignación guardada, pero no se pudieron limpiar los períodos anteriores: ${delErr.message}`);
       setSaving(false);
@@ -270,6 +317,9 @@ export function ColaboradorModal({
     setSaving(false);
     onGuardado();
   }
+
+  // Fin permitido: el del último tramo (contrato o alargue)
+  const finLimite = tramos.reduce((max, t) => (t.fin > max ? t.fin : max), engFin);
 
   // Colores de header basados en cargo
   const cargoColor = COLORES[cargo ?? ""] ?? COLOR_DEFAULT;
@@ -343,38 +393,110 @@ export function ColaboradorModal({
                 </div>
               ) : (
                 <>
-                  {rangos.map((rng, idx) => (
-                    <div key={rng.tempId} className="flex items-center gap-2 bg-gray-50 rounded-lg px-3 py-2.5">
-                      <span className="text-[10px] text-gray-300 font-bold w-4 flex-shrink-0 text-center">
-                        {idx + 1}
-                      </span>
-                      <div className="flex items-center gap-1.5 flex-1 min-w-0">
-                        <input
-                          type="date" value={rng.inicio} min={engInicio} max={engFin}
-                          onChange={(e) => updateRango(rng.tempId, "inicio", e.target.value)}
-                          className="flex-1 min-w-0 px-2 py-1.5 text-[12px] border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a90e2]/40 focus:border-[#4a90e2] bg-white transition-colors"
-                        />
-                        <span className="text-gray-300 text-[11px] flex-shrink-0">→</span>
-                        <input
-                          type="date" value={rng.fin} min={rng.inicio || engInicio} max={engFin}
-                          onChange={(e) => updateRango(rng.tempId, "fin", e.target.value)}
-                          className="flex-1 min-w-0 px-2 py-1.5 text-[12px] border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a90e2]/40 focus:border-[#4a90e2] bg-white transition-colors"
-                        />
-                      </div>
+                  {(() => {
+                    // Fila de un período; con tramo, las fechas quedan limitadas a ese tramo
+                    const filaRango = (rng: Rango, idx: number, tramo?: Tramo) => {
+                      const cruza = tramos.length > 0 && cruzaPausa(tramos, { fecha_inicio: rng.inicio, fecha_fin: rng.fin });
+                      // Puede partir en la pausa previa al tramo (trabajo anticipado)
+                      // (el contrato no tiene mínimo: se puede partir antes de su inicio)
+                      const minIni = tramo && tramo.key !== "base" ? inicioPermitido(tramos, tramo, engInicio) : undefined;
+                      const anticipado = !!tramo && !!rng.inicio && rng.inicio < tramo.inicio;
+                      // Termina en la pausa siguiente (trabajo de cierre después del tramo)
+                      const cierre = !!tramo && !!rng.fin && rng.fin > tramo.fin;
+                      const maxFin = tramo ? finPermitido(tramos, tramo) : finLimite;
+                      return (
+                        <div key={rng.tempId} className={`bg-gray-50 rounded-lg px-3 py-2.5 ${cruza ? "ring-1 ring-amber-300" : ""}`}>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[10px] text-gray-300 font-bold w-4 flex-shrink-0 text-center">
+                              {idx + 1}
+                            </span>
+                            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                              <input
+                                type="date" value={rng.inicio} min={minIni} max={maxFin}
+                                onChange={(e) => updateRango(rng.tempId, "inicio", e.target.value)}
+                                className="flex-1 min-w-0 px-2 py-1.5 text-[12px] border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a90e2]/40 focus:border-[#4a90e2] bg-white transition-colors"
+                              />
+                              <span className="text-gray-300 text-[11px] flex-shrink-0">→</span>
+                              <input
+                                type="date" value={rng.fin} min={rng.inicio || minIni} max={maxFin}
+                                onChange={(e) => updateRango(rng.tempId, "fin", e.target.value)}
+                                className="flex-1 min-w-0 px-2 py-1.5 text-[12px] border border-gray-200 rounded-md focus:outline-none focus:ring-2 focus:ring-[#4a90e2]/40 focus:border-[#4a90e2] bg-white transition-colors"
+                              />
+                            </div>
+                            <button
+                              onClick={() => removeRango(rng.tempId)} disabled={rangos.length === 1}
+                              className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 disabled:opacity-20 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                          {anticipado && (
+                            <p className="text-[10px] text-gray-400 mt-1.5 pl-6">Parte antes del inicio de este tramo (trabajo anticipado).</p>
+                          )}
+                          {cierre && !cruza && (
+                            <p className="text-[10px] text-gray-400 mt-1.5 pl-6">Termina después del cierre de este tramo (trabajo de cierre).</p>
+                          )}
+                          {cruza && (
+                            <div className="flex items-center justify-between gap-2 mt-1.5 pl-6">
+                              <p className="text-[10px] text-amber-700">Este período sigue durante toda la pausa del proyecto. Si no trabaja en ella, divídelo.</p>
+                              <button onClick={() => dividirRango(rng)} className="text-[10px] font-semibold text-[#4a90e2] hover:underline flex-shrink-0">
+                                Dividir
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    };
+                    const botonAgregar = (tramo?: Tramo) => (
                       <button
-                        onClick={() => removeRango(rng.tempId)} disabled={rangos.length === 1}
-                        className="p-1 rounded hover:bg-red-50 text-gray-300 hover:text-red-400 disabled:opacity-20 disabled:cursor-not-allowed transition-colors flex-shrink-0"
+                        onClick={() => addRango(tramo)}
+                        className="flex items-center gap-1.5 text-[12px] text-[#4a90e2] hover:text-[#357abd] px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors w-full font-medium"
                       >
-                        <Trash2 className="w-3.5 h-3.5" />
+                        <Plus className="w-3.5 h-3.5" /> Agregar período
                       </button>
-                    </div>
-                  ))}
-                  <button
-                    onClick={addRango}
-                    className="flex items-center gap-1.5 text-[12px] text-[#4a90e2] hover:text-[#357abd] px-3 py-1.5 rounded-lg hover:bg-blue-50 transition-colors w-full font-medium"
-                  >
-                    <Plus className="w-3.5 h-3.5" /> Agregar período
-                  </button>
+                    );
+
+                    // Sin alargues: lista simple de siempre
+                    if (tramos.length === 0) return <>{rangos.map((r, i) => filaRango(r, i))}{botonAgregar()}</>;
+
+                    // Con alargues: un bloque por tramo (Contrato, Extensión 1...), pausas en gris
+                    const fmtT = (d: string) => format(new Date(d + "T00:00:00"), "d MMM yyyy", { locale: es });
+                    const pausas = pausasEntre(tramos);
+                    const ordenados = [...rangos].sort((a, b) => a.inicio.localeCompare(b.inicio));
+                    const idxDe = (r: Rango) => ordenados.indexOf(r);
+                    // Los que cruzan una pausa se muestran en el tramo donde empiezan
+                    const sinTramo = ordenados.filter((r) => !tramoDePeriodo(tramos, { fecha_inicio: r.inicio, fecha_fin: r.fin }));
+                    return (
+                      <div className="space-y-3">
+                        {tramos.map((t) => {
+                          const pausa = pausas.find((p) => p.despuesDe === t.key);
+                          const delTramo = ordenados.filter((r) => tramoDePeriodo(tramos, { fecha_inicio: r.inicio, fecha_fin: r.fin })?.key === t.key);
+                          return (
+                            <div key={t.key} className="space-y-1.5">
+                              <p className="text-[10px] font-bold uppercase tracking-widest text-[#4a90e2]">
+                                {t.titulo} <span className="font-normal normal-case tracking-normal text-gray-400">· {fmtT(t.inicio)} → {fmtT(t.fin)}</span>
+                              </p>
+                              {delTramo.map((r) => filaRango(r, idxDe(r), t))}
+                              {botonAgregar(t)}
+                              {pausa && (
+                                <div className="flex items-center gap-2 pt-1">
+                                  <div className="flex-1 border-t border-dashed border-gray-200" />
+                                  <span className="text-[10px] text-gray-400">Pausa: {fmtT(pausa.inicio)} → {fmtT(pausa.fin)} (sin asignaciones)</span>
+                                  <div className="flex-1 border-t border-dashed border-gray-200" />
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                        {sinTramo.length > 0 && (
+                          <div className="space-y-1.5">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-amber-600">Fuera de los tramos del proyecto</p>
+                            {sinTramo.map((r) => filaRango(r, idxDe(r)))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   {error && (
                     <div className="flex items-start gap-2 bg-red-50 border border-red-200 rounded-lg px-3 py-2 mt-1">
                       <AlertCircle className="w-3.5 h-3.5 text-red-500 flex-shrink-0 mt-0.5" />
@@ -564,7 +686,7 @@ export function ColaboradorModal({
         {/* ── Footer — solo visible en Tab 1 ───────────────── */}
         {tab === "asignacion" && (
           <div className="flex items-center justify-between px-5 py-3.5 border-t border-gray-100 flex-shrink-0">
-            <p className="text-[10px] text-gray-300">Límite: {engInicio} → {engFin}</p>
+            <p className="text-[10px] text-gray-300">Proyecto: {engInicio} → {finLimite}</p>
             <div className="flex items-center gap-2">
               <button
                 onClick={onClose}

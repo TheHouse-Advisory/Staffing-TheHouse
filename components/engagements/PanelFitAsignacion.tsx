@@ -21,6 +21,7 @@ import {
 } from "@/lib/queries/planificacion";
 import { expandirRango, COLOR_AUSENCIA } from "@/lib/queries/ausencias";
 import type { TipoAusencia } from "@/lib/types/database";
+import { armarTramos, tramoDePeriodo, type ExtensionBasica, type Tramo } from "./tramosEngagement";
 
 // ─────────────────────────────────────────────────────────────
 //  Helpers visuales
@@ -366,6 +367,8 @@ export function PanelFitAsignacion({
   } | null>(null);
   // Chips de atajo (Período Base / Extensión N) para el modal de confirmación
   const [periodos, setPeriodos] = useState<PeriodoChip[]>([]);
+  // Tramos del proyecto (Contrato + Extensión N) para vincular cada asignación a su alargue
+  const [tramos, setTramos] = useState<Tramo[]>([]);
 
   // Popup de perfil
   const [perfilAbierto, setPerfilAbierto] = useState<PersonaFit | null>(null);
@@ -501,21 +504,17 @@ export function PanelFitAsignacion({
       if (!reqData) { setErr(reqErr ? `No se pudo cargar el requerimiento: ${reqErr.message}` : "Requerimiento no encontrado."); setLoading(false); return; }
       if (asigErr) setErr(`No se pudo cargar quiénes cubren el requerimiento: ${asigErr.message}`);
 
-      // Chips de atajo: solo si el engagement tiene extensiones registradas
+      // Chips de atajo: solo si el engagement tiene extensiones registradas.
+      // Mismos tramos y nombres que el resto de la app (Contrato / Extensión N; fin real ?? estimado)
       if (extData && extData.length > 0) {
         const eng = engData as { fecha_inicio: string; fecha_fin_estimada: string | null; fecha_fin_real: string | null } | null;
-        setPeriodos([
-          {
-            label: "Período Base",
-            fechaInicio: eng?.fecha_inicio ?? reqData.fecha_inicio,
-            fechaFin: eng?.fecha_fin_estimada ?? eng?.fecha_fin_real ?? reqData.fecha_fin,
-          },
-          ...(extData as { fecha_inicio: string; fecha_fin: string }[]).map((e, i) => ({
-            label: `Extensión ${i + 1}`,
-            fechaInicio: e.fecha_inicio,
-            fechaFin: e.fecha_fin,
-          })),
-        ]);
+        const t = armarTramos(
+          eng?.fecha_inicio ?? reqData.fecha_inicio,
+          eng?.fecha_fin_real ?? eng?.fecha_fin_estimada ?? reqData.fecha_fin,
+          extData as ExtensionBasica[]
+        );
+        setTramos(t);
+        setPeriodos(t.map((x) => ({ label: x.titulo, fechaInicio: x.inicio, fechaFin: x.fin })));
       }
 
       const reqEstado: ReqConEstado = {
@@ -640,6 +639,8 @@ export function PanelFitAsignacion({
       fecha_inicio: fechaInicio,
       fecha_fin: fechaFin,
       estado: "activa",
+      // Vínculo al alargue según las fechas (así se libera si se borra el alargue)
+      extension_id: tramoDePeriodo(tramos, { fecha_inicio: fechaInicio, fecha_fin: fechaFin })?.extensionId ?? null,
     }).select("id").single();
 
     if (error || !nueva) {
@@ -676,7 +677,10 @@ export function PanelFitAsignacion({
         const partes: any[] = [];
         if (ini < fechaInicio) partes.push({ ...resto, fecha_inicio: ini, fecha_fin: moverDia(fechaInicio, -1) });
         if (fin === null || fin > fechaFin) partes.push({ ...resto, fecha_inicio: moverDia(fechaFin, 1), fecha_fin: fin });
-        return partes;
+        // Cada parte queda vinculada al tramo donde parte (puede ser otro que el de la original)
+        return tramos.length > 0
+          ? partes.map((p) => ({ ...p, extension_id: tramoDePeriodo(tramos, { fecha_inicio: p.fecha_inicio, fecha_fin: p.fecha_fin })?.extensionId ?? null }))
+          : partes;
       });
       let restosIds: string[] = [];
       if (restos.length > 0) {

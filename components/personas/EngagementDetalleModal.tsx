@@ -5,6 +5,7 @@ import { X, Loader2 } from "lucide-react";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { createAnyClient } from "@/lib/supabase/client";
+import { finEfectivo } from "@/lib/queries/engagements";
 
 interface Props {
   engagementId: string;
@@ -22,6 +23,7 @@ interface EngagementDetalle {
   fecha_inicio: string | null;
   fecha_fin_estimada: string | null;
   fecha_fin_real: string | null;
+  fin_alargue: string | null;
   descripcion: string | null;
   color: string | null;
   industria: string | null;
@@ -63,7 +65,7 @@ export function EngagementDetalleModal({ engagementId, personaId, onClose }: Pro
     let cancelled = false;
     async function load() {
       const sb = createAnyClient();
-      const [engRes, capRes, temRes, asigRes, equipoRes] = await Promise.all([
+      const [engRes, capRes, temRes, asigRes, equipoRes, extRes] = await Promise.all([
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         (sb as any).from("engagement")
           .select("id, codigo, nombre, cliente, tipo, estado, fecha_inicio, fecha_fin_estimada, fecha_fin_real, descripcion, color, industria:industria_id(nombre)")
@@ -88,6 +90,13 @@ export function EngagementDetalleModal({ engagementId, personaId, onClose }: Pro
           .select("persona_id, fecha_inicio, fecha_fin, cargo_al_momento, persona:persona_id(nombre, apellido)")
           .eq("engagement_id", engagementId)
           .order("fecha_inicio"),
+        // Último alargue: su fin es el fin efectivo del proyecto
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        (sb as any).from("engagement_extension")
+          .select("fecha_fin")
+          .eq("engagement_id", engagementId)
+          .order("fecha_fin", { ascending: false })
+          .limit(1),
       ]);
       if (cancelled) return;
 
@@ -102,6 +111,7 @@ export function EngagementDetalleModal({ engagementId, personaId, onClose }: Pro
         fecha_inicio:      eng?.fecha_inicio    ?? null,
         fecha_fin_estimada:eng?.fecha_fin_estimada ?? null,
         fecha_fin_real:    eng?.fecha_fin_real  ?? null,
+        fin_alargue:       ((extRes.data ?? []) as { fecha_fin: string }[])[0]?.fecha_fin ?? null,
         descripcion:       eng?.descripcion     ?? null,
         color:             eng?.color           ?? null,
         industria:         eng?.industria?.nombre ?? null,
@@ -137,7 +147,7 @@ export function EngagementDetalleModal({ engagementId, personaId, onClose }: Pro
   }, [onClose]);
 
   const accentColor = data?.color ?? "#4a90e2";
-  const finLabel = data?.fecha_fin_real ?? data?.fecha_fin_estimada;
+  const finLabel = data ? finEfectivo(data) : null; // incluye el último alargue
   const equipoAgrupado = data ? agruparEquipoPorPersona(data.equipo) : [];
 
   return (

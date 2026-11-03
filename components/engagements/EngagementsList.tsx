@@ -13,6 +13,7 @@ import { createAnyClient } from "@/lib/supabase/client";
 import {
   fetchEngagementsConCobertura,
   fetchEngagementsHistoricos,
+  finEfectivo,
 } from "@/lib/queries/engagements";
 import { cambiarEstadoEngagement, sincronizarFechasEquipoEngagement } from "@/lib/queries/engagements";
 import { limpiarEngagementsCaducados, diasRestantesPapelera } from "@/lib/tasks/cleanupEngagements";
@@ -157,7 +158,7 @@ function SeccionesTablaEngagements({
                     ) : lista.map((e, idx) => {
                       const ex = extra.get(e.id);
                       const eng = e as EngagementConCobertura;
-                      const fechaFin = (e as any).fecha_fin_real ?? e.fecha_fin_estimada;
+                      const fechaFin = finEfectivo(e as EngagementConCobertura); // incluye el último alargue
                       const rowExpanded = !!expandedRows[e.id];
                       const RowChevron = rowExpanded ? ChevronDown : ChevronRight;
                       const base = idx % 2 !== 0 ? "bg-[#fafafa]/50" : "";
@@ -370,7 +371,7 @@ export function EngagementsList({ rolActual }: Props) {
 
   // Tabs de la vista principal: Activos (default) vs Archivo Histórico (estado='terminado')
   const [tabPrincipal, setTabPrincipal] = useState<"activos" | "archivado">("activos");
-  const [archivados, setArchivados] = useState<Engagement[]>([]);
+  const [archivados, setArchivados] = useState<(Engagement & { fin_alargue?: string | null })[]>([]);
   const [loadingArchivados, setLoadingArchivados] = useState(false);
   const [archivadosExtra, setArchivadosExtra] = useState<Map<string, EngExtra>>(new Map());
 
@@ -549,12 +550,22 @@ export function EngagementsList({ rolActual }: Props) {
   }
 
   // ── Acciones directas del tab Archivo Histórico (sin modal) ───────────
-  function reactivarDesdeHistorico(e: Engagement) {
+  function reactivarDesdeHistorico(e: Engagement & { fin_alargue?: string | null }) {
     // Si su fecha de fin ya pasó, reactivarlo sin una nueva fecha no cambiaba nada
     // (seguía en el Archivo): se pide la nueva fecha de fin con un selector.
     const hoy = format(new Date(), "yyyy-MM-dd");
-    const finActual = e.fecha_fin_real ?? e.fecha_fin_estimada;
-    if (finActual && finActual < hoy) { setReactivarVencido({ eng: e, fecha: hoy }); return; }
+    // Con un alargue vigente se reactiva sin tocar la fecha del contrato
+    const finActual = finEfectivo(e);
+    if (finActual && finActual < hoy) {
+      // Con alargues terminados, una nueva fecha de fin pisaría el contrato sobre ellos
+      // y duplicaría al equipo: se extiende con un nuevo alargue desde el formulario
+      if (e.fin_alargue) {
+        showToast(`"${e.nombre}" tiene alargues. Para extenderlo, crea un nuevo alargue desde el formulario del proyecto.`);
+        return;
+      }
+      setReactivarVencido({ eng: e, fecha: hoy });
+      return;
+    }
     ejecutarReactivacion(e, null);
   }
 
@@ -781,7 +792,7 @@ export function EngagementsList({ rolActual }: Props) {
             <tbody>
               {archivadosFiltrados.map((e, idx) => {
                 const ex = archivadosExtra.get(e.id);
-                const fechaFin = e.fecha_fin_real ?? e.fecha_fin_estimada;
+                const fechaFin = finEfectivo(e); // incluye el último alargue
                 const fmt = (d: string | null) => d ? format(new Date(d + "T00:00:00"), "d MMM yy", { locale: es }) : "—";
                 return (
                   <tr key={e.id} className={`border-b border-[#f0f0f0] hover:bg-[#fafafa] transition-colors ${idx % 2 === 0 ? "" : "bg-[#fafafa]/50"}`}>

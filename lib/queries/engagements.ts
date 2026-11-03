@@ -25,6 +25,30 @@ export interface EngagementConCobertura extends Engagement {
   tiene_alerta: boolean;
   requerimientos_total: number;
   requerimientos_cubiertos: number;
+  /** Fin del último alargue (engagement_extension), o null si no tiene */
+  fin_alargue: string | null;
+}
+
+/** Fin efectivo = el más tardío entre el fin del contrato (real ?? estimado) y el de su último alargue. */
+export function finEfectivo(e: { fecha_fin_real?: string | null; fecha_fin_estimada?: string | null; fin_alargue?: string | null }): string | null {
+  const base = e.fecha_fin_real ?? e.fecha_fin_estimada ?? null;
+  if (!e.fin_alargue) return base;
+  return !base || e.fin_alargue > base ? e.fin_alargue : base;
+}
+
+/** Fin del último alargue por engagement. Con `desde`, solo los alargues que terminan ese día o después. */
+async function finesDeAlargue(supabase: TypedSupabaseClient, opts: { engIds?: string[]; desde?: string }): Promise<Map<string, string>> {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  let q = (supabase as any).from("engagement_extension").select("engagement_id, fecha_fin");
+  if (opts.engIds) q = q.in("engagement_id", opts.engIds);
+  if (opts.desde) q = q.gte("fecha_fin", opts.desde);
+  const { data } = await q;
+  const fines = new Map<string, string>();
+  for (const r of (data ?? []) as { engagement_id: string; fecha_fin: string }[]) {
+    const prev = fines.get(r.engagement_id);
+    if (!prev || r.fecha_fin > prev) fines.set(r.engagement_id, r.fecha_fin);
+  }
+  return fines;
 }
 
 /** Inicio de la semana ISO actual (lunes), YYYY-MM-DD. Corte entre "vigente" y "vencido". */
@@ -64,13 +88,15 @@ export async function fetchEngagementsConCobertura(
   supabase: TypedSupabaseClient
 ): Promise<{ data: EngagementConCobertura[]; error: string | null }> {
   const cutoff = inicioSemana();
+  // Siguen vigentes los que tienen un alargue que aún no termina, aunque su contrato ya haya terminado
+  const vivosPorAlargue = [...(await finesDeAlargue(supabase, { desde: cutoff })).keys()];
 
   const { data: engagements, error: engError } = await supabase
     .from("engagement")
     .select("*")
     .eq("estado", "activo")
     .eq("is_deleted", false)
-    .or(filtroActuales(cutoff))
+    .or([filtroActuales(cutoff), ...(vivosPorAlargue.length > 0 ? [`id.in.(${vivosPorAlargue.join(",")})`] : [])].join(","))
     .order("created_at", { ascending: false });
 
   if (engError) return { data: [], error: engError.message };
@@ -84,6 +110,7 @@ export async function fetchEngagementsConCobertura(
     .in("engagement_id", engIds);
 
   if (cobError) return { data: [], error: cobError.message };
+  const alargues = await finesDeAlargue(supabase, { engIds });
 
   const coberturaMap = new Map<
     string,
@@ -113,61 +140,12 @@ export async function fetchEngagementsConCobertura(
         tiene_alerta: cob?.tiene_alerta ?? false,
         requerimientos_total: cob?.total ?? 0,
         requerimientos_cubiertos: cob?.cubiertos ?? 0,
+        fin_alargue: alargues.get(e.id) ?? null,
       };
     }
   );
 
   return { data: result, error: null };
-}
-
-const PAGE_SIZE = 20;
-
-export interface PaginaHistorico {
-  data: Engagement[];
-  total: number;
-  pagina: number;
-  totalPaginas: number;
-  error: string | null;
-}
-
-/**
- * Engagements PASADOS (fecha efectiva < inicio de esta semana), paginados de 20 en 20.
- * Excluye is_deleted. Acepta búsqueda por nombre/cliente.
- */
-export async function fetchEngagementsPasados(
-  supabase: TypedSupabaseClient,
-  pagina = 1,
-  busqueda = ""
-): Promise<PaginaHistorico> {
-  const cutoff = inicioSemana();
-  const desde = (pagina - 1) * PAGE_SIZE;
-
-  let query = supabase
-    .from("engagement")
-    .select("*", { count: "exact" })
-    .eq("is_deleted", false)
-    .or(filtroVencidos(cutoff))
-    .order("fecha_fin_real", { ascending: false, nullsFirst: false });
-
-  if (busqueda.trim()) {
-    const t = busqueda.trim();
-    query = query.or(
-      `nombre.ilike.%${t}%,cliente.ilike.%${t}%,codigo.ilike.%${t}%,descripcion.ilike.%${t}%`
-    );
-  }
-
-  const { data, count, error } = await query.range(desde, desde + PAGE_SIZE - 1);
-
-  if (error) return { data: [], total: 0, pagina, totalPaginas: 0, error: error.message };
-
-  const total = count ?? 0;
-  return {
-    data: (data ?? []) as Engagement[],
-    total,
-    pagina,
-    totalPaginas: Math.ceil(total / PAGE_SIZE),
-    error: null,
-  };
 }
 
 /**
@@ -370,7 +348,7 @@ export async function cambiarTipoEngagement(
  */
 export async function fetchEngagementsHistoricos(
   supabase: TypedSupabaseClient
-): Promise<{ data: Engagement[]; error: string | null }> {
+): Promise<{ data: (Engagement & { fin_alargue: string | null })[]; error: string | null }> {
   const cutoff = inicioSemana();
   const { data, error } = await supabase
     .from("engagement")
@@ -380,7 +358,15 @@ export async function fetchEngagementsHistoricos(
     .order("updated_at", { ascending: false });
 
   if (error) return { data: [], error: error.message };
-  return { data: (data ?? []) as Engagement[], error: null };
+  const engs = (data ?? []) as Engagement[];
+  const alargues = engs.length > 0 ? await finesDeAlargue(supabase, { engIds: engs.map((e) => e.id) }) : new Map<string, string>();
+  return {
+    data: engs
+      .map((e) => ({ ...e, fin_alargue: alargues.get(e.id) ?? null }))
+      // Vencido solo por el contrato pero con un alargue vigente → sigue activo, no va al archivo
+      .filter((e) => e.estado === "terminado" || !e.fin_alargue || e.fin_alargue < cutoff),
+    error: null,
+  };
 }
 
 function diaAntes(fecha: string): string {
@@ -651,7 +637,7 @@ export async function fetchAsignacionesEngagement(
 /**
  * Crea un alargue (engagement_extension) y las asignaciones del equipo para ese
  * período, enlazadas vía extension_id. Reemplaza la lógica antes inline en
- * ExtenderProyecto.tsx (guardar()) para centralizarla aquí.
+ * el antiguo ExtenderProyecto.tsx; hoy la usa el switch de alargue de EngagementForm.
  */
 export async function crearExtensionEngagement(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -660,9 +646,9 @@ export async function crearExtensionEngagement(
     engagementId: string;
     fechaInicio: string;
     fechaFin: string;
-    personas: { personaId: string; cargo: string; pct: number; requerimientoId: string | null }[];
+    personas: { personaId: string; cargo: string | null; pct: number; requerimientoId: string | null }[];
   }
-): Promise<{ error: string | null }> {
+): Promise<{ error: string | null; extensionId?: string }> {
   const { data: ext, error: extErr } = await sb
     .from("engagement_extension")
     .insert({ engagement_id: params.engagementId, fecha_inicio: params.fechaInicio, fecha_fin: params.fechaFin })
@@ -670,12 +656,51 @@ export async function crearExtensionEngagement(
     .single();
   if (extErr) return { error: extErr.message };
 
+  // Si algo falla después, se deshace todo (requerimientos copiados + alargue)
+  const reqsCreados: string[] = [];
+  const deshacer = async (msg: string) => {
+    const { error: e1 } = reqsCreados.length > 0
+      ? await sb.from("requerimiento_engagement").delete().in("id", reqsCreados) : { error: null };
+    const { error: e2 } = await sb.from("engagement_extension").delete().eq("id", ext.id);
+    return { error: e1 || e2 ? `${msg} (y el alargue quedó creado a medias)` : msg };
+  };
+
+  // Requerimientos del alargue: copia, con las fechas del alargue, de los cupos vigentes al cierre
+  // del tramo anterior y de los cupos del equipo que lo hereda. Sin esto el Tablero, el Resumen y
+  // las alertas de cobertura no veían requerimientos en las semanas del alargue.
+  const { data: reqsBase, error: leerReqErr } = await sb.from("requerimiento_engagement")
+    .select("id, fase_nombre, cargo_requerido, pct_dedicacion, descripcion, fecha_inicio, fecha_fin")
+    .eq("engagement_id", params.engagementId).lt("fecha_inicio", params.fechaInicio);
+  if (leerReqErr) return deshacer(leerReqErr.message);
+  type ReqBase = { id: string; fase_nombre: string | null; cargo_requerido: string | null; pct_dedicacion: number; descripcion: string | null; fecha_inicio: string; fecha_fin: string | null };
+  const base = (reqsBase ?? []) as ReqBase[];
+  const finPrevioReq = base.reduce<string | null>((m, r) => (r.fecha_fin && r.fecha_fin < params.fechaInicio && (!m || r.fecha_fin > m) ? r.fecha_fin : m), null);
+  const reqsEquipo = new Set(params.personas.map((p) => p.requerimientoId).filter(Boolean));
+  const aCopiar = base.filter((r) => reqsEquipo.has(r.id)
+    || (finPrevioReq && r.fecha_inicio <= finPrevioReq && (!r.fecha_fin || r.fecha_fin >= finPrevioReq)));
+  const reqNuevoDe = new Map<string, string>(); // requerimiento original → su copia en el alargue
+  for (const r of aCopiar) {
+    const { data: nuevo, error: insReqErr } = await sb.from("requerimiento_engagement").insert({
+      engagement_id: params.engagementId,
+      fase_nombre: r.fase_nombre,
+      cargo_requerido: r.cargo_requerido,
+      pct_dedicacion: r.pct_dedicacion,
+      descripcion: r.descripcion,
+      fecha_inicio: params.fechaInicio,
+      fecha_fin: params.fechaFin,
+    }).select("id").single();
+    if (insReqErr || !nuevo) return deshacer(insReqErr?.message ?? "No se pudo copiar un requerimiento al alargue.");
+    reqsCreados.push(nuevo.id);
+    reqNuevoDe.set(r.id, nuevo.id);
+  }
+
   if (params.personas.length > 0) {
     const { error: asigErr } = await sb.from("asignacion").insert(
       params.personas.map((p) => ({
         engagement_id: params.engagementId,
         persona_id: p.personaId,
-        requerimiento_id: p.requerimientoId,
+        // Queda en la copia de su requerimiento (el cupo del alargue), no en el del contrato
+        requerimiento_id: (p.requerimientoId && reqNuevoDe.get(p.requerimientoId)) ?? p.requerimientoId,
         extension_id: ext.id,
         cargo_al_momento: p.cargo,
         pct_dedicacion: p.pct,
@@ -685,14 +710,11 @@ export async function crearExtensionEngagement(
         estado_staffing: "CONFIRMADO",
       }))
     );
-    if (asigErr) {
-      // No dejar una extensión sin equipo: se borra la recién creada
-      const { error: limpErr } = await sb.from("engagement_extension").delete().eq("id", ext.id);
-      return { error: limpErr ? `${asigErr.message} (y la extensión quedó creada sin equipo)` : asigErr.message };
-    }
+    // No dejar una extensión sin equipo: se borran la recién creada y sus requerimientos
+    if (asigErr) return deshacer(asigErr.message);
   }
 
-  return { error: null };
+  return { error: null, extensionId: ext.id };
 }
 
 // ─────────────────────────────────────────────────────────────────

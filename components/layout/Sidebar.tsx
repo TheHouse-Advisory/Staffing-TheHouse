@@ -101,12 +101,18 @@ export function Sidebar({
       const hoyStr = format(hoy, "yyyy-MM-dd");
 
       // Mismos filtros que la pestaña Alertas: sin papelera ni posibles proyectos, y sin las ya revisadas
-      const [personasRes, engRes, revRes] = await Promise.all([
+      const [personasRes, engRes, revRes, extRes] = await Promise.all([
         sb.from("persona").select("id, fecha_ingreso, fecha_nacimiento").eq("activo", true),
         sb.from("engagement").select("id, fecha_fin_estimada, fecha_fin_real, estado")
           .neq("tipo", "posibles_proyectos").eq("is_deleted", false),
         sb.from("alerta_revisada").select("alerta_id"),
+        // Alargues vigentes: su fin reemplaza al del contrato (igual que en la pestaña Alertas)
+        (sb as any).from("engagement_extension").select("engagement_id, fecha_fin").gte("fecha_fin", hoyStr),
       ]);
+      const finAlargue = new Map<string, string>();
+      for (const x of (extRes.data ?? []) as { engagement_id: string; fecha_fin: string }[]) {
+        if (!finAlargue.has(x.engagement_id) || x.fecha_fin > finAlargue.get(x.engagement_id)!) finAlargue.set(x.engagement_id, x.fecha_fin);
+      }
       const revisadas = new Set(((revRes.data ?? []) as { alerta_id: string }[]).map((r) => r.alerta_id));
 
       let count = 0;
@@ -125,7 +131,10 @@ export function Sidebar({
       }
       for (const e of (engRes.data ?? []) as { id: string; fecha_fin_estimada: string | null; fecha_fin_real: string | null; estado: string }[]) {
         if (revisadas.has(`epp-${e.id}-${hoyStr}`)) continue;
-        if (e.fecha_fin_real === hoyStr) count++;
+        const finAlg = finAlargue.get(e.id);
+        if (finAlg && finAlg > (e.fecha_fin_real ?? e.fecha_fin_estimada ?? "")) {
+          if (finAlg === hoyStr) count++; // con alargue posterior, solo avisa su fin
+        } else if (e.fecha_fin_real === hoyStr) count++;
         else if (e.estado === "activo" && e.fecha_fin_estimada === hoyStr) count++;
       }
       setAlertasHoy(count);

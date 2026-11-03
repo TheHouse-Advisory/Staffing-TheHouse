@@ -12,6 +12,7 @@ import { toPng } from "html-to-image";
 import { createAnyClient } from "@/lib/supabase/client";
 import { EngagementForm } from "@/components/engagements/EngagementForm";
 import { ColaboradorModal } from "@/components/engagements/ColaboradorModal";
+import { cargaMaximaSimultanea, redimensionarExtensionConEquipo } from "@/components/engagements/tramosEngagement";
 import { ArchivarEliminarModal } from "@/components/engagements/ArchivarEliminarModal";
 import { ConfirmDialog, Modal } from "@/components/ui/Modal";
 import { Button } from "@/components/ui/Button";
@@ -186,6 +187,16 @@ function engActivoEnCol(eng: { fecha_inicio: string; fecha_fin: string | null; e
   return eng.extensiones.some((ex) => rangoSolapan(ex.fecha_inicio, ex.fecha_fin, cIni, cFin));
 }
 // Devuelve si la columna cae en la "brecha" entre el fin original y el inicio de una extensión
+/** Alargue cuyo inicio (edge "start") o fin (edge "end") cae en la columna: ese borde es del alargue, no del contrato. */
+function extEnBorde(eng: { extensiones: { id: string; fecha_inicio: string; fecha_fin: string }[] }, cIni: Date, cFin: Date, edge: "start" | "end") {
+  const ci = format(cIni, "yyyy-MM-dd");
+  const cf = format(cFin, "yyyy-MM-dd");
+  return eng.extensiones.find((ex) => {
+    const f = edge === "start" ? ex.fecha_inicio : ex.fecha_fin;
+    return f >= ci && f <= cf;
+  });
+}
+
 function engEnBrechaEnCol(eng: { fecha_fin: string | null; extensiones: { fecha_inicio: string; fecha_fin: string }[] }, cIni: Date, cFin: Date): boolean {
   if (!eng.fecha_fin || eng.extensiones.length === 0) return false;
   const finOrig = parseLocal(eng.fecha_fin);
@@ -658,7 +669,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
   const resizeHoverRef = useRef<number | null>(null);
 
   // Resize de la barra de Engagement (fecha_inicio / fecha_fin)
-  const [resizingEng, setResizingEng] = useState<{ eng: EngRow; edge: "start" | "end" } | null>(null);
+  // ext: el borde arrastrado es el de un alargue (se cambia ese alargue, no el contrato)
+  const [resizingEng, setResizingEng] = useState<{ eng: EngRow; edge: "start" | "end"; ext?: { id: string; fecha_inicio: string; fecha_fin: string } } | null>(null);
   const resizeEngHoverRef = useRef<number | null>(null);
 
   // Move completo de la barra del Engagement (arrastrar cuerpo de la barra)
@@ -956,8 +968,6 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
       const miCarga = ++cargaTableroRef.current;
       setLoading(true);
       const sb = createAnyClient();
-      const cutoff = (() => { const d = new Date(); d.setDate(d.getDate() - 7); return format(d, "yyyy-MM-dd"); })();
-      const filtroCutoff = [`fecha_fin_real.gte.${cutoff}`, `and(fecha_fin_real.is.null,fecha_fin_estimada.gte.${cutoff})`, `and(fecha_fin_real.is.null,fecha_fin_estimada.is.null)`].join(",");
 
       // IDs de engagements con extensiones que solapan la vista actual
       const { data: extVisibles } = await (sb as any)
@@ -977,20 +987,24 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         ...(actVisibles ?? []).map((r: any) => r.engagement_id as string),
       ])];
 
+      // Mirando fechas pasadas (antes de esta semana) también se muestran los archivados,
+      // para ver el historial completo; en el período actual solo los activos.
+      const esPasado = inicioStr < format(startOfISOWeek(new Date()), "yyyy-MM-dd");
+
       const [engRes, asigRes, ausRes] = await Promise.all([
         sb.from("engagement")
           .select("id, codigo, nombre, cliente, tipo, estado, descripcion, fecha_inicio, fecha_fin_estimada, fecha_fin_real, industria_id, sort_order")
-          .eq("estado", "activo")
+          .in("estado", esPasado ? ["activo", "terminado"] : ["activo"])
           .eq("is_deleted", false)
-          // Incluye engagements activos en la vista O engagements con extensiones en este rango
+          // Vigentes en el período visible (no respecto a hoy): así, al retroceder en el
+          // tiempo, aparecen los proyectos que estaban activos en esas fechas.
+          // Fecha fin efectiva = fecha_fin_real ?? fecha_fin_estimada; sin fin → no se muestra.
           .or([
             `fecha_fin_real.gte.${inicioStr}`,
-            `fecha_fin_estimada.gte.${inicioStr}`,
-            `fecha_fin_real.is.null`,
-            `fecha_inicio.gte.${inicioStr}`,
+            `and(fecha_fin_real.is.null,fecha_fin_estimada.gte.${inicioStr})`,
+            // O con extensiones/actividades en este rango
             ...(extEngIds.length > 0 ? [`id.in.(${extEngIds.join(",")})`] : []),
-          ].join(","))
-          .or(filtroCutoff),
+          ].join(",")),
 
         sb.from("asignacion")
           .select("id, engagement_id, persona_id, pct_dedicacion, fecha_inicio, fecha_fin, estado_staffing, requerimiento_id, persona:persona_id(nombre, apellido, cargo_actual, iniciales)" as any)
@@ -1010,6 +1024,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
       const engMap = new Map<string, EngRow>();
       for (const e of (engRes.data ?? []) as any[]) {
+        // Sin fecha de término no se muestra (también si llegó por extensión/actividad)
+        if (!(e.fecha_fin_real ?? e.fecha_fin_estimada)) continue;
         engMap.set(e.id, {
           id: e.id, codigo: e.codigo ?? null, nombre: e.nombre, cliente: e.cliente,
           tipo: e.tipo ?? "proyecto",
@@ -1096,12 +1112,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
         setDiasCriticosMap(dcMap);
       }
 
-      // Ordenar por sort_order (manual) primero, fallback alfabético
+      // Orden manual (sort_order, guardado al arrastrar) primero; sin orden manual →
+      // cronológico por fecha de inicio (el que parte antes primero); empate → alfabético
       setEngs([...engMap.values()].sort((a, b) => {
         if (a.sort_order !== null && b.sort_order !== null) return a.sort_order - b.sort_order;
         if (a.sort_order !== null) return -1;
         if (b.sort_order !== null) return 1;
-        return a.nombre.localeCompare(b.nombre, "es");
+        return a.fecha_inicio.localeCompare(b.fecha_inicio) || a.nombre.localeCompare(b.nombre, "es");
       }));
       const ausenciasCargadas = (ausRes.data ?? []) as { persona_id: string; fecha_inicio: string; fecha_fin: string; tipo: string; descripcion: string | null }[];
       setAusencias(ocultarPctEquipo ? ausenciasCargadas.filter((a) => a.tipo !== "vacaciones_por_confirmar") : ausenciasCargadas);
@@ -1867,8 +1884,33 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
           ? !!resizingEng.eng.fecha_fin && newDate > resizingEng.eng.fecha_fin
           : newDate < resizingEng.eng.fecha_inicio;
 
+        const ext = resizingEng.ext;
+        if (ext && !simulationMode) {
+          // Borde de un alargue: se cambia ese alargue y su equipo; el contrato no se toca
+          const eng = resizingEng.eng;
+          const otras = eng.extensiones.filter((x) => x.id !== ext.id);
+          const finPrevio = [eng.fecha_fin ?? "", ...otras.filter((x) => x.fecha_fin < ext.fecha_inicio).map((x) => x.fecha_fin)]
+            .reduce((m, f) => (f > m ? f : m), "");
+          const inicioSiguiente = otras.filter((x) => x.fecha_inicio > ext.fecha_fin).map((x) => x.fecha_inicio).sort()[0];
+          const motivo = resizingEng.edge === "start"
+            ? (newDate > ext.fecha_fin ? "El inicio del alargue no puede quedar después de su término."
+              : finPrevio && newDate <= finPrevio ? "El alargue no puede empezar antes de que termine el tramo anterior." : null)
+            : (newDate < ext.fecha_inicio ? "El fin del alargue no puede quedar antes de su inicio."
+              : inicioSiguiente && newDate >= inicioSiguiente ? "El alargue no puede cruzarse con el siguiente." : null);
+          if (motivo) {
+            avisarErrorDrop("cambiar las fechas del alargue", { message: motivo });
+          } else {
+            const { error: extErr } = await redimensionarExtensionConEquipo(sb, eng.id, ext, resizingEng.edge, newDate);
+            if (extErr) avisarErrorDrop("cambiar las fechas del alargue", { message: extErr });
+            refresh(eng.id);
+          }
+        } else
         if (engInvertido) {
           avisarErrorDrop("cambiar las fechas del proyecto", { message: "El inicio no puede quedar después del término." });
+        } else
+        // Fin del contrato encima de un alargue: se pisarían y el equipo quedaría duplicado
+        if (resizingEng.edge === "end" && resizingEng.eng.extensiones.some((x) => newDate >= x.fecha_inicio)) {
+          avisarErrorDrop("cambiar las fechas del proyecto", { message: "El contrato no puede terminar después de que empiece el primer alargue." });
         } else
         // ── SIMULACIÓN: personas y reqs adoptan exactamente las fechas del engagement ─
         if (simulationMode) {
@@ -2287,7 +2329,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                 const q = searchTerm.toLowerCase().trim();
                 const lista = engs.filter((e) => {
                   if (e.tipo !== tipo) return false;
-                  if (!q) return true;
+                  // Sin búsqueda: oculta filas vacías (sin barra, brecha ni viaje/taller en las columnas visibles)
+                  if (!q) return columnas.some((c) => {
+                    if (engActivoEnCol(e, c.inicio, c.fin) || engEnBrechaEnCol(e, c.inicio, c.fin)) return true;
+                    const ci = format(c.inicio, "yyyy-MM-dd");
+                    const cf = format(c.fin, "yyyy-MM-dd");
+                    return e.actividades.some((a) => a.fecha_inicio <= cf && a.fecha_fin >= ci);
+                  });
                   if (e.nombre.toLowerCase().includes(q)) return true;
                   if (e.codigo?.toLowerCase().includes(q)) return true;
                   if (e.cliente?.toLowerCase().includes(q)) return true;
@@ -2558,7 +2606,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                               <div
                                 className="relative h-5 rounded-full transition-all overflow-visible group/engbar"
                                 style={{ background: barColor, ...rojoOutline, opacity: esHoy ? 1 : 0.5, cursor: movingEng?.eng.id === eng.id ? "grabbing" : "grab", ...(tieneViaje ? { border: "3px solid #92400e" } : tieneTaller ? { border: "3px solid #2563eb" } : {}) }}
-                                title={readOnly ? "" : "Arrastra para mover · Borde para redimensionar · Clic para intensidad"}
+                                // Tooltip nativo: se dibuja sobre todo (ignora z-index); se omite si hay viaje/taller para no tapar su detalle
+                                title={readOnly || tieneViaje || tieneTaller ? "" : "Arrastra para mover · Borde para redimensionar · Clic para intensidad"}
                                 onMouseDown={(ev) => {
                                   if (readOnly) return;
                                   if (ocultarPctEquipo) return;
@@ -2581,12 +2630,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                   </div>
                                 )}
                                 {tieneViaje && (
-                                  <div className="absolute top-0.5 right-1 z-10">
+                                  <div className={`absolute z-10 ${tieneTaller ? "top-0.5 right-1" : "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"}`}>
                                     <TipActividad texto={viajeTip} icon={<Plane className="w-3 h-3 cursor-default" style={{ color: "#92400e" }} />} />
                                   </div>
                                 )}
-                                {!readOnly && !ocultarPctEquipo && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/40 transition-colors" />}
-                                {!readOnly && !ocultarPctEquipo && isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/40 transition-colors" />}
+                                {!readOnly && !ocultarPctEquipo && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start", ext: extEnBorde(eng, col.inicio, col.fin, "start") }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/40 transition-colors" />}
+                                {!readOnly && !ocultarPctEquipo && isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end", ext: extEnBorde(eng, col.inicio, col.fin, "end") }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/40 transition-colors" />}
                               </div>
                             </td>
                           );
@@ -2602,7 +2651,8 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                             <div
                               className="relative h-7 rounded-full hover:opacity-100 transition-opacity overflow-visible group/engbar"
                               style={{ background: barColor, ...rojoOutline, opacity: movePreviewActive ? 1 : isDragTarget ? 1 : esHoy ? 1 : 0.75, cursor: movingEng?.eng.id === eng.id ? "grabbing" : "grab", ...(tieneViaje ? { border: "3px solid #92400e" } : tieneTaller ? { border: "3px solid #2563eb" } : {}) }}
-                              title={readOnly ? "" : "Arrastra para mover · Borde para redimensionar · Clic para intensidad"}
+                              // Tooltip nativo: se dibuja sobre todo (ignora z-index); se omite si hay viaje/taller para no tapar su detalle
+                              title={readOnly || tieneViaje || tieneTaller ? "" : "Arrastra para mover · Borde para redimensionar · Clic para intensidad"}
                               onMouseDown={(ev) => {
                                 if (readOnly) return; // misma restricción que la vista expandida
                                 if (ocultarPctEquipo) return;
@@ -2625,12 +2675,12 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                                 </div>
                               )}
                               {tieneViaje && (
-                                <div className="absolute top-1 right-1.5 z-10">
+                                <div className={`absolute z-10 ${tieneTaller ? "top-1 right-1.5" : "top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"}`}>
                                   <TipActividad texto={viajeTip} icon={<Plane className="w-3.5 h-3.5 cursor-default" style={{ color: "#92400e" }} />} />
                                 </div>
                               )}
-                              {!readOnly && !ocultarPctEquipo && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start" }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/30 transition-colors" />}
-                              {!readOnly && !ocultarPctEquipo && isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end"   }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/30 transition-colors" />}
+                              {!readOnly && !ocultarPctEquipo && isEngFirst && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "start", ext: extEnBorde(eng, col.inicio, col.fin, "start") }); resizeEngHoverRef.current = i; }} className="absolute left-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-l-full hover:bg-white/30 transition-colors" />}
+                              {!readOnly && !ocultarPctEquipo && isEngLast  && <div onMouseDown={(ev) => { ev.stopPropagation(); resizingEngActiveRef.current = true; setResizingEng({ eng, edge: "end", ext: extEnBorde(eng, col.inicio, col.fin, "end") }); resizeEngHoverRef.current = i; }} className="absolute right-0 top-0 bottom-0 w-4 cursor-ew-resize z-20 rounded-r-full hover:bg-white/30 transition-colors" />}
                             </div>
                           </td>
                         );
@@ -3229,7 +3279,17 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                     {engModal.fecha_fin
                       ? format(new Date(engModal.fecha_fin + "T00:00:00"), "d 'de' MMM yyyy", { locale: es })
                       : "Sin fecha de término"}
+                    {engModal.extensiones.length > 0 && <span className="text-gray-400"> · Contrato</span>}
                   </p>
+                  {/* Alargues, numerados por fecha como en el resto de la app */}
+                  {[...engModal.extensiones].sort((a, b) => a.fecha_inicio.localeCompare(b.fecha_inicio)).map((ex, i) => (
+                    <p key={ex.id} className="text-xs text-[#1a1a2e] mt-0.5">
+                      {format(new Date(ex.fecha_inicio + "T00:00:00"), "d 'de' MMM yyyy", { locale: es })}
+                      {" → "}
+                      {format(new Date(ex.fecha_fin + "T00:00:00"), "d 'de' MMM yyyy", { locale: es })}
+                      <span className="text-gray-400"> · Extensión {i + 1}</span>
+                    </p>
+                  ))}
                 </div>
               </div>
 
@@ -3259,8 +3319,13 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
 
               {/* Roles / perfiles requeridos */}
               {engModal.reqs.length > 0 && (() => {
+                // Los cupos copiados a un alargue (mismas fechas exactas que el alargue) repiten los
+                // del contrato: no se cuentan de nuevo
+                const esCopiaAlargue = (r: { fecha_inicio: string | null; fecha_fin: string | null }) =>
+                  engModal.extensiones.some((x) => x.fecha_inicio === r.fecha_inicio && x.fecha_fin === r.fecha_fin);
+                const reqsPerfil = engModal.reqs.some((r) => !esCopiaAlargue(r)) ? engModal.reqs.filter((r) => !esCopiaAlargue(r)) : engModal.reqs;
                 const cargosUnicos = Array.from(
-                  new Set(engModal.reqs.map((r) => r.cargo_requerido).filter(Boolean) as string[])
+                  new Set(reqsPerfil.map((r) => r.cargo_requerido).filter(Boolean) as string[])
                 ).sort((a, b) => (JERARQUIA[a] ?? 99) - (JERARQUIA[b] ?? 99));
                 return (
                   <div className="flex items-start gap-2.5">
@@ -3269,7 +3334,7 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                       <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Perfiles requeridos</p>
                       <div className="flex flex-wrap gap-1.5">
                         {cargosUnicos.map((c) => {
-                          const count = engModal.reqs.filter((r) => r.cargo_requerido === c).length;
+                          const count = reqsPerfil.filter((r) => r.cargo_requerido === c).length;
                           return (
                             <span key={c} className="text-[11px] px-2 py-0.5 rounded-full bg-[#f1f5f9] text-[#475569] font-medium">
                               {c}{count > 1 && <span className="ml-1 text-[#94a3b8]">×{count}</span>}
@@ -3289,8 +3354,16 @@ export function DesgloceEngagements({ onAsignacionChange, onOpenPanel, externalR
                   <div className="flex-1 min-w-0">
                     <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1.5">Equipo asignado</p>
                     <div className="space-y-1">
-                      {engModal.personas.map((p) => (
-                        <div key={p.asignacionId} className="flex items-center justify-between gap-2">
+                      {/* Una sola vez por persona aunque tenga varios períodos (contrato y alargues);
+                          su % es la carga máxima: suma lo simultáneo, el mayor entre momentos distintos */}
+                      {[...engModal.personas.reduce((m, p) => {
+                        const grupo = m.get(p.id);
+                        if (grupo) grupo.push(p); else m.set(p.id, [p]);
+                        return m;
+                      }, new Map<string, (typeof engModal.personas)[number][]>()).values()]
+                        .map((grupo) => ({ ...grupo[0], pct: cargaMaximaSimultanea(grupo) }))
+                        .map((p) => (
+                        <div key={p.id} className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-1.5 min-w-0">
                             <div
                               className="w-5 h-5 rounded-full flex items-center justify-center text-white text-[9px] font-bold flex-shrink-0"

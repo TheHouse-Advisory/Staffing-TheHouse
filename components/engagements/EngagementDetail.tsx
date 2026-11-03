@@ -17,6 +17,7 @@ import {
   grupoDeCargo, compararGrupoCargo, construirTimelinePersona, type TramoTimeline,
 } from "@/lib/queries/engagements";
 import { colorOcupacion, formatPct, fLocal } from "@/lib/utils";
+import { finEfectivo } from "@/lib/queries/engagements";
 import { Button } from "@/components/ui/Button";
 import { ConfirmDialog } from "@/components/ui/Modal";
 import { Drawer } from "@/components/ui/Drawer";
@@ -126,6 +127,8 @@ export function EngagementDetail({ id }: Props) {
   // Talleres y Viajes (actividades planificadas del engagement)
   type ActividadDetalle = { id: string; tipo: "Viajes" | "Taller"; titulo: string; descripcion: string | null; fecha_inicio: string; fecha_fin: string };
   const [actividades, setActividades] = useState<ActividadDetalle[]>([]);
+  // Fin del último alargue (null si no tiene)
+  const [finAlargue, setFinAlargue] = useState<string | null>(null);
 
   // Control de acceso
   const [rolActual, setRolActual] = useState<string | null>(null);
@@ -278,6 +281,11 @@ export function EngagementDetail({ id }: Props) {
     setEquipoPorGrupo(equipoPorGrupoNuevo);
 
     setActividades((actResult.data ?? []) as ActividadDetalle[]);
+
+    // Fin del último alargue (fin efectivo del proyecto si es posterior al contrato)
+    const { data: extUlt } = await sb.from("engagement_extension")
+      .select("fecha_fin").eq("engagement_id", id).order("fecha_fin", { ascending: false }).limit(1);
+    setFinAlargue(((extUlt ?? []) as { fecha_fin: string }[])[0]?.fecha_fin ?? null);
 
     setLoading(false);
   };
@@ -452,7 +460,8 @@ export function EngagementDetail({ id }: Props) {
   const tieneAlerta = cobertura.some((r) => r.pct_descubierto > 0);
   const tieneRequerimientos = Object.keys(porNombre).length > 0;
   const minDate = engagement.fecha_inicio ?? undefined;
-  const maxDate = engagement.fecha_fin_estimada ?? undefined;
+  // Requerimientos pueden llegar hasta el fin del último alargue
+  const maxDate = finEfectivo({ ...(engagement as any), fin_alargue: finAlargue }) ?? undefined;
 
   return (
     <>
@@ -553,6 +562,13 @@ export function EngagementDetail({ id }: Props) {
                 <p className="font-medium mt-0.5">
                   {format(fLocal((engagement as any).fecha_fin_real || engagement.fecha_fin_estimada), "d MMM yyyy", { locale: es })}
                 </p>
+              </div>
+            )}
+            {/* Con alargue posterior al contrato: se muestra también su fin (fin efectivo del proyecto) */}
+            {finAlargue && finAlargue > ((engagement as any).fecha_fin_real || engagement.fecha_fin_estimada || "") && (
+              <div>
+                <span className="text-[#888] text-xs">Fin del último alargue</span>
+                <p className="font-medium mt-0.5">{format(fLocal(finAlargue), "d MMM yyyy", { locale: es })}</p>
               </div>
             )}
           </div>

@@ -487,6 +487,16 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
       const en7Str = format(addDays(ahora, 7), "yyyy-MM-dd");
       const hace7Str = format(subDays(ahora, 7), "yyyy-MM-dd");
 
+      // Alargues que terminan desde hace 7 días en adelante: su fin reemplaza al del contrato
+      // (el aviso llega cuando termina el último alargue, no el contrato)
+      const { data: extRows } = await (sb as any).from("engagement_extension")
+        .select("engagement_id, fecha_fin").gte("fecha_fin", hace7Str);
+      const finAlargue = new Map<string, string>();
+      for (const x of (extRows ?? []) as { engagement_id: string; fecha_fin: string }[]) {
+        if (!finAlargue.has(x.engagement_id) || x.fecha_fin > finAlargue.get(x.engagement_id)!) finAlargue.set(x.engagement_id, x.fecha_fin);
+      }
+      const idsAlargue = [...finAlargue.keys()];
+
       const [personasRes, engRes, asigRes, engProyectoRecienteRes, engPropuestaRes] = await Promise.all([
         sb.from("persona")
           .select("id, nombre, apellido, cargo_actual, fecha_ingreso, fecha_nacimiento")
@@ -502,7 +512,9 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
             // por terminar: activo, fin estimado entre hoy y hoy+7
             `and(estado.eq.activo,fecha_fin_estimada.gte.${hoyStr},fecha_fin_estimada.lte.${en7Str}),` +
             // recién terminado: fin real entre hace 7 días y hoy
-            `and(fecha_fin_real.gte.${hace7Str},fecha_fin_real.lte.${hoyStr})`
+            `and(fecha_fin_real.gte.${hace7Str},fecha_fin_real.lte.${hoyStr})` +
+            // con un alargue que termina en la ventana (se evalúa abajo con su fecha)
+            (idsAlargue.length > 0 ? `,id.in.(${idsAlargue.join(",")})` : "")
           ),
 
         sb.from("asignacion")
@@ -591,7 +603,22 @@ export function AlertasPanel({ personaId }: AlertasPanelProps) {
         let fechaFin: string;
         let dias: number;
 
-        if (finReal && finReal >= hace7Str && finReal <= hoyStr) {
+        // Con un alargue posterior al contrato, manda el fin del alargue (el contrato ya no avisa)
+        const finAlg = finAlargue.get(eng.id);
+        const finBase = finReal ?? finEst ?? "";
+        if (finAlg && finAlg > finBase) {
+          if (estado === "activo" && finAlg >= hoyStr && finAlg <= en7Str) {
+            tipo = "por_terminar";
+            fechaFin = finAlg;
+            dias = diffDiasEntre(ahora, parseISO(finAlg));
+          } else if (finAlg >= hace7Str && finAlg <= hoyStr) {
+            tipo = "recien_terminado";
+            fechaFin = finAlg;
+            dias = diffDiasEntre(parseISO(finAlg), ahora);
+          } else {
+            continue;
+          }
+        } else if (finReal && finReal >= hace7Str && finReal <= hoyStr) {
           // Terminó en los últimos 7 días
           tipo = "recien_terminado";
           fechaFin = finReal;
