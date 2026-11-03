@@ -150,7 +150,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
         nombre: persona!.nombre,
         apellido: persona!.apellido,
         iniciales: persona!.iniciales ?? "",
-        email: persona!.email,
+        email: persona!.email ?? "",
         cargo_actual: persona!.cargo_actual ?? "",
         fecha_ingreso: persona!.fecha_ingreso ?? "",
         fecha_nacimiento: persona!.fecha_nacimiento ?? "",
@@ -183,8 +183,8 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
     const e: Partial<Record<keyof FormState, string>> = {}; // eslint-disable-line
     if (!form.nombre.trim()) e.nombre = "Requerido";
     if (!form.apellido.trim()) e.apellido = "Requerido";
-    if (!form.email.trim()) e.email = "Requerido";
-    else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email)) e.email = "Email inválido";
+    // Email opcional: solo se valida el formato si se ingresó
+    if (form.email.trim() && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) e.email = "Email inválido";
     if (!form.cargo_actual) e.cargo_actual = "Requerido";
     setErrors(e);
     if (Object.keys(e).length > 0) return false;
@@ -219,7 +219,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
       nombre: form.nombre.trim(),
       apellido: form.apellido.trim(),
       iniciales: form.iniciales.trim().toUpperCase().slice(0, 3) || null,
-      email: form.email.trim().toLowerCase(),
+      email: form.email.trim().toLowerCase() || null, // null evita choques con el índice único
       cargo_actual: form.cargo_actual,
       fecha_ingreso: form.fecha_ingreso || null,
       fecha_nacimiento: form.fecha_nacimiento || null,
@@ -352,7 +352,7 @@ export function PersonaForm({ open, onClose, onSuccess, persona, isAdmin = false
           </div>
         </FieldWrapper>
 
-        <FieldWrapper label="Email" required error={errors.email}>
+        <FieldWrapper label="Email" error={errors.email}>
           <Input
             type="email"
             value={form.email}
