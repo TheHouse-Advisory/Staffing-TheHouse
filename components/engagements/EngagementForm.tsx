@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
-import { Plus, Trash2, ChevronDown, ChevronUp, Users, CalendarDays, Pencil } from "lucide-react";
+import { Plus, Trash2, ChevronDown, ChevronUp, CalendarDays, Pencil } from "lucide-react";
 import { createAnyClient } from "@/lib/supabase/client";
 import { Drawer } from "@/components/ui/Drawer";
 import { Button } from "@/components/ui/Button";
@@ -50,7 +50,9 @@ function ordenCargoEquipo(cargo: string): number {
   return idx === -1 ? ORDEN_CARGOS_EQUIPO.length : idx;
 }
 import type { Engagement, RequerimientoEngagement } from "@/lib/types/database";
-import { ExtenderProyecto, eliminarExtensionConEquipo } from "./ExtenderProyecto";
+import { COLOR_AUSENCIA } from "@/lib/queries/ausencias";
+import type { TipoAusencia } from "@/lib/types/database";
+import { armarTramos, cambiarFechasExtension, cruzaPausa, eliminarExtensionConEquipo, numerarExtensiones, pausasEntre, sumarDias, tramoDePeriodo, type ExtensionBasica, type Tramo } from "./tramosEngagement";
 
 interface ReqRow {
   id?: string;
@@ -71,18 +73,17 @@ interface ReqRow {
   /** Asignación de otra persona sobre un requerimiento compartido: id de ese requerimiento
    * (para no borrarlo como huérfano). */
   reqVinculadoId?: string;
+  /** Requerimiento con personas asignadas: se edita su definición (fase, rol, %, fechas), no se quita desde aquí */
+  cubierto?: boolean;
 }
 
-// Arma las filas de "Equipo del proyecto" desde la BD. Si varias personas comparten un
-// requerimiento, la primera queda en la fila del requerimiento y las demás como filas propias
-// (asignacionId), para que cada una se vea y se pueda quitar sin afectar a las otras.
+// Arma las filas de "Equipo del proyecto" desde la BD. Cada persona se muestra con sus
+// asignaciones REALES (una fila por período, con asignacionId), no con las fechas del cupo:
+// antes la persona quedaba en la fila del requerimiento y sus otros períodos en ese mismo
+// requerimiento (ej. el del alargue) no aparecían. Los requerimientos siguen como filas de cupo
+// (los que tienen personas, marcados "cubierto" para poder editar su fase/rol sin duplicar a la persona).
 function armarFilasEquipo(reqData: RequerimientoEngagement[], asigRows: any[]): ReqRow[] {
-  const personaPorReq = new Map<string, { nombre: string; personaId: string }>();
-  for (const a of asigRows) {
-    if (a.requerimiento_id && a.persona && !personaPorReq.has(a.requerimiento_id)) {
-      personaPorReq.set(a.requerimiento_id, { nombre: `${a.persona.nombre} ${a.persona.apellido}`, personaId: a.persona_id });
-    }
-  }
+  const reqsConPersona = new Set(asigRows.filter((a) => a.requerimiento_id && a.persona).map((a) => a.requerimiento_id as string));
   const filaAsignacion = (a: any, reqVinculadoId?: string): ReqRow => ({
     asignacionId: a.id,
     personaId: a.persona_id,
@@ -95,27 +96,20 @@ function armarFilasEquipo(reqData: RequerimientoEngagement[], asigRows: any[]): 
     fecha_fin: a.fecha_fin ?? "",
     persona_nombre: `${a.persona.nombre} ${a.persona.apellido}`,
   });
-  const filasReq: ReqRow[] = reqData.map((r) => {
-    const asignado = r.id ? personaPorReq.get(r.id) : undefined;
-    return {
-      id: r.id,
-      fase_nombre: r.fase_nombre ?? "",
-      cargo_requerido: toCargoOption(r.cargo_requerido),
-      descripcion: r.descripcion ?? "",
-      pct_dedicacion: String(r.pct_dedicacion),
-      fecha_inicio: r.fecha_inicio ?? "",
-      fecha_fin: r.fecha_fin ?? "",
-      persona_nombre: asignado?.nombre,
-      personaId: asignado?.personaId,
-    };
-  });
-  // Asignaciones de otras personas sobre un requerimiento ya mostrado
-  const filasCompartidas = asigRows
-    .filter((a) => a.requerimiento_id && a.persona && personaPorReq.get(a.requerimiento_id)?.personaId !== a.persona_id)
-    .map((a) => filaAsignacion(a, a.requerimiento_id));
-  // Asignaciones directas sin requerimiento: se editan con UPDATE directo sobre `asignacion`
-  const filasDirectas = asigRows.filter((a) => !a.requerimiento_id && a.persona).map((a) => filaAsignacion(a));
-  return [...filasReq, ...filasCompartidas, ...filasDirectas];
+  // Cupos (requerimientos), con o sin personas
+  const filasReq: ReqRow[] = reqData.map((r) => ({
+    id: r.id,
+    cubierto: !!r.id && reqsConPersona.has(r.id),
+    fase_nombre: r.fase_nombre ?? "",
+    cargo_requerido: toCargoOption(r.cargo_requerido),
+    descripcion: r.descripcion ?? "",
+    pct_dedicacion: String(r.pct_dedicacion),
+    fecha_inicio: r.fecha_inicio ?? "",
+    fecha_fin: r.fecha_fin ?? "",
+  }));
+  // Cada período real de cada persona (con o sin requerimiento): se edita/quita directo sobre `asignacion`
+  const filasPersonas = asigRows.filter((a) => a.persona).map((a) => filaAsignacion(a, a.requerimiento_id ?? undefined));
+  return [...filasReq, ...filasPersonas];
 }
 
 interface ActividadRow {
@@ -171,7 +165,6 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   const [industriasInactivas, setIndustriasInactivas] = useState<{ value: string; label: string }[]>([]);
   const [tematicasInactivas, setTematicasInactivas] = useState<{ value: string; label: string }[]>([]);
 
-  const [extOpen, setExtOpen] = useState(false);
   // Sección "Equipo del proyecto": colapsada por defecto al abrir el formulario
   const [equipoOpen, setEquipoOpen] = useState(false);
   // Switch rápido de extensión (bajo Descripción): alternativa simple a "Extender Proyecto"
@@ -180,6 +173,14 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   const [extFechaFin, setExtFechaFin] = useState("");
   // id de la extensión ya guardada en BD (si existe) — determina update vs insert al guardar
   const [extId, setExtId] = useState<string | null>(null);
+  // Alargues previos al que se edita en el switch (solo lectura) y los marcados para borrar al guardar
+  const [extsAnteriores, setExtsAnteriores] = useState<ExtensionBasica[]>([]);
+  const [extsAEliminar, setExtsAEliminar] = useState<ExtensionBasica[]>([]);
+  const [extAEliminarConfirm, setExtAEliminarConfirm] = useState<ExtensionBasica | null>(null);
+  // Personas asignadas por alargue (extension_id → n.º de personas), para el resumen de cada línea
+  const [personasPorExt, setPersonasPorExt] = useState<Map<string, number>>(new Map());
+  // Avisos del equipo heredado (ausencias / otros proyectos) antes de crear un alargue nuevo
+  const [avisosAlargue, setAvisosAlargue] = useState<string[] | null>(null);
   const [nuevaIndustriaOpen, setNuevaIndustriaOpen] = useState(false);
   const [nuevaIndustriaNombre, setNuevaIndustriaNombre] = useState("");
   const [nuevaIndustriaLoading, setNuevaIndustriaLoading] = useState(false);
@@ -239,31 +240,6 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     setAusenciasPorPersona(mapaAusencias);
   }
 
-  // Tras "Extender Proyecto": agrega al equipo lo nuevo de la BD sin perder lo editado en pantalla
-  async function recargarEquipo() {
-    if (!engagement) return;
-    extendidoRef.current = true;
-    const supabase = createAnyClient();
-    const [{ data: reqData }, asigResult, { data: extRows }] = await Promise.all([
-      supabase.from("requerimiento_engagement").select("*").eq("engagement_id", engagement.id).order("fase_nombre"),
-      fetchAsignacionesEngagement(supabase, engagement.id),
-      (supabase as any).from("engagement_extension").select("id, fecha_inicio, fecha_fin")
-        .eq("engagement_id", engagement.id).order("created_at", { ascending: false }).limit(1),
-    ]);
-    const frescas = armarFilasEquipo((reqData ?? []) as RequerimientoEngagement[], asigResult.data);
-    const nuevas = frescas.filter((f) => !reqs.some((r) =>
-      (f.id && !f.asignacionId && r.id === f.id) || (f.asignacionId && r.asignacionId === f.asignacionId)));
-    const combinadas = [...reqs, ...nuevas];
-    setReqs(combinadas);
-    await cargarAusencias(supabase, combinadas);
-    const ext = ((extRows ?? []) as { id: string; fecha_inicio: string; fecha_fin: string }[])[0];
-    if (ext) {
-      setMostrarExtension(true); setExtId(ext.id);
-      setExtFechaInicio(ext.fecha_inicio); setExtFechaFin(ext.fecha_fin);
-      setExtPrev({ inicio: ext.fecha_inicio, fin: ext.fecha_fin });
-    }
-  }
-
   // Cerrar: si hubo extensión, avisa al padre para que recargue
   const cerrar = () => {
     if (extendidoRef.current) { extendidoRef.current = false; onSuccess(); }
@@ -275,8 +251,9 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       setForm({ ...EMPTY_ENG }); setReqs([]); setErrors({}); setServerError(null);
       setAsignacionesAEliminar([]); setAusenciasPorPersona(new Map());
       setAsigPersonaReqAEliminar([]); setExtPrev(null); setConfirmQuitarExt(false);
-      setExtOpen(false); setEquipoOpen(false); setActividades([]); setActividadOpen(false); setNuevaActividad({ ...EMPTY_ACTIVIDAD }); setEditingActividadIdx(null);
+      setEquipoOpen(false); setActividades([]); setActividadOpen(false); setNuevaActividad({ ...EMPTY_ACTIVIDAD }); setEditingActividadIdx(null);
       setMostrarExtension(false); setExtFechaInicio(""); setExtFechaFin(""); setExtId(null);
+      setExtsAnteriores([]); setExtsAEliminar([]); setExtAEliminarConfirm(null); setPersonasPorExt(new Map());
       return;
     }
     async function load() {
@@ -296,7 +273,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       setTematicasInactivas((temData.data ?? []).filter((r: any) => !r.activo).map(opcionInactiva));
 
       if (engagement) {
-        const [{ data: reqData }, { data: ecData }, { data: etData }, asigResult, { data: extRows }] = await Promise.all([
+        const [{ data: reqData }, { data: ecData }, { data: etData }, asigResult, { data: extRows }, { data: asigExtRows }] = await Promise.all([
           supabase.from("requerimiento_engagement").select("*").eq("engagement_id", engagement.id).order("fase_nombre"),
           (supabase as any).from("engagement_capacidad").select("capacidad_id").eq("engagement_id", engagement.id),
           (supabase as any).from("engagement_tematica").select("tematica_id").eq("engagement_id", engagement.id),
@@ -304,12 +281,23 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           (supabase as any).from("engagement_extension")
             .select("id, fecha_inicio, fecha_fin")
             .eq("engagement_id", engagement.id)
-            .order("created_at", { ascending: false })
-            .limit(1),
+            .order("fecha_inicio", { ascending: true }),
+          (supabase as any).from("asignacion")
+            .select("persona_id, extension_id")
+            .eq("engagement_id", engagement.id).eq("estado", "activa")
+            .not("extension_id", "is", null),
         ]);
 
-        // Hidrata el switch de extensión rápida con el registro más reciente (si existe)
-        const ext = ((extRows ?? []) as { id: string; fecha_inicio: string; fecha_fin: string }[])[0];
+        // El switch edita el ÚLTIMO alargue (por fecha); los anteriores se listan aparte
+        const todasExt = (extRows ?? []) as ExtensionBasica[];
+        const ext = todasExt[todasExt.length - 1];
+        setExtsAnteriores(todasExt.slice(0, -1));
+        const conteo = new Map<string, Set<string>>();
+        for (const a of (asigExtRows ?? []) as { persona_id: string; extension_id: string }[]) {
+          if (!conteo.has(a.extension_id)) conteo.set(a.extension_id, new Set());
+          conteo.get(a.extension_id)!.add(a.persona_id);
+        }
+        setPersonasPorExt(new Map([...conteo].map(([k, v]) => [k, v.size])));
         setMostrarExtension(!!ext);
         setExtId(ext?.id ?? null);
         setExtFechaInicio(ext?.fecha_inicio ?? "");
@@ -552,9 +540,22 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   }
 
   // fecha_fin_estimada puede estar vacía si el engagement usa fecha_fin_real
-  const fechaFinEfectiva = form.fecha_fin_estimada || (engagement as any)?.fecha_fin_real || "";
+  // Mismo criterio que el resto de la app: primero el fin real, si no el estimado
+  const fechaFinEfectiva = (engagement as any)?.fecha_fin_real || form.fecha_fin_estimada || "";
   // Fin permitido para el equipo: incluye el alargue (si no, tras extender no se podía guardar)
-  const limiteFinEquipo = mostrarExtension && extFechaFin && extFechaFin > fechaFinEfectiva ? extFechaFin : fechaFinEfectiva;
+  // (considera también los alargues anteriores que no se van a borrar)
+  const limiteFinEquipo = [
+    fechaFinEfectiva,
+    mostrarExtension ? extFechaFin : "",
+    ...extsAnteriores.filter((e) => !extsAEliminar.some((x) => x.id === e.id)).map((e) => e.fecha_fin),
+  ].reduce((max, f) => (f && f > max ? f : max), "");
+
+  // Tramos del proyecto (Contrato + Extensión N) para rotular los períodos del equipo
+  const tramosForm = (() => {
+    const exts: ExtensionBasica[] = extsAnteriores.filter((e) => !extsAEliminar.some((x) => x.id === e.id));
+    if (mostrarExtension && extFechaInicio && extFechaFin) exts.push({ id: extId ?? "nueva", fecha_inicio: extFechaInicio, fecha_fin: extFechaFin });
+    return exts.length > 0 ? armarTramos(form.fecha_inicio || null, fechaFinEfectiva || null, exts) : [];
+  })();
 
   const addReq = () => {
     setReqs((r) => {
@@ -581,17 +582,22 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   };
 
   /** Agrega un tramo nuevo a la tarjeta consolidada de una persona (sin requerimiento vinculado). */
-  const addTramoParaPersona = (personaId: string, personaNombre: string) => {
+  // Con `tramo` (Contrato / Extensión N): el período nuevo queda dentro de ese tramo,
+  // a continuación de lo que la persona ya tenga en él; el contrato no se modifica
+  const addTramoParaPersona = (personaId: string, personaNombre: string, tramo?: Tramo) => {
     setReqs((r) => {
       const tramosPersona = r.filter((row) => row.personaId === personaId);
-      const ultimoFin = tramosPersona.reduce((max, row) => (row.fecha_fin && row.fecha_fin > max ? row.fecha_fin : max), "");
+      const enRango = tramo ? tramosPersona.filter((row) => row.fecha_fin && row.fecha_fin >= tramo.inicio && row.fecha_fin <= tramo.fin) : tramosPersona;
+      const ultimoFin = enRango.reduce((max, row) => (row.fecha_fin && row.fecha_fin > max ? row.fecha_fin : max), "");
       const ultimo = tramosPersona[tramosPersona.length - 1];
-      let nuevaFechaInicio = form.fecha_inicio;
+      let nuevaFechaInicio = tramo?.inicio ?? form.fecha_inicio;
       if (ultimoFin) {
         const d = new Date(ultimoFin + "T00:00:00");
         d.setDate(d.getDate() + 1);
         nuevaFechaInicio = d.toISOString().split("T")[0];
       }
+      // Si el tramo ya está cubierto hasta su fin, el período nuevo parte y termina en su último día
+      if (tramo && nuevaFechaInicio > tramo.fin) nuevaFechaInicio = tramo.fin;
       const nuevo: ReqRow = {
         personaId,
         persona_nombre: personaNombre,
@@ -600,7 +606,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
         descripcion: "",
         pct_dedicacion: ultimo?.pct_dedicacion ?? "100",
         fecha_inicio: nuevaFechaInicio,
-        fecha_fin: fechaFinEfectiva,
+        fecha_fin: tramo?.fin ?? fechaFinEfectiva,
       };
       return [...r, nuevo];
     });
@@ -621,6 +627,23 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     }
     if (form.fecha_fin_estimada && form.fecha_inicio && form.fecha_fin_estimada < form.fecha_inicio) {
       e.fecha_fin_estimada = "No puede ser anterior a la fecha de inicio";
+    }
+    // El contrato debe terminar antes de que empiece el primer alargue (si no, se pisan y el equipo se duplica)
+    const iniciosAlargue = [
+      ...extsAnteriores.filter((x) => !extsAEliminar.some((d) => d.id === x.id)).map((x) => x.fecha_inicio),
+      ...(mostrarExtension && extFechaInicio ? [extFechaInicio] : []),
+    ].sort();
+    if (!e.fecha_fin_estimada && form.fecha_fin_estimada && iniciosAlargue[0] && form.fecha_fin_estimada >= iniciosAlargue[0]) {
+      e.fecha_fin_estimada = `Debe ser anterior al ${iniciosAlargue[0]} (inicio del primer alargue)`;
+    }
+    // Alargue del switch: fechas completas, en orden y después del tramo anterior (contrato o alargue previo)
+    if (mostrarExtension) {
+      const finTramoPrevio = [fechaFinEfectiva, ...extsAnteriores.filter((x) => !extsAEliminar.some((d) => d.id === x.id)).map((x) => x.fecha_fin)]
+        .reduce((m, f) => (f && f > m ? f : m), "");
+      if (!extFechaInicio) e.ext_inicio = "Requerida";
+      else if (finTramoPrevio && extFechaInicio <= finTramoPrevio) e.ext_inicio = `Debe ser posterior al ${finTramoPrevio} (fin del tramo anterior)`;
+      if (!extFechaFin) e.ext_fin = "Requerida";
+      else if (extFechaInicio && extFechaFin < extFechaInicio) e.ext_fin = "No puede ser anterior al inicio del alargue";
     }
     // Límite = fin del proyecto o, si hay alargue, su fin
     const maxFin = limiteFinEquipo || null;
@@ -660,7 +683,67 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     return Object.keys(e).length === 0;
   };
 
-  const handleSubmit = async (extQuitadaConfirmada = false) => {
+  /**
+   * Equipo que hereda un alargue nuevo: quienes seguían activos al cierre del período previo
+   * (último día staffeado antes del alargue) y que no están ya asignados en esas fechas.
+   */
+  async function calcularEquipoAlargue(supabase: any, engId: string) {
+    type AsigEq = { persona_id: string; cargo_al_momento: string | null; pct_dedicacion: number; requerimiento_id: string | null; fecha_inicio: string; fecha_fin: string | null; persona: { nombre: string; apellido: string } | null };
+    const { data, error } = await supabase.from("asignacion")
+      .select("persona_id, cargo_al_momento, pct_dedicacion, requerimiento_id, fecha_inicio, fecha_fin, persona:persona_id(nombre, apellido)")
+      .eq("engagement_id", engId).eq("estado", "activa")
+      .order("fecha_inicio", { ascending: false });
+    if (error) return { equipo: [] as AsigEq[], error: error.message as string };
+    const asigs = (data ?? []) as AsigEq[];
+    // Corte = fin del tramo anterior (contrato o alargue previo): el trabajo de cierre en la pausa
+    // no define quién sigue; se toma el último día staffeado hasta ese corte
+    const corte = [fechaFinEfectiva, ...extsAnteriores.filter((x) => !extsAEliminar.some((d) => d.id === x.id)).map((x) => x.fecha_fin)]
+      .reduce((m, f) => (f && f > m && f < extFechaInicio ? f : m), "");
+    const limite = corte ? sumarDias(corte, 1) : extFechaInicio;
+    const finPrevio = asigs.reduce<string | null>((max, a) => (a.fecha_fin && a.fecha_fin < limite && (!max || a.fecha_fin > max) ? a.fecha_fin : max), null);
+    // Ya cubiertos en el período del alargue: no se duplican
+    const yaEnAlargue = new Set(asigs.filter((a) => a.fecha_inicio <= extFechaFin && (!a.fecha_fin || a.fecha_fin >= extFechaInicio)).map((a) => a.persona_id));
+    const vistos = new Set<string>();
+    const equipo = finPrevio
+      ? asigs.filter((a) => a.fecha_inicio <= finPrevio && (!a.fecha_fin || a.fecha_fin >= finPrevio))
+          .filter((a) => !yaEnAlargue.has(a.persona_id) && !vistos.has(a.persona_id) && !!vistos.add(a.persona_id))
+      : [];
+    return { equipo, error: null };
+  }
+
+  /** Avisos del equipo heredado en las fechas del alargue: ausencias y asignaciones en otros proyectos. */
+  async function revisarEquipoAlargue(supabase: any, engId: string): Promise<{ avisos: string[]; error: string | null }> {
+    const { equipo, error } = await calcularEquipoAlargue(supabase, engId);
+    if (error) return { avisos: [], error };
+    if (equipo.length === 0) return { avisos: [], error: null };
+    const ids = equipo.map((a) => a.persona_id);
+    const [{ data: aus, error: ausErr }, { data: otras, error: otrasErr }] = await Promise.all([
+      supabase.from("ausencia").select("persona_id, tipo, fecha_inicio, fecha_fin")
+        .in("persona_id", ids).lte("fecha_inicio", extFechaFin).gte("fecha_fin", extFechaInicio),
+      supabase.from("asignacion").select("persona_id, pct_dedicacion, engagement:engagement_id(nombre)")
+        .in("persona_id", ids).neq("engagement_id", engId).eq("estado", "activa")
+        .lte("fecha_inicio", extFechaFin).or(`fecha_fin.gte.${extFechaInicio},fecha_fin.is.null`),
+    ]);
+    if (ausErr || otrasErr) return { avisos: [], error: (ausErr ?? otrasErr).message };
+    const fmt = (d: string) => format(new Date(d + "T00:00:00"), "d MMM", { locale: es });
+    return {
+      avisos: equipo.flatMap((a) => {
+        const detalles = [
+          ...((aus ?? []) as { persona_id: string; tipo: string; fecha_inicio: string; fecha_fin: string }[])
+            .filter((x) => x.persona_id === a.persona_id)
+            .map((x) => `${COLOR_AUSENCIA[x.tipo as TipoAusencia]?.label ?? x.tipo} ${fmt(x.fecha_inicio)}–${fmt(x.fecha_fin)}`),
+          ...((otras ?? []) as { persona_id: string; pct_dedicacion: number; engagement: { nombre: string } | null }[])
+            .filter((x) => x.persona_id === a.persona_id)
+            .map((x) => `${x.engagement?.nombre ?? "Otro proyecto"} ${Number(x.pct_dedicacion)}% en esas fechas`),
+        ];
+        const nombre = a.persona ? `${a.persona.nombre} ${a.persona.apellido}` : "Persona";
+        return detalles.length > 0 ? [`${nombre}: ${detalles.join(" · ")}`] : [];
+      }),
+      error: null,
+    };
+  }
+
+  const handleSubmit = async (extQuitadaConfirmada = false, avisosConfirmados = false) => {
     if (!validate()) return;
     // Apagar el alargue borra su período y al equipo asignado: pedir confirmación
     if (!simulationMode && !mostrarExtension && extId && !extQuitadaConfirmada) {
@@ -669,6 +752,15 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
     }
     setConfirmQuitarExt(false);
     setLoading(true); setServerError(null);
+
+    // Alargue nuevo: antes de guardar nada, avisar si el equipo heredado tiene ausencias
+    // u otros proyectos en esas fechas (lo que mostraba el antiguo "Extender Proyecto")
+    if (!simulationMode && engagement && mostrarExtension && !extId && !avisosConfirmados) {
+      const { avisos, error: revErr } = await revisarEquipoAlargue(createAnyClient(), engagement.id);
+      if (revErr) { setServerError(`No se pudo revisar al equipo del alargue: ${revErr}`); setLoading(false); return; }
+      if (avisos.length > 0) { setAvisosAlargue(avisos); setLoading(false); return; }
+    }
+    setAvisosAlargue(null);
 
     // ── SIMULACIÓN: sin Supabase, notifica al padre con los datos del form ──
     if (simulationMode) {
@@ -783,9 +875,21 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       for (const p of (prevData ?? []) as any[]) reqsPrevios.set(p.id, p);
     }
 
+    // Alargue al que pertenece un período según sus fechas (null = contrato o alargue aún no creado).
+    // Incluye los alargues marcados para borrar: así su equipo sigue vinculado y se libera al borrarlos.
+    const tramosVinculo = armarTramos(fechaFinEfectiva ? form.fecha_inicio || null : null, fechaFinEfectiva || null, [
+      ...extsAnteriores,
+      // El del switch con sus fechas GUARDADAS (no las nuevas): el vínculo se calcula antes de mover
+      // o recortar al equipo, y así ese paso alcanza a todos sus períodos. Aunque se haya apagado,
+      // se incluye (se borra después y debe llevarse a su equipo)
+      ...(extId && extPrev ? [{ id: extId, fecha_inicio: extPrev.inicio, fecha_fin: extPrev.fin }] : []),
+    ]);
+    const extDePeriodo = (inicio: string, fin: string) =>
+      tramosVinculo.some((t) => t.extensionId) ? tramoDePeriodo(tramosVinculo, { fecha_inicio: inicio, fecha_fin: fin || null })?.extensionId ?? null : null;
+
     for (const [i, r] of reqs.entries()) {
-      // Fila de asignación directa (sin requerimiento_engagement): actualiza esa asignación
-      // puntual en lugar de crear/editar un requerimiento.
+      // Fila de asignación (período real de una persona): actualiza esa asignación puntual
+      // en lugar de crear/editar un requerimiento.
       if (r.asignacionId) {
         const { error: asigErr } = await supabase
           .from("asignacion")
@@ -794,7 +898,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
             pct_dedicacion: Number(r.pct_dedicacion),
             fecha_inicio: r.fecha_inicio,
             fecha_fin: r.fecha_fin || null,
-          })
+            extension_id: extDePeriodo(r.fecha_inicio, r.fecha_fin), // vínculo al alargue según sus fechas
+          } as any)
           .eq("id", r.asignacionId);
         if (asigErr) { setServerError(`Error al actualizar asignación de ${r.persona_nombre ?? "persona"}: ${asigErr.message}`); setLoading(false); return; }
         continue;
@@ -813,6 +918,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           fecha_fin: r.fecha_fin || null,
           estado: "activa",
           estado_staffing: "CONFIRMADO",
+          extension_id: extDePeriodo(r.fecha_inicio, r.fecha_fin), // agregado en "Extensión N" → queda vinculado a ese alargue
         });
         if (insAsigErr) { setServerError(`Error al crear tramo de ${r.persona_nombre ?? "persona"}: ${insAsigErr.message}`); setLoading(false); return; }
         continue;
@@ -998,35 +1104,64 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
       }
     }
 
+    // Alargues anteriores marcados con la papelera: se borran junto con su equipo
+    for (const ex of extsAEliminar) {
+      const { error: delErr } = await eliminarExtensionConEquipo(supabase, ex.id);
+      if (delErr) { setServerError(`Error al eliminar el alargue ${ex.fecha_inicio} → ${ex.fecha_fin}: ${delErr}`); setLoading(false); return; }
+    }
+
     // Switch de extensión rápida: update si ya existía, insert si es nueva, delete si se apagó
     if (mostrarExtension && extFechaInicio && extFechaFin) {
-      if (extId) {
-        const { error: extErr } = await supabase
-          .from("engagement_extension")
+      // Alargue al que se vinculan, al final, los períodos sueltos que caen en sus fechas
+      let idAlargueVinculo: string | null = null;
+      if (extId && extPrev && (extPrev.inicio !== extFechaInicio || extPrev.fin !== extFechaFin)) {
+        idAlargueVinculo = extId; // la parte agregada al alargue puede tener períodos nuevos
+        // Fechas del alargue cambiadas: el equipo se ajusta respetando los períodos de cada persona
+        const { error: extErr } = await cambiarFechasExtension(supabase, engId,
+          { id: extId, fecha_inicio: extPrev.inicio, fecha_fin: extPrev.fin }, extFechaInicio, extFechaFin);
+        if (extErr) { setServerError(`Error al cambiar las fechas del alargue: ${extErr}`); setLoading(false); return; }
+        // Asignaciones antiguas sin vínculo creadas con las fechas exactas del alargue: se mueven con él
+        const { error: legErr } = await supabase.from("asignacion")
           .update({ fecha_inicio: extFechaInicio, fecha_fin: extFechaFin })
-          .eq("id", extId);
-        if (extErr) { setServerError(`Error al actualizar extensión: ${extErr.message}`); setLoading(false); return; }
-        // Si cambiaron las fechas del alargue, mover también al equipo de ese período
-        if (extPrev && (extPrev.inicio !== extFechaInicio || extPrev.fin !== extFechaFin)) {
-          const nuevas = { fecha_inicio: extFechaInicio, fecha_fin: extFechaFin };
-          const movOps = await Promise.all([
-            supabase.from("asignacion").update(nuevas).eq("extension_id" as any, extId),
-            supabase.from("asignacion").update(nuevas).eq("engagement_id", engId)
-              .eq("fecha_inicio", extPrev.inicio).eq("fecha_fin", extPrev.fin),
-            supabase.from("requerimiento_engagement").update(nuevas).eq("engagement_id", engId)
-              .eq("fecha_inicio", extPrev.inicio).eq("fecha_fin", extPrev.fin),
-          ]);
-          const movErr = movOps.find((x: any) => x.error)?.error;
-          if (movErr) { setServerError(`Error al mover el equipo del alargue: ${movErr.message}`); setLoading(false); return; }
-        }
+          .eq("engagement_id", engId).is("extension_id" as any, null)
+          .eq("fecha_inicio", extPrev.inicio).eq("fecha_fin", extPrev.fin);
+        if (legErr) { setServerError(`Error al mover el equipo del alargue: ${legErr.message}`); setLoading(false); return; }
+      } else if (extId) {
+        // Alargue ya guardado y sin cambios de fechas: nada que hacer
       } else {
-        const { error: extErr } = await crearExtensionEngagement(supabase, {
+        const { equipo: equipoAlargue, error: eqErr } = await calcularEquipoAlargue(supabase, engId);
+        if (eqErr) { setServerError(`Error al leer el equipo para el alargue: ${eqErr}`); setLoading(false); return; }
+        // Alargue + equipo en un solo paso: el equipo queda vinculado por id (extension_id) y,
+        // si falla su asignación, el alargue se deshace (no queda a medias)
+        const { error: extErr, extensionId: extNuevaId } = await crearExtensionEngagement(supabase, {
           engagementId: engId,
           fechaInicio: extFechaInicio,
           fechaFin: extFechaFin,
-          personas: [],
+          personas: equipoAlargue.map((a) => ({
+            personaId: a.persona_id,
+            cargo: a.cargo_al_momento,
+            pct: a.pct_dedicacion,
+            requerimientoId: a.requerimiento_id,
+          })),
         });
-        if (extErr) { setServerError(`Error al crear extensión: ${extErr}`); setLoading(false); return; }
+        if (extErr) { setServerError(`Error al crear el alargue: ${extErr}`); setLoading(false); return; }
+        idAlargueVinculo = extNuevaId ?? null;
+      }
+
+      // Períodos agregados en este mismo guardado dentro del alargue (nuevo, o en la parte que se le
+      // agregó; aún no existían esas fechas al guardarlos): se vinculan a él, para que se liberen si
+      // después se borra. Cuenta desde el día siguiente al fin del tramo anterior (incluye trabajo anticipado)
+      if (idAlargueVinculo) {
+        const finTramoPrevio = [fechaFinEfectiva, ...extsAnteriores.filter((x) => !extsAEliminar.some((d) => d.id === x.id)).map((x) => x.fecha_fin)]
+          .reduce((m, f) => (f && f > m && f < extFechaInicio ? f : m), "");
+        // Solo los que llegan al alargue: los que terminan en la pausa son trabajo de cierre del tramo anterior
+        let vincQ = (supabase as any).from("asignacion").update({ extension_id: idAlargueVinculo })
+          .eq("engagement_id", engId).is("extension_id", null).lte("fecha_inicio", extFechaFin)
+          .or(`fecha_fin.gte.${extFechaInicio},fecha_fin.is.null`);
+        if (finTramoPrevio) vincQ = vincQ.gt("fecha_inicio", finTramoPrevio);
+        else vincQ = vincQ.gte("fecha_inicio", extFechaInicio);
+        const { error: vincErr } = await vincQ;
+        if (vincErr) { setServerError(`El alargue se guardó, pero no se pudo vincular a su equipo: ${vincErr.message}`); setLoading(false); return; }
       }
     } else if (!mostrarExtension && extId) {
       // Elimina la extensión y libera al equipo asignado a ese período
@@ -1049,11 +1184,7 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
   // Viajes/talleres deben caer dentro del engagement (incluida su extensión): si quedaban
   // fuera se guardaban igual pero no se veían en ninguna vista
   const minActDate = form.fecha_inicio || undefined;
-  const maxActDate = (() => {
-    const fin = fechaFinEfectiva || "";
-    const ext = mostrarExtension && extFechaFin ? extFechaFin : "";
-    return (ext > fin ? ext : fin) || undefined;
-  })();
+  const maxActDate = limiteFinEquipo || undefined;
 
   // Agrega (o reemplaza, si se está editando) el viaje/taller del formulario
   function guardarActividad() {
@@ -1276,7 +1407,8 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
               const next = !mostrarExtension;
               setMostrarExtension(next);
               if (next && !extFechaInicio) {
-                const base = fechaFinEfectiva || form.fecha_inicio;
+                // Parte el día siguiente al fin del último tramo (contrato o alargue anterior)
+                const base = [fechaFinEfectiva, ...extsAnteriores.map((e) => e.fecha_fin)].reduce((m, f) => (f && f > m ? f : m), "") || form.fecha_inicio;
                 const inicio = base ? shiftDate(base, 1) : "";
                 setExtFechaInicio(inicio);
                 setExtFechaFin(inicio);
@@ -1288,25 +1420,74 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           </button>
         </div>
 
+        {/* Alargues anteriores: solo lectura, con papelera (se borran al guardar) */}
+        {extsAnteriores.length > 0 && (() => {
+          const fmtExt = (d: string) => format(new Date(d + "T00:00:00"), "d MMM yyyy", { locale: es });
+          const vigentes = extsAnteriores.filter((e) => !extsAEliminar.some((x) => x.id === e.id));
+          return (
+            <div className="space-y-1.5">
+              {numerarExtensiones(vigentes).map((e) => {
+                const n = personasPorExt.get(e.id) ?? 0;
+                return (
+                  <div key={e.id} className="flex items-center justify-between border border-[#e5e7eb] bg-[#fafafa] rounded-lg px-3 py-2">
+                    <div className="text-xs">
+                      <span className="font-semibold text-[#555]">Extensión {e.numero}</span>
+                      <span className="text-[#888]"> · {fmtExt(e.fecha_inicio)} → {fmtExt(e.fecha_fin)} · {n} {n === 1 ? "persona" : "personas"}</span>
+                    </div>
+                    <button type="button" onClick={() => setExtAEliminarConfirm(e)} title="Eliminar este alargue"
+                      className="p-1 rounded text-[#bbb] hover:text-red-500 hover:bg-red-50 transition-colors">
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          );
+        })()}
+
         {mostrarExtension && (
           <div className="border border-[#c7d9f4] bg-[#f8fbff] rounded-xl p-3 space-y-3">
+            {/* Número del alargue que se edita: sigue a los anteriores que quedan */}
+            <p className="text-xs font-semibold text-[#2563eb]">
+              Extensión {extsAnteriores.filter((e) => !extsAEliminar.some((x) => x.id === e.id)).length + 1}
+              {!extId && <span className="font-normal text-[#888]"> · nueva</span>}
+            </p>
             <div className="grid grid-cols-2 gap-3">
-              <FieldWrapper label="Inicio del alargue">
+              <FieldWrapper label="Inicio del alargue" required error={errors.ext_inicio}>
                 <Input
                   type="date"
                   value={extFechaInicio}
                   onChange={(e) => setExtFechaInicio(e.target.value)}
+                  error={!!errors.ext_inicio}
                 />
               </FieldWrapper>
-              <FieldWrapper label="Fin del alargue">
+              <FieldWrapper label="Fin del alargue" required error={errors.ext_fin}>
                 <Input
                   type="date"
                   value={extFechaFin}
                   onChange={(e) => setExtFechaFin(e.target.value)}
                   min={extFechaInicio || undefined}
+                  error={!!errors.ext_fin}
                 />
               </FieldWrapper>
             </div>
+            {/* Agregar otro: deja fijo el alargue guardado y abre uno nuevo después de él */}
+            {extId && extPrev && (
+              extPrev.inicio === extFechaInicio && extPrev.fin === extFechaFin ? (
+                <button type="button"
+                  onClick={() => {
+                    setExtsAnteriores((prev) => [...prev, { id: extId, fecha_inicio: extPrev.inicio, fecha_fin: extPrev.fin }]);
+                    setExtId(null); setExtPrev(null);
+                    const inicio = sumarDias(extPrev.fin, 1);
+                    setExtFechaInicio(inicio); setExtFechaFin(inicio);
+                  }}
+                  className="flex items-center gap-1 text-xs font-medium text-[#2563eb] hover:underline">
+                  <Plus className="w-3.5 h-3.5" /> Agregar otro alargue
+                </button>
+              ) : (
+                <p className="text-[11px] text-[#888]">Guarda los cambios de este alargue antes de agregar otro.</p>
+              )
+            )}
           </div>
         )}
 
@@ -1459,10 +1640,21 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                   >
                     <div className="flex flex-col gap-0.5">
                       <span className="text-xs font-semibold text-[#888]">
-                        Requerimiento
+                        {/* Con alargues: tramo al que pertenece el cupo */}
+                        {tramosForm.length > 0 && r.fecha_inicio && (() => {
+                          const t = tramoDePeriodo(tramosForm, { fecha_inicio: r.fecha_inicio });
+                          return t ? <span className="mr-1.5 text-[10px] font-bold uppercase tracking-wide text-[#2563eb]">{t.titulo} ·</span> : null;
+                        })()}
+                        {r.cubierto ? "Requerimiento cubierto" : "Requerimiento"}
                         {r.fase_nombre && <span className="ml-1.5 font-normal text-[#aaa]">· {r.fase_nombre}</span>}
                         {r.cargo_requerido && <span className="ml-1.5 font-normal text-[#aaa]">· {r.cargo_requerido}</span>}
                       </span>
+                      {/* Quiénes lo cubren (sus períodos se editan en su tarjeta de persona) */}
+                      {r.cubierto && (
+                        <span className="text-[10px] text-[#aaa]">
+                          Cubierto por {[...new Set(reqs.filter((o) => o.reqVinculadoId === r.id).map((o) => o.persona_nombre).filter(Boolean))].join(", ")}
+                        </span>
+                      )}
                       {/* Badge de ausencias en simulación */}
                       {r.ausenciasPeriodo && r.ausenciasPeriodo.length > 0 && (
                         <span className="text-[10px] text-amber-600 bg-amber-50 border border-amber-200 rounded px-1.5 py-0.5 w-fit">
@@ -1481,13 +1673,16 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                       >
                         {colapsado ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronUp className="w-3.5 h-3.5" />}
                       </button>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); removeReq(idx); }}
-                        className="text-[#aaa] hover:text-red-500 transition-colors"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
+                      {/* Cubierto: para quitarlo, primero se quitan sus personas */}
+                      {!r.cubierto && (
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); removeReq(idx); }}
+                          className="text-[#aaa] hover:text-red-500 transition-colors"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      )}
                     </div>
                   </div>
                   {/* Body colapsable */}
@@ -1509,14 +1704,27 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                         <FieldWrapper label="Descripción del rol">
                           <Input value={r.descripcion} onChange={setReqField(idx, "descripcion")} placeholder="Líder de proyecto" />
                         </FieldWrapper>
-                        <FieldWrapper label="Fecha inicio" required error={errors[`req_${idx}_inicio`]}>
-                          <Input type="date" value={r.fecha_inicio} onChange={setReqField(idx, "fecha_inicio")}
-                            min={minReqDate} max={maxReqDate} error={!!errors[`req_${idx}_inicio`]} />
-                        </FieldWrapper>
-                        <FieldWrapper label="Fecha fin" required error={errors[`req_${idx}_fin`]}>
-                          <Input type="date" value={r.fecha_fin} onChange={setReqField(idx, "fecha_fin")}
-                            min={r.fecha_inicio || minReqDate} max={maxReqDate} error={!!errors[`req_${idx}_fin`]} />
-                        </FieldWrapper>
+                        {/* Copia de un cupo en un alargue (mismas fechas exactas que un alargue guardado):
+                            sus fechas van con las del alargue; si se editaran aquí, dejaría de moverse y borrarse con él */}
+                        {(() => {
+                          const esCopiaAlargue = !!r.id && [
+                            ...extsAnteriores,
+                            ...(extId && extPrev ? [{ id: extId, fecha_inicio: extPrev.inicio, fecha_fin: extPrev.fin }] : []),
+                          ].some((x) => x.fecha_inicio === r.fecha_inicio && x.fecha_fin === r.fecha_fin);
+                          const nota = esCopiaAlargue ? "Se cambian con las fechas del alargue" : undefined;
+                          return (
+                            <>
+                              <FieldWrapper label="Fecha inicio" required hint={nota} error={errors[`req_${idx}_inicio`]}>
+                                <Input type="date" value={r.fecha_inicio} onChange={setReqField(idx, "fecha_inicio")} disabled={esCopiaAlargue}
+                                  min={minReqDate} max={maxReqDate} error={!!errors[`req_${idx}_inicio`]} />
+                              </FieldWrapper>
+                              <FieldWrapper label="Fecha fin" required hint={nota} error={errors[`req_${idx}_fin`]}>
+                                <Input type="date" value={r.fecha_fin} onChange={setReqField(idx, "fecha_fin")} disabled={esCopiaAlargue}
+                                  min={r.fecha_inicio || minReqDate} max={maxReqDate} error={!!errors[`req_${idx}_fin`]} />
+                              </FieldWrapper>
+                            </>
+                          );
+                        })()}
                       </div>
                     </div>
                   )}
@@ -1529,28 +1737,89 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
               const tramosOrdenados = [...grupo.tramos].sort((a, b) => a.r.fecha_inicio.localeCompare(b.r.fecha_inicio));
               // Solo ausencias dentro del rango del engagement (Fecha inicio → Fecha fin estimada/real):
               // se excluyen tanto las anteriores al inicio del proyecto como las posteriores a su fin.
+              // (con alargues, hasta el fin del último alargue)
               const ausenciasEnRango = (ausenciasPorPersona.get(personaId) ?? []).filter((a) =>
                 (!form.fecha_inicio || a.fin >= form.fecha_inicio) &&
-                (!fechaFinEfectiva || a.inicio <= fechaFinEfectiva)
+                (!limiteFinEquipo || a.inicio <= limiteFinEquipo)
               );
               const eventos = construirEventosTimelineForm(
                 tramosOrdenados.map((t) => ({ idx: t.idx, inicio: t.r.fecha_inicio })),
                 ausenciasEnRango
               );
+              // Con alargues: los períodos se agrupan por tramo (Contrato / Extensión N), con pausas entre ellos
+              const conTramos = tramosForm.length > 0;
+              const pausasForm = conTramos ? pausasEntre(tramosForm) : [];
+              const tramoDe = (row: ReqRow) => (row.fecha_inicio ? tramoDePeriodo(tramosForm, { fecha_inicio: row.fecha_inicio, fecha_fin: row.fecha_fin || null }) : null);
+              const tramosConPeriodo = new Set(tramosOrdenados.map((t) => tramoDe(t.r)?.key).filter(Boolean));
+              const fmtT = (d: string) => format(fLocal(d), "d MMM yyyy", { locale: es });
+              let ultimoTramoKey: string | null = null;
               return (
                 <div key={personaId} className="border border-[#e8e8e8] rounded-xl overflow-hidden">
                   <div className="flex items-center justify-between px-4 py-3 bg-[#fafafa] border-b border-[#f0f0f0]">
                     <span className="text-sm font-semibold text-[#1a1a1a]">{grupo.nombre}</span>
-                    <button
-                      type="button"
-                      onClick={() => addTramoParaPersona(personaId, grupo.nombre)}
-                      className="flex items-center gap-1 text-[11px] text-[#4a90e2] hover:text-[#2563eb] font-medium transition-colors"
-                    >
-                      <Plus className="w-3 h-3" /> Agregar tramo
-                    </button>
+                    {!conTramos && (
+                      <button
+                        type="button"
+                        onClick={() => addTramoParaPersona(personaId, grupo.nombre)}
+                        className="flex items-center gap-1 text-[11px] text-[#4a90e2] hover:text-[#2563eb] font-medium transition-colors"
+                      >
+                        <Plus className="w-3 h-3" /> Agregar tramo
+                      </button>
+                    )}
                   </div>
                   <div className="divide-y divide-[#f0f0f0]">
                     {eventos.map((ev, evIdx) => {
+                      // Encabezado de tramo (y pausa previa) al cambiar de tramo entre períodos
+                      let encabezado: React.ReactNode = null;
+                      if (conTramos && ev.tipo !== "ausencia") {
+                        const t = tramoDe(reqs[ev.tramoIdx]);
+                        if (t && t.key !== ultimoTramoKey) {
+                          const pausa = pausasForm.find((p) => p.despuesDe === ultimoTramoKey);
+                          encabezado = (
+                            <>
+                              {pausa && (
+                                <div className="px-4 py-1.5 flex items-center gap-2">
+                                  <div className="flex-1 border-t border-dashed border-[#e0e0e0]" />
+                                  <span className="text-[10px] text-[#aaa]">Pausa: {fmtT(pausa.inicio)} → {fmtT(pausa.fin)}</span>
+                                  <div className="flex-1 border-t border-dashed border-[#e0e0e0]" />
+                                </div>
+                              )}
+                              <div className="px-4 py-2 flex items-center justify-between bg-[#f8fbff]">
+                                <span className="text-[10px] font-bold uppercase tracking-widest text-[#2563eb]">
+                                  {t.titulo} <span className="font-normal normal-case tracking-normal text-[#aaa]">· {fmtT(t.inicio)} → {fmtT(t.fin)}</span>
+                                </span>
+                                <button type="button" onClick={() => addTramoParaPersona(personaId, grupo.nombre, t)}
+                                  className="flex items-center gap-1 text-[11px] text-[#4a90e2] hover:text-[#2563eb] font-medium transition-colors">
+                                  <Plus className="w-3 h-3" /> Agregar período
+                                </button>
+                              </div>
+                            </>
+                          );
+                          ultimoTramoKey = t.key;
+                        }
+                      }
+                      if (encabezado) {
+                        const fila = renderEvento(ev, evIdx);
+                        return <div key={`grp-${evIdx}`}>{encabezado}{fila}</div>;
+                      }
+                      return renderEvento(ev, evIdx);
+                    })}
+                    {/* Tramos donde la persona aún no tiene períodos: atajo para agregarle uno ahí */}
+                    {conTramos && tramosForm.some((t) => !tramosConPeriodo.has(t.key)) && (
+                      <div className="px-4 py-2 flex flex-wrap gap-2">
+                        {tramosForm.filter((t) => !tramosConPeriodo.has(t.key)).map((t) => (
+                          <button key={t.key} type="button" onClick={() => addTramoParaPersona(personaId, grupo.nombre, t)}
+                            className="flex items-center gap-1 text-[11px] text-[#4a90e2] hover:text-[#2563eb] font-medium border border-dashed border-[#c7d9f4] rounded-md px-2 py-1 transition-colors">
+                            <Plus className="w-3 h-3" /> Agregar período en {t.titulo}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+
+                    function renderEvento(ev: (typeof eventos)[number], evIdx: number) {
                       if (ev.tipo === "ausencia") {
                         return (
                           <div key={`aus-${evIdx}`} className="px-4 py-2 bg-amber-50">
@@ -1576,10 +1845,27 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                             onClick={toggleReq}
                           >
                             <span className="text-xs font-semibold text-[#888]">
+                              {/* El tramo va en el encabezado del grupo; aquí solo si es anticipado, de cierre o queda fuera */}
+                              {tramosForm.length > 0 && r.fecha_inicio && (() => {
+                                const t = tramoDePeriodo(tramosForm, { fecha_inicio: r.fecha_inicio, fecha_fin: r.fecha_fin || null });
+                                const etiqueta = !t ? "Fuera del proyecto"
+                                  : r.fecha_inicio < t.inicio ? "Anticipado"
+                                  : r.fecha_fin && r.fecha_fin > t.fin && !cruzaPausa(tramosForm, { fecha_inicio: r.fecha_inicio, fecha_fin: r.fecha_fin }) ? "Después del cierre"
+                                  : null;
+                                if (!etiqueta) return null;
+                                return (
+                                  <span className="mr-1.5 text-[10px] font-bold uppercase tracking-wide text-[#2563eb]">
+                                    {etiqueta} ·
+                                  </span>
+                                );
+                              })()}
                               {r.cargo_requerido || "Cualquier cargo"}
                               <span className="ml-1.5 font-normal text-[#aaa]">
                                 · {r.fecha_inicio} → {r.fecha_fin || "hoy"}
                               </span>
+                              {tramosForm.length > 0 && r.fecha_inicio && r.fecha_fin && cruzaPausa(tramosForm, { fecha_inicio: r.fecha_inicio, fecha_fin: r.fecha_fin }) && (
+                                <span className="ml-1.5 font-normal text-amber-600">· sigue durante toda una pausa</span>
+                              )}
                             </span>
                             <div className="flex items-center gap-2">
                               <button
@@ -1610,21 +1896,19 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
                                   error={!!errors[`req_${idx}_pct`]} />
                               </FieldWrapper>
                               <FieldWrapper label="Fecha inicio" required error={errors[`req_${idx}_inicio`]}>
+                                {/* Sin mínimo: una persona puede partir antes del inicio del contrato (trabajo anticipado) */}
                                 <Input type="date" value={r.fecha_inicio} onChange={setReqField(idx, "fecha_inicio")}
-                                  min={minReqDate} max={maxReqDate} error={!!errors[`req_${idx}_inicio`]} />
+                                  max={maxReqDate} error={!!errors[`req_${idx}_inicio`]} />
                               </FieldWrapper>
                               <FieldWrapper label="Fecha fin" required error={errors[`req_${idx}_fin`]}>
                                 <Input type="date" value={r.fecha_fin} onChange={setReqField(idx, "fecha_fin")}
-                                  min={r.fecha_inicio || minReqDate} max={maxReqDate} error={!!errors[`req_${idx}_fin`]} />
+                                  min={r.fecha_inicio || undefined} max={maxReqDate} error={!!errors[`req_${idx}_fin`]} />
                               </FieldWrapper>
                             </div>
                           )}
                         </div>
                       );
-                    })}
-                  </div>
-                </div>
-              );
+                    }
             })}
           </div>
           </div>
@@ -1767,36 +2051,30 @@ export function EngagementForm({ open, onClose, onSuccess, engagement, simulatio
           message={`Se eliminará el alargue${extPrev ? ` (${extPrev.inicio} a ${extPrev.fin})` : ""} y todas las asignaciones de ese período. ¿Quieres continuar?`}
         />
 
-        {/* ── Extender Proyecto (solo en modo edición) ── */}
-        {engagement && (
-          <div className="border-t border-[#f0f0f0] pt-5">
-            <button
-              type="button"
-              onClick={() => setExtOpen((o) => !o)}
-              className="w-full flex items-center justify-between group"
-            >
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 rounded-md bg-[#f0f9ff] flex items-center justify-center">
-                  <Users className="w-3.5 h-3.5 text-[#4a90e2]" />
-                </div>
-                <p className="text-xs font-semibold text-[#888] uppercase tracking-widest">Extender Proyecto</p>
-              </div>
-              {extOpen
-                ? <ChevronUp className="w-4 h-4 text-[#aaa] group-hover:text-[#666] transition-colors" />
-                : <ChevronDown className="w-4 h-4 text-[#aaa] group-hover:text-[#666] transition-colors" />
-              }
-            </button>
-            {extOpen && (
-              <div className="mt-4">
-                <ExtenderProyecto
-                  engagementId={engagement.id}
-                  engagementTipo={engagement.tipo}
-                  onExtended={recargarEquipo}
-                />
-              </div>
-            )}
-          </div>
-        )}
+        {/* Avisos del equipo heredado antes de crear un alargue nuevo */}
+        <ConfirmDialog
+          open={!!avisosAlargue}
+          onClose={() => setAvisosAlargue(null)}
+          onConfirm={() => handleSubmit(true, true)}
+          loading={loading}
+          title="Revisa al equipo del alargue"
+          confirmLabel="Crear igual"
+          message={`Estas personas pasarán al alargue (${extFechaInicio} a ${extFechaFin}), pero tienen ausencias u otros proyectos en esas fechas:\n\n${(avisosAlargue ?? []).map((a) => `• ${a}`).join("\n")}\n\nPuedes crear el alargue igual y ajustarlas después.`}
+        />
+
+        {/* Papelera de un alargue anterior: se marca y se borra al guardar */}
+        <ConfirmDialog
+          open={!!extAEliminarConfirm}
+          onClose={() => setExtAEliminarConfirm(null)}
+          onConfirm={() => {
+            if (extAEliminarConfirm) setExtsAEliminar((prev) => [...prev, extAEliminarConfirm]);
+            setExtAEliminarConfirm(null);
+          }}
+          title="Eliminar alargue"
+          confirmLabel="Eliminar"
+          message={`Al guardar se eliminará el alargue${extAEliminarConfirm ? ` (${extAEliminarConfirm.fecha_inicio} a ${extAEliminarConfirm.fecha_fin})` : ""} y todas las asignaciones de ese período. ¿Quieres continuar?`}
+        />
+
       </div>
     </Drawer>
   );

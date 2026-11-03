@@ -89,7 +89,8 @@ export function ConfirmDialog({
         </>
       }
     >
-      <p className="text-sm text-[#555]">{message}</p>
+      {/* pre-line: respeta saltos de línea en mensajes con listas */}
+      <p className="text-sm text-[#555] whitespace-pre-line">{message}</p>
     </Modal>
   );
 }

@@ -8,6 +8,7 @@ import { createAnyClient } from "@/lib/supabase/client";
 import { expandirRango } from "@/lib/queries/ausencias";
 import { calculateBusinessDays } from "@/lib/utils/date-utils";
 import type { AsignacionConEngagement } from "@/lib/types/database";
+import { cargaMaximaSimultanea } from "@/components/engagements/tramosEngagement";
 
 // ── Días hábiles ──────────────────────────────────────────────
 function diasHabiles(desde: string, hasta: string): number {
@@ -28,6 +29,7 @@ type PeriodoVista = "dia" | "semana" | "mes";
 
 interface AsignacionRow {
   id: string;
+  engagementId: string;
   engagementNombre: string;
   engagementCliente: string;
   engagementIndustria: string;
@@ -189,6 +191,7 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
             : null;
           return {
             id: a.id,
+            engagementId:        a.engagement?.id ?? a.id,
             engagementNombre:    a.engagement?.nombre  ?? "—",
             engagementCliente:   a.engagement?.cliente ?? "",
             engagementIndustria: a.engagement?.industria?.nombre ?? "",
@@ -212,9 +215,73 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
 
   // ── Modo compacto ────────────────────────────────────────────
   if (compact) {
+    // Una tarjeta por proyecto: si la persona tiene varios períodos en el mismo engagement
+    // (contrato y alargues), se muestran juntos con el estado de cada uno
+    const porEng = new Map<string, AsignacionRow[]>();
+    for (const a of asignaciones) (porEng.get(a.engagementId) ?? porEng.set(a.engagementId, []).get(a.engagementId)!).push(a);
+    const fmtCorta = (d: string) => format(new Date(d + "T00:00:00"), "d MMM", { locale: es });
     return (
       <div className="space-y-1.5">
-        {asignaciones.map((a) => (
+        {[...porEng.values()].map((periodos) => {
+          if (periodos.length === 1) return tarjetaSimple(periodos[0]);
+          const a = periodos[0]; // ordenados por fecha de inicio
+          // Suma lo simultáneo (dos roles a la vez) y toma el mayor entre momentos distintos
+          const pctMax = cargaMaximaSimultanea(periodos.map((p) => ({ fecha_inicio: p.fechaInicio, fecha_fin: p.fechaFin, pct: p.pct })));
+          const esFuturo = periodos.every((p) => p.esFuturo);
+          // Días ya trabajados (períodos iniciados) y días hábiles que quedan (en curso + futuros)
+          const diasEnProyecto = periodos.filter((p) => !p.esFuturo).reduce((s, p) => s + p.dias, 0);
+          const hoyStr = format(new Date(), "yyyy-MM-dd");
+          const diasQuedan = periodos.reduce((s, p) => s + (!p.fechaFin ? 0 : p.esFuturo ? diasHabiles(p.fechaInicio, p.fechaFin) : diasHabiles(hoyStr, p.fechaFin)), 0);
+          return (
+            <div key={a.engagementId} className="px-2 py-1 rounded-lg bg-amber-50 border border-amber-100">
+              <div className="flex items-baseline justify-between gap-2">
+                <div className="min-w-0 flex items-baseline gap-1.5">
+                  {!ocultarCarga && (
+                    <span className="text-[8px] font-bold px-1.5 py-0.5 rounded-full flex-shrink-0" style={pctBadgeStyle(pctMax)}>
+                      {pctMax}%
+                    </span>
+                  )}
+                  <span className="text-[11px] font-semibold text-slate-800 truncate leading-tight">{a.engagementNombre}</span>
+                  {a.engagementCliente && <span className="text-[9px] text-gray-400 truncate">{a.engagementCliente}</span>}
+                </div>
+                <span className="text-[9px] text-slate-400 flex-shrink-0">
+                  {esFuturo ? "Inicia:" : "Inicio:"} {format(new Date(a.fechaInicio + "T00:00:00"), "d MMM yyyy", { locale: es })}
+                </span>
+              </div>
+              {/* Períodos del proyecto, cada uno con su estado */}
+              <div className="mt-1 space-y-0.5">
+                {periodos.map((p) => (
+                  <div key={p.id} className="flex items-baseline justify-between gap-2">
+                    <span className="text-[9px] text-slate-500">
+                      {fmtCorta(p.fechaInicio)} → {p.fechaFin ? fmtCorta(p.fechaFin) : "en curso"}
+                    </span>
+                    {!ocultarCarga && (
+                      p.esFuturo
+                        ? <span className="text-[9px] font-semibold" style={{ color: "#15803d" }}>Inicia en {p.dias}d</span>
+                        : <span className="text-[9px] font-semibold" style={{ color: "#1d4ed8" }}>
+                            En curso{p.diasRestantes !== null ? ` · ${p.diasRestantes}d restantes` : ""}
+                          </span>
+                    )}
+                  </div>
+                ))}
+              </div>
+              {/* Totales del proyecto */}
+              {!ocultarCarga && (
+                <div className="flex justify-end gap-2 mt-0.5 pt-0.5 border-t border-amber-100">
+                  {diasEnProyecto > 0 && <span className="text-[9px] font-semibold" style={{ color: "#1d4ed8" }}>{diasEnProyecto}d en el proyecto</span>}
+                  {diasEnProyecto > 0 && diasQuedan > 0 && <span className="text-[9px] text-gray-300">·</span>}
+                  {diasQuedan > 0 && <span className="text-[9px] font-semibold" style={{ color: "#92400e" }}>{diasQuedan}d restantes en total</span>}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    );
+
+    // Tarjeta de un proyecto con un solo período (formato de siempre)
+    function tarjetaSimple(a: AsignacionRow) {
+      return (
           <div key={a.id} className="px-2 py-1 rounded-lg bg-amber-50 border border-amber-100">
             {/* Fila única: nombre+cliente · fecha */}
             <div className="flex items-baseline justify-between gap-2">
@@ -247,9 +314,8 @@ export function ProyectosPersonaDetalle({ personaId, compact = false, ocultarCar
             </div>
             )}
           </div>
-        ))}
-      </div>
-    );
+      );
+    }
   }
 
   // ── Modo completo: Mini-Gantt ─────────────────────────────────

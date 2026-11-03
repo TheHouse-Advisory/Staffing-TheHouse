@@ -272,14 +272,28 @@ export async function fetchCoberturaProyecto(
   const inicioStr = format(dias[0], "yyyy-MM-dd");
   const finStr    = format(dias[totalDias - 1], "yyyy-MM-dd");
 
-  // 1a. Engagements activos que solapan con la semana (con o sin requerimientos)
+  // 1a. Engagements con extensiones que solapan la semana: siguen visibles aunque
+  //     su fecha de fin base ya haya pasado (la extensión vive en engagement_extension)
+  const { data: extRaw } = await (supabase as any)
+    .from("engagement_extension")
+    .select("engagement_id")
+    .lte("fecha_inicio", finStr)
+    .gte("fecha_fin", inicioStr);
+  const extEngIds = [...new Set(((extRaw ?? []) as { engagement_id: string }[]).map((r) => r.engagement_id))];
+
+  // 1b. Engagements activos que solapan con la semana (con o sin requerimientos)
   const { data: engsRaw, error: engsErr } = await supabase
     .from("engagement")
     .select("id, codigo, nombre, cliente, tipo, fecha_inicio, fecha_fin_estimada, fecha_fin_real")
     .eq("estado", "activo")
     .eq("is_deleted", false)
     .lte("fecha_inicio", finStr)
-    .or(`fecha_fin_real.gte.${inicioStr},fecha_fin_estimada.gte.${inicioStr},fecha_fin_real.is.null`);
+    .or([
+      `fecha_fin_real.gte.${inicioStr}`,
+      `fecha_fin_estimada.gte.${inicioStr}`,
+      `fecha_fin_real.is.null`,
+      ...(extEngIds.length > 0 ? [`id.in.(${extEngIds.join(",")})`] : []),
+    ].join(","));
 
   if (engsErr) return { filas: [], dias, diasCriticosEng: new Set(), error: engsErr.message };
   if (!engsRaw || engsRaw.length === 0) return { filas: [], dias, diasCriticosEng: new Set(), error: null };
